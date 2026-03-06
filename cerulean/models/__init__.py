@@ -1,0 +1,353 @@
+"""
+cerulean/models/__init__.py
+─────────────────────────────────────────────────────────────────────────────
+All SQLAlchemy ORM models. Import from here to ensure Alembic autogenerate
+picks up all tables via the shared Base metadata.
+
+Models:
+    Project       — top-level migration project
+    MARCFile      — uploaded MARC / CSV file
+    FieldMap      — source→target field mapping (manual / AI / template)
+    MapTemplate   — saved reusable mapping set (project or global scope)
+    DedupRule     — deduplication rule configuration
+    DedupCluster  — detected duplicate group (written by dedup scan)
+    AuditEvent    — append-only project event log
+    Suggestion    — engineer feedback / feature request
+    SuggestionVote — upvote join table
+"""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from cerulean.core.database import Base
+
+
+# ─── helpers ──────────────────────────────────────────────────────────────
+
+def _uuid() -> str:
+    return str(uuid.uuid4())
+
+
+def _now() -> datetime:
+    return datetime.utcnow()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PROJECT
+# ══════════════════════════════════════════════════════════════════════════
+
+class Project(Base):
+    """Top-level migration project. One project = one library migration."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    library_name: Mapped[str] = mapped_column(String(300), nullable=False)
+
+    # Source ILS
+    source_ils: Mapped[str | None] = mapped_column(String(100))
+    ils_confidence: Mapped[float | None] = mapped_column(Float)
+
+    # Target Koha
+    koha_url: Mapped[str | None] = mapped_column(String(500))
+    koha_token_enc: Mapped[str | None] = mapped_column(Text)   # Fernet encrypted
+    koha_version: Mapped[str | None] = mapped_column(String(20))
+    search_engine: Mapped[str | None] = mapped_column(String(20))  # "es8" | "zebra"
+
+    # Pipeline stage tracking (1–6, null = not started)
+    current_stage: Mapped[int] = mapped_column(Integer, default=1)
+    stage_1_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_2_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_3_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_4_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_5_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_6_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Record counts (updated after each stage)
+    bib_count_ingested: Mapped[int | None] = mapped_column(Integer)
+    bib_count_post_dedup: Mapped[int | None] = mapped_column(Integer)
+    bib_count_pushed: Mapped[int | None] = mapped_column(Integer)
+    patron_count: Mapped[int | None] = mapped_column(Integer)
+    hold_count: Mapped[int | None] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    # Relationships
+    files: Mapped[list["MARCFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    maps: Mapped[list["FieldMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    dedup_rules: Mapped[list["DedupRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# MARC FILE
+# ══════════════════════════════════════════════════════════════════════════
+
+class MARCFile(Base):
+    """An uploaded MARC or CSV file belonging to a project."""
+
+    __tablename__ = "marc_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_format: Mapped[str] = mapped_column(String(20))   # "iso2709" | "mrk" | "csv"
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    storage_path: Mapped[str] = mapped_column(Text)        # absolute path or S3 key
+
+    record_count: Mapped[int | None] = mapped_column(Integer)
+    ils_signal: Mapped[str | None] = mapped_column(String(100))  # detected ILS for this file
+
+    # Tag frequency histogram — stored as JSONB: {"001": 42118, "245": 42118, ...}
+    tag_frequency: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Status: "uploaded" | "indexing" | "indexed" | "error"
+    status: Mapped[str] = mapped_column(String(20), default="uploaded")
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)  # merge queue position
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="files")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FIELD MAP
+# ══════════════════════════════════════════════════════════════════════════
+
+class FieldMap(Base):
+    """
+    A single source→target MARC field mapping for a project.
+
+    Source label indicates origin:
+        "manual"          — created or last edited by a human engineer
+        "ai"              — created by AI suggestion, not yet edited
+        "template:{id}"   — loaded from a MapTemplate
+    """
+
+    __tablename__ = "field_maps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    # Source field
+    source_tag: Mapped[str] = mapped_column(String(10), nullable=False)   # e.g. "852"
+    source_sub: Mapped[str | None] = mapped_column(String(5))             # e.g. "$h"
+
+    # Target field
+    target_tag: Mapped[str] = mapped_column(String(10), nullable=False)   # e.g. "952"
+    target_sub: Mapped[str | None] = mapped_column(String(5))             # e.g. "$o"
+
+    # Transform
+    # "copy" | "regex" | "lookup" | "const" | "fn"
+    transform_type: Mapped[str] = mapped_column(String(20), default="copy")
+    # Expression, regex pattern, lookup table name, constant value, or Python lambda string
+    transform_fn: Mapped[str | None] = mapped_column(Text)
+
+    # Origin
+    ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_confidence: Mapped[float | None] = mapped_column(Float)   # 0.0–1.0
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)        # Claude explanation
+    source_label: Mapped[str] = mapped_column(String(50), default="manual")
+
+    # Approval
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    notes: Mapped[str | None] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="maps")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# MAP TEMPLATE
+# ══════════════════════════════════════════════════════════════════════════
+
+class MapTemplate(Base):
+    """
+    A saved, named set of FieldMaps that can be reused across projects.
+
+    Scope:
+        "project"  — visible only to one project (project_id must be set)
+        "global"   — shared across all BWS engineers and projects
+    """
+
+    __tablename__ = "map_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(20), default="1.0")
+    description: Mapped[str | None] = mapped_column(Text)
+
+    # Scope
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # "project" | "global"
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"))
+
+    # Metadata
+    source_ils: Mapped[str | None] = mapped_column(String(100))  # e.g. "SirsiDynix Symphony"
+    ai_generated: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # The maps themselves — serialised list of FieldMap-like dicts
+    # [{source_tag, source_sub, target_tag, target_sub, transform_type, transform_fn, notes}]
+    maps: Mapped[list | None] = mapped_column(JSONB)
+
+    created_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DEDUP RULE
+# ══════════════════════════════════════════════════════════════════════════
+
+class DedupRule(Base):
+    """Deduplication rule for a project. Only one rule is active at a time."""
+
+    __tablename__ = "dedup_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_preset: Mapped[bool] = mapped_column(Boolean, default=False)
+    # "001" | "isbn" | "title_author" | "oclc" | "custom"
+    preset_key: Mapped[str | None] = mapped_column(String(50))
+
+    # List of match fields: [{tag, sub, match_type: "exact"|"normalised", normalize: bool}]
+    fields: Mapped[list | None] = mapped_column(JSONB)
+
+    # "keep_first" | "keep_most_fields" | "keep_most_items" | "write_exceptions" | "merge_holdings"
+    on_duplicate: Mapped[str] = mapped_column(String(50), default="keep_first")
+
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Results from last scan
+    last_scan_clusters: Mapped[int | None] = mapped_column(Integer)
+    last_scan_affected: Mapped[int | None] = mapped_column(Integer)
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="dedup_rules")
+    clusters: Mapped[list["DedupCluster"]] = relationship(back_populates="rule", cascade="all, delete-orphan")
+
+
+class DedupCluster(Base):
+    """A group of records identified as duplicates by a DedupRule scan."""
+
+    __tablename__ = "dedup_clusters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    rule_id: Mapped[str] = mapped_column(String(36), ForeignKey("dedup_rules.id"), nullable=False)
+
+    # Sorted list of record identifiers: [{file_id, record_index, marc_001, field_count, item_count}]
+    records: Mapped[list] = mapped_column(JSONB, nullable=False)
+    primary_index: Mapped[int] = mapped_column(Integer, default=0)  # index into records[] of chosen primary
+
+    match_key: Mapped[str | None] = mapped_column(String(200))  # the value that matched (e.g. the 001 value)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    rule: Mapped["DedupRule"] = relationship(back_populates="clusters")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AUDIT EVENT
+# ══════════════════════════════════════════════════════════════════════════
+
+class AuditEvent(Base):
+    """
+    Append-only log of every significant event on a project.
+
+    Never delete rows from this table.
+    Written by: API endpoints (user decisions), Celery tasks (system events).
+    Streamed to the frontend via SSE during active pipeline runs.
+    """
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    stage: Mapped[int | None] = mapped_column(Integer)   # 1–6; null for cross-project events
+    # "info" | "warn" | "error" | "complete"
+    level: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Tag shown in the log UI — e.g. "[ingest]", "[ai-map]", "[push]"
+    tag: Mapped[str | None] = mapped_column(String(30))
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Optional context — record-specific events
+    record_001: Mapped[str | None] = mapped_column(String(100))
+    extra: Mapped[dict | None] = mapped_column(JSONB)  # arbitrary structured context
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    project: Mapped["Project"] = relationship(back_populates="audit_events")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SUGGESTIONS & FEATURE FEEDBACK
+# ══════════════════════════════════════════════════════════════════════════
+
+class Suggestion(Base):
+    """Engineer-submitted bug report, feature request, workflow idea, or discussion."""
+
+    __tablename__ = "suggestions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+
+    # "feature" | "bug" | "workflow" | "discussion"
+    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Optional project link
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"))
+
+    # "open" | "confirmed" | "in_progress" | "shipped" | "closed"
+    status: Mapped[str] = mapped_column(String(20), default="open")
+
+    submitted_by: Mapped[str | None] = mapped_column(String(200))
+    vote_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    votes: Mapped[list["SuggestionVote"]] = relationship(back_populates="suggestion", cascade="all, delete-orphan")
+
+
+class SuggestionVote(Base):
+    """One upvote per user per suggestion."""
+
+    __tablename__ = "suggestion_votes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    suggestion_id: Mapped[str] = mapped_column(String(36), ForeignKey("suggestions.id"), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    suggestion: Mapped["Suggestion"] = relationship(back_populates="votes")

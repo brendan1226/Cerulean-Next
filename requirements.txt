@@ -1,0 +1,54 @@
+# ═══════════════════════════════════════════════════
+# Cerulean Next — Python Dependencies
+# ═══════════════════════════════════════════════════
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9      # file uploads
+
+# Database
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0              # async PostgreSQL driver
+alembic==1.13.1
+psycopg2-binary==2.9.9       # sync driver (Alembic migrations)
+
+# Task queue
+celery==5.4.0
+redis==5.0.4
+flower==2.0.1
+
+# MARC processing
+pymarc==5.1.2
+
+# AI
+anthropic==0.26.0
+
+# Validation / settings
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Auth / security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==42.0.7         # Fernet for Koha token encryption
+
+# HTTP client (Koha REST API calls)
+httpx==0.27.0
+
+# SSE (streaming audit log)
+sse-starlette==2.1.0
+
+# Utilities
+python-dotenv==1.0.1
+structlog==24.1.0            # structured logging
+tenacity==8.3.0              # retry logic
+
+# Dev / test
+pytest==8.2.0
+pytest-asyncio==0.23.6
+pytest-cov==5.0.0
+httpx==0.27.0                # test client
+factory-boy==3.3.0
+black==24.4.2
+flake8==7.0.0

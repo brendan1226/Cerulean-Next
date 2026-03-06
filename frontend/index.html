@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cerulean Next</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════
+       CERULEAN NEXT — DESIGN SYSTEM (LOCKED)
+       ═══════════════════════════════════════════════════════════ */
+    :root {
+      --cerulean:       #00BCD4;
+      --teal:           #26C6DA;
+      --cerulean-dim:   rgba(0,188,212,0.08);
+      --cerulean-glow:  rgba(0,188,212,0.18);
+
+      --bg-void:        #080C10;
+      --bg-deep:        #0D1117;
+      --bg-panel:       #111820;
+      --bg-card:        #151E28;
+      --bg-hover:       #1A2535;
+      --bg-active:      #1E2D3D;
+
+      --border:         rgba(0,188,212,0.13);
+      --border-mid:     rgba(0,188,212,0.22);
+      --border-strong:  rgba(0,188,212,0.38);
+
+      --text-primary:   #E8EDF2;
+      --text-secondary: #8899AA;
+      --text-dim:       #4A5A6A;
+
+      --green:          #4CAF82;
+      --green-dim:      rgba(76,175,130,0.12);
+      --amber:          #F5A623;
+      --amber-dim:      rgba(245,166,35,0.12);
+      --red:            #E05252;
+      --red-dim:        rgba(224,82,82,0.12);
+      --purple:         #7C4DFF;
+      --purple-dim:     rgba(124,77,255,0.12);
+
+      --mono:    'IBM Plex Mono', monospace;
+      --sans:    'IBM Plex Sans', sans-serif;
+      --radius:  4px;
+      --radius-lg: 8px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-void);
+      color: var(--text-primary);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      overflow: hidden;
+    }
+
+    /* scanline overlay */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── scrollbars ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-deep); }
+    ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--cerulean); }
+
+    /* ── typography ── */
+    .mono { font-family: var(--mono); }
+    .text-cerulean { color: var(--cerulean); }
+    .text-secondary { color: var(--text-secondary); }
+    .text-dim { color: var(--text-dim); }
+    .text-green { color: var(--green); }
+    .text-amber { color: var(--amber); }
+    .text-red { color: var(--red); }
+    .text-purple { color: var(--purple); }
+
+    /* ═══════════════════════════════════════════════════════════
+       LAYOUT
+       ═══════════════════════════════════════════════════════════ */
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--bg-deep);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-logo {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo .wordmark {
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--cerulean);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-logo .subtitle {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      letter-spacing: 0.06em;
+      margin-top: 2px;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .nav-section-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--text-dim);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 12px 16px 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 16px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+      user-select: none;
+    }
+
+    .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .nav-item.active {
+      color: var(--cerulean);
+      border-left-color: var(--cerulean);
+      background: var(--cerulean-dim);
+    }
+
+    .nav-item .nav-icon {
+      font-size: 14px;
+      width: 16px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .nav-item .stage-badge {
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      background: var(--bg-card);
+      color: var(--text-dim);
+    }
+
+    .nav-item.stage-complete .stage-badge {
+      background: var(--green-dim);
+      color: var(--green);
+    }
+
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .api-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-dim);
+    }
+
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.err { background: var(--red); }
+
+    /* ── Main content ── */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg-void);
+    }
+
+    /* ── Topbar ── */
+    #topbar {
+      height: 48px;
+      flex-shrink: 0;
+      background: var(--bg-deep);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+    }
+
+    .topbar-breadcrumb {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+
+    .topbar-breadcrumb .crumb-sep { color: var(--text-dim); margin: 0 6px; }
+    .topbar-breadcrumb .crumb-active { color: var(--text-primary); }
+
+    .topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+    /* ── View container ── */
+    #view {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 24px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       COMPONENTS
+       ═══════════════════════════════════════════════════════════ */
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: var(--radius);
+      border: none;
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    .btn-primary {
+      background: var(--cerulean);
+      color: var(--bg-void);
+    }
+    .btn-primary:hover { background: var(--teal); box-shadow: 0 0 12px rgba(0,188,212,0.35); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-mid);
+    }
+    .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--red);
+      border: 1px solid rgba(224,82,82,0.3);
+    }
+    .btn-danger:hover { background: var(--red-dim); }
+
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      font-family: var(--mono);
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 2px;
+      font-weight: 500;
+    }
+    .badge-cerulean { background: var(--cerulean-dim); color: var(--cerulean); border: 1px solid rgba(0,188,212,0.2); }
+    .badge-green  { background: var(--green-dim);  color: var(--green);  border: 1px solid rgba(76,175,130,0.2); }
+    .badge-amber  { background: var(--amber-dim);  color: var(--amber);  border: 1px solid rgba(245,166,35,0.2); }
+    .badge-red    { background: var(--red-dim);    color: var(--red);    border: 1px solid rgba(224,82,82,0.2); }
+    .badge-purple { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(124,77,255,0.2); }
+    .badge-dim    { background: var(--bg-panel);   color: var(--text-dim); border: 1px solid var(--border); }
+
+    /* ── Form elements ── */
+    .form-group { margin-bottom: 16px; }
+    .form-label {
+      display: block;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      background: var(--bg-deep);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--cerulean);
+      box-shadow: 0 0 0 2px rgba(0,188,212,0.12);
+    }
+    .form-select { cursor: pointer; }
+    .form-textarea { resize: vertical; min-height: 80px; }
+
+    /* ── Table ── */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .data-table th {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 8px 12px;
+      background: var(--bg-deep);
+      border-bottom: 1px solid var(--border-mid);
+      text-align: left;
+    }
+    .data-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-primary);
+      vertical-align: middle;
+    }
+    .data-table tr:hover td { background: var(--bg-hover); }
+
+    /* ── Tabs ── */
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .tab-btn {
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      border-bottom: 2px solid transparent;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      transition: all 0.15s;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+    .tab-btn:hover { color: var(--text-primary); }
+    .tab-btn.active { color: var(--cerulean); border-bottom-color: var(--cerulean); }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(8,12,16,0.85);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+
+    .modal {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      width: 480px;
+      max-width: 95vw;
+      max-height: 85vh;
+      overflow-y: auto;
+      transform: translateY(8px);
+      transition: transform 0.2s;
+    }
+    .modal-overlay.open .modal { transform: translateY(0); }
+
+    .modal-title {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--cerulean);
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .modal-footer {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Page header ── */
+    .page-header {
+      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .page-title {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--cerulean);
+      letter-spacing: 0.04em;
+    }
+    .page-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      font-family: var(--sans);
+    }
+
+    /* ── Stat grid ── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+    }
+    .stat-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 6px;
+    }
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--cerulean);
+      line-height: 1;
+    }
+    .stat-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .empty-state .empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+    .empty-state .empty-title { font-family: var(--mono); font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+    .empty-state .empty-body { font-size: 12px; max-width: 320px; margin: 0 auto; }
+
+    /* ── Alert boxes ── */
+    .alert {
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      margin-bottom: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .alert-info { background: var(--cerulean-dim); border: 1px solid rgba(0,188,212,0.2); color: var(--cerulean); }
+    .alert-warn { background: var(--amber-dim); border: 1px solid rgba(245,166,35,0.2); color: var(--amber); }
+    .alert-error { background: var(--red-dim); border: 1px solid rgba(224,82,82,0.2); color: var(--red); }
+
+    /* ── Stage pipeline bar ── */
+    .pipeline-bar {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 12px 16px;
+      overflow-x: auto;
+    }
+    .pipeline-stage {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .pipeline-stage-dot {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      border: 2px solid var(--border-mid);
+      background: var(--bg-deep);
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .pipeline-stage-dot.complete { border-color: var(--green); color: var(--green); background: var(--green-dim); }
+    .pipeline-stage-dot.active { border-color: var(--cerulean); color: var(--cerulean); background: var(--cerulean-dim); box-shadow: 0 0 8px rgba(0,188,212,0.25); }
+    .pipeline-stage-label { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+    .pipeline-connector {
+      flex: 1;
+      min-width: 20px;
+      height: 1px;
+      background: var(--border);
+      margin: 0 8px;
+    }
+    .pipeline-connector.complete { background: var(--green); opacity: 0.5; }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border-mid);
+      border-top-color: var(--cerulean);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast notifications ── */
+    #toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 260px;
+      max-width: 400px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      animation: toast-in 0.25s ease;
+    }
+    @keyframes toast-in { from { transform: translateX(20px); opacity: 0; } }
+    .toast.success { border-left: 3px solid var(--green); }
+    .toast.error { border-left: 3px solid var(--red); }
+    .toast.info { border-left: 3px solid var(--cerulean); }
+    .toast.warn { border-left: 3px solid var(--amber); }
+
+    /* ═══════════════════════════════════════════════════════════
+       VIEWS
+       ═══════════════════════════════════════════════════════════ */
+
+    /* ── Dashboard ── */
+    .project-list { display: flex; flex-direction: column; gap: 10px; }
+    .project-row {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .project-row:hover { border-color: var(--border-strong); background: var(--bg-hover); }
+    .project-code { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--cerulean); width: 120px; flex-shrink: 0; }
+    .project-name { flex: 1; font-size: 13px; }
+    .project-ils { font-family: var(--mono); font-size: 11px; color: var(--text-dim); width: 180px; flex-shrink: 0; }
+    .project-stages { display: flex; gap: 3px; flex-shrink: 0; }
+    .stage-pip {
+      width: 22px; height: 6px;
+      border-radius: 2px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      transition: background 0.2s;
+    }
+    .stage-pip.done { background: var(--green); border-color: var(--green); }
+    .stage-pip.active { background: var(--cerulean); border-color: var(--cerulean); }
+
+    /* ── Mapping editor ── */
+    .map-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .map-filter-input {
+      flex: 1;
+      min-width: 180px;
+    }
+    .map-row-approved { border-left: 2px solid var(--green) !important; }
+    .map-row-ai { background: rgba(124,77,255,0.04) !important; }
+    .map-row-flagged { border-left: 2px solid var(--amber) !important; }
+
+    /* ── Project log ── */
+    .log-terminal {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      height: 520px;
+      overflow-y: auto;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.7;
+    }
+    .log-line { display: flex; gap: 12px; }
+    .log-ts { color: var(--text-dim); flex-shrink: 0; }
+    .log-tag { flex-shrink: 0; width: 80px; }
+    .log-msg { flex: 1; }
+    .log-line.level-ok .log-tag, .log-line.level-ok .log-msg { color: var(--green); }
+    .log-line.level-warn .log-tag, .log-line.level-warn .log-msg { color: var(--amber); }
+    .log-line.level-err .log-tag, .log-line.level-err .log-msg { color: var(--red); }
+    .log-line.level-info .log-msg { color: var(--text-primary); }
+    .log-line.level-info .log-tag { color: var(--cerulean); }
+
+    /* ── Suggestions board ── */
+    .suggestion-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+    .suggestion-vote {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .vote-btn {
+      width: 32px; height: 32px;
+      border-radius: var(--radius);
+      background: var(--bg-deep);
+      border: 1px solid var(--border-mid);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .vote-btn:hover { border-color: var(--cerulean); color: var(--cerulean); }
+    .vote-btn.voted { background: var(--cerulean-dim); border-color: var(--cerulean); color: var(--cerulean); }
+    .vote-count { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+    .suggestion-body { flex: 1; }
+    .suggestion-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+    .suggestion-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+    .suggestion-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ── Sidebar ── -->
+  <nav id="sidebar">
+    <div class="sidebar-logo">
+      <div class="wordmark">Cerulean</div>
+      <div class="subtitle">Migration Platform v1.0</div>
+    </div>
+
+    <div class="sidebar-nav" id="sidebar-nav">
+      <div class="nav-section-label">Workspace</div>
+      <div class="nav-item active" data-view="dashboard" onclick="navigate('dashboard')">
+        <span class="nav-icon">⊞</span> Dashboard
+      </div>
+      <div class="nav-item" data-view="new-project" onclick="navigate('new-project')">
+        <span class="nav-icon">+</span> New Project
+      </div>
+
+      <div class="nav-section-label" id="project-nav-label" style="display:none">Project</div>
+      <div id="project-nav" style="display:none">
+        <div class="nav-item" data-view="stage1" onclick="navigate('stage1')">
+          <span class="nav-icon">①</span> Data Ingest
+          <span class="stage-badge" id="badge-s1">—</span>
+        </div>
+        <div class="nav-item" data-view="stage2" onclick="navigate('stage2')">
+          <span class="nav-icon">②</span> Analyze &amp; Map
+          <span class="stage-badge" id="badge-s2">—</span>
+        </div>
+        <div class="nav-item" data-view="stage3" onclick="navigate('stage3')">
+          <span class="nav-icon">③</span> Transform
+          <span class="stage-badge" id="badge-s3">—</span>
+        </div>
+        <div class="nav-item" data-view="stage4" onclick="navigate('stage4')">
+          <span class="nav-icon">④</span> Dedup
+          <span class="stage-badge" id="badge-s4">—</span>
+        </div>
+        <div class="nav-item" data-view="stage5" onclick="navigate('stage5')">
+          <span class="nav-icon">⑤</span> Push to Koha
+          <span class="stage-badge" id="badge-s5">—</span>
+        </div>
+        <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
+          <span class="nav-icon">≡</span> Project Log
+        </div>
+      </div>
+
+      <div class="nav-section-label">Platform</div>
+      <div class="nav-item" data-view="templates" onclick="navigate('templates')">
+        <span class="nav-icon">◧</span> Templates
+      </div>
+      <div class="nav-item" data-view="suggestions" onclick="navigate('suggestions')">
+        <span class="nav-icon">✦</span> Suggestions
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="api-status">
+        <div class="status-dot" id="api-dot"></div>
+        <span id="api-status-text">checking…</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Main ── -->
+  <div id="main">
+    <div id="topbar">
+      <div class="topbar-breadcrumb" id="breadcrumb">
+        <span class="text-dim">cerulean</span>
+      </div>
+      <div class="topbar-actions" id="topbar-actions"></div>
+    </div>
+    <div id="view"></div>
+  </div>
+</div>
+
+<!-- ── Toast container ── -->
+<div id="toast-container"></div>
+
+<!-- ── Modals ── -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal-body"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   CERULEAN NEXT — FRONTEND SHELL
+   Vanilla JS SPA. No build step. No framework.
+   API_BASE points to FastAPI. All state in memory.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const API_BASE = 'http://localhost:8000/api/v1';
+
+// ── App state ────────────────────────────────────────────────────────
+const state = {
+  currentView: 'dashboard',
+  currentProject: null,   // full project object
+  projects: [],
+};
+
+// ── Router ──────────────────────────────────────────────────────────
+function navigate(view, params = {}) {
+  state.currentView = view;
+  Object.assign(state, params);
+
+  // Update nav active state
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.view === view);
+  });
+
+  // Show/hide project nav
+  const hasProject = !!state.currentProject;
+  document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
+  document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
+
+  // Render view
+  const viewEl = document.getElementById('view');
+  const renders = {
+    dashboard:    renderDashboard,
+    'new-project': renderNewProject,
+    stage1:       renderStage1,
+    stage2:       renderStage2,
+    stage3:       renderStageStub(3, 'Transform'),
+    stage4:       renderStageStub(4, 'Validate & Dedup'),
+    stage5:       renderStageStub(5, 'Push to Koha'),
+    'project-log': renderProjectLog,
+    templates:    renderTemplates,
+    suggestions:  renderSuggestions,
+  };
+  const renderer = renders[view];
+  if (renderer) renderer(viewEl);
+  updateBreadcrumb(view);
+}
+
+function updateBreadcrumb(view) {
+  const labels = {
+    dashboard: 'Dashboard',
+    'new-project': 'New Project',
+    stage1: 'Stage 1 — Data Ingest',
+    stage2: 'Stage 2 — Analyze & Map',
+    stage3: 'Stage 3 — Transform',
+    stage4: 'Stage 4 — Validate & Dedup',
+    stage5: 'Stage 5 — Push to Koha',
+    'project-log': 'Project Log',
+    templates: 'Templates',
+    suggestions: 'Suggestions',
+  };
+  const crumb = document.getElementById('breadcrumb');
+  const p = state.currentProject;
+  if (p) {
+    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="text-cerulean mono">${p.code}</span><span class="crumb-sep">/</span><span class="crumb-active">${labels[view] || view}</span>`;
+  } else {
+    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="crumb-active">${labels[view] || view}</span>`;
+  }
+  document.getElementById('topbar-actions').innerHTML = '';
+}
+
+// ── API helpers ──────────────────────────────────────────────────────
+async function api(method, path, body = null) {
+  try {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}${path}`, opts);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.detail?.message || err.message || `HTTP ${res.status}`);
+    }
+    return res.status === 204 ? null : res.json();
+  } catch (e) {
+    toast(e.message, 'error');
+    throw e;
+  }
+}
+
+// ── Toast ────────────────────────────────────────────────────────────
+function toast(msg, type = 'info', duration = 4000) {
+  const icons = { success: '✓', error: '✕', info: 'ℹ', warn: '⚠' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${msg}</span>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+// ── Modal ────────────────────────────────────────────────────────────
+function openModal(html) {
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('modal-overlay')) {
+    document.getElementById('modal-overlay').classList.remove('open');
+  }
+}
+
+// ── API health check ─────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const res = await fetch('http://localhost:8000/api/health');
+    const ok = res.ok;
+    document.getElementById('api-dot').className = `status-dot ${ok ? 'ok' : 'err'}`;
+    document.getElementById('api-status-text').textContent = ok ? 'API online' : 'API offline';
+  } catch {
+    document.getElementById('api-dot').className = 'status-dot err';
+    document.getElementById('api-status-text').textContent = 'API offline';
+  }
+}
+
+// ── Pipeline helpers ─────────────────────────────────────────────────
+function pipelineBar(project) {
+  const stages = [
+    { n: 1, label: 'Ingest' },
+    { n: 2, label: 'Map' },
+    { n: 3, label: 'Transform' },
+    { n: 4, label: 'Dedup' },
+    { n: 5, label: 'Push' },
+  ];
+  return `<div class="pipeline-bar">
+    ${stages.map((s, i) => {
+      const done = project[`stage_${s.n}_complete`];
+      const active = project.current_stage === s.n && !done;
+      return `
+        ${i > 0 ? `<div class="pipeline-connector${done ? ' complete' : ''}"></div>` : ''}
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-dot ${done ? 'complete' : active ? 'active' : ''}">
+            ${done ? '✓' : s.n}
+          </div>
+          <div class="pipeline-stage-label">${s.label}</div>
+        </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function updateStageBadges(project) {
+  for (let i = 1; i <= 5; i++) {
+    const badge = document.getElementById(`badge-s${i}`);
+    if (!badge) continue;
+    const done = project[`stage_${i}_complete`];
+    badge.textContent = done ? '✓' : (project.current_stage === i ? '●' : '—');
+    badge.parentElement.classList.toggle('stage-complete', done);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// VIEWS
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── Dashboard ────────────────────────────────────────────────────────
+async function renderDashboard(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-subtitle">All active migration projects</div>
+      </div>
+      <button class="btn btn-primary" onclick="navigate('new-project')">+ New Project</button>
+    </div>
+    <div id="project-list-wrap"><div class="spinner"></div></div>`;
+
+  try {
+    const projects = await api('GET', '/projects');
+    state.projects = projects;
+    const wrap = document.getElementById('project-list-wrap');
+
+    if (!projects.length) {
+      wrap.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">◫</div>
+        <div class="empty-title">No projects yet</div>
+        <div class="empty-body">Create a new migration project to get started.</div>
+      </div>`;
+      return;
+    }
+
+    wrap.innerHTML = `<div class="project-list">
+      ${projects.map(p => `
+        <div class="project-row" onclick="openProject(${JSON.stringify(p).replace(/"/g, '&quot;')})">
+          <div class="project-code">${p.code}</div>
+          <div class="project-name">${p.library_name}</div>
+          <div class="project-ils mono text-dim">${p.source_ils || '—'}</div>
+          <div class="project-stages">
+            ${[1,2,3,4,5].map(i => {
+              const done = p[`stage_${i}_complete`];
+              const active = p.current_stage === i && !done;
+              return `<div class="stage-pip ${done ? 'done' : active ? 'active' : ''}" title="Stage ${i}"></div>`;
+            }).join('')}
+          </div>
+          <span class="badge ${p.current_stage === 5 && p.stage_5_complete ? 'badge-green' : 'badge-cerulean'}">
+            Stage ${p.current_stage}
+          </span>
+        </div>`).join('')}
+    </div>`;
+  } catch (e) {
+    document.getElementById('project-list-wrap').innerHTML =
+      `<div class="alert alert-error">Failed to load projects: ${e.message}</div>`;
+  }
+}
+
+function openProject(project) {
+  state.currentProject = project;
+  updateStageBadges(project);
+  navigate('stage1');
+}
+
+// ── New Project ───────────────────────────────────────────────────────
+function renderNewProject(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">New Project</div>
+        <div class="page-subtitle">Create a new migration project</div>
+      </div>
+    </div>
+    <div class="card" style="max-width:520px">
+      <div class="form-group">
+        <label class="form-label">Project Code *</label>
+        <input class="form-input" id="np-code" placeholder="e.g. westfield_2025" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Library Name *</label>
+        <input class="form-input" id="np-name" placeholder="e.g. Westfield Public Library" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Koha URL</label>
+        <input class="form-input" id="np-url" placeholder="https://koha.library.org" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Koha API Token</label>
+        <input class="form-input" id="np-token" type="password" placeholder="Encrypted at rest" />
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="createProject()">Create Project</button>
+        <button class="btn btn-ghost" onclick="navigate('dashboard')">Cancel</button>
+      </div>
+    </div>`;
+}
+
+async function createProject() {
+  const code = document.getElementById('np-code').value.trim();
+  const name = document.getElementById('np-name').value.trim();
+  if (!code || !name) { toast('Code and library name are required', 'warn'); return; }
+
+  try {
+    const project = await api('POST', '/projects', {
+      code,
+      library_name: name,
+      koha_url: document.getElementById('np-url').value.trim() || null,
+      koha_token: document.getElementById('np-token').value.trim() || null,
+    });
+    state.currentProject = project;
+    updateStageBadges(project);
+    toast(`Project "${code}" created`, 'success');
+    navigate('stage1');
+  } catch {}
+}
+
+// ── Stage 1 — Ingest ─────────────────────────────────────────────────
+async function renderStage1(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 1 — Data Ingest</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Upload MARC Files</span>
+        </div>
+        <div class="alert alert-info">Accepted: .mrc, .marc, .mrk, .csv · Max 500 MB per file</div>
+        <div id="drop-zone" style="border:2px dashed var(--border-mid);border-radius:var(--radius-lg);padding:32px;text-align:center;cursor:pointer;transition:all 0.2s"
+          onclick="document.getElementById('file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--cerulean)'"
+          ondragleave="this.style.borderColor='var(--border-mid)'"
+          ondrop="handleFileDrop(event)">
+          <div style="font-size:28px;margin-bottom:8px;opacity:0.4">⇑</div>
+          <div class="mono" style="font-size:12px;color:var(--text-secondary)">Drop files here or click to browse</div>
+        </div>
+        <input type="file" id="file-input" style="display:none" multiple accept=".mrc,.marc,.mrk,.txt,.csv"
+          onchange="uploadFiles(this.files)">
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">ILS Detection</span>
+        </div>
+        <div id="ils-result">
+          ${p.source_ils
+            ? `<div class="badge badge-cerulean" style="font-size:13px;padding:6px 12px">${p.source_ils}</div>
+               <div class="text-secondary" style="margin-top:8px;font-size:12px">Confidence: ${p.ils_confidence ? Math.round(p.ils_confidence * 100) + '%' : '—'}</div>`
+            : `<div class="text-dim" style="font-size:12px">Upload files to trigger automatic ILS detection</div>`
+          }
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Files</span>
+        <button class="btn btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
+      </div>
+      <div id="file-table-wrap"><div class="spinner"></div></div>
+    </div>`;
+
+  loadFiles();
+}
+
+async function loadFiles() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('file-table-wrap');
+  if (!wrap) return;
+  try {
+    const files = await api('GET', `/projects/${p.id}/files`);
+    if (!files.length) {
+      wrap.innerHTML = `<div class="empty-state" style="padding:24px">
+        <div class="empty-title">No files uploaded yet</div>
+      </div>`;
+      return;
+    }
+    wrap.innerHTML = `<table class="data-table">
+      <thead><tr>
+        <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th>
+      </tr></thead>
+      <tbody>
+        ${files.map(f => `<tr>
+          <td class="mono">${f.filename}</td>
+          <td><span class="badge badge-dim">${f.file_format || '—'}</span></td>
+          <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
+          <td class="text-secondary">${f.ils_signal || '—'}</td>
+          <td>${statusBadge(f.status)}</td>
+          <td>${f.tag_frequency ? Object.keys(f.tag_frequency).length + ' tags' : '<span class="text-dim">pending</span>'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  } catch {}
+}
+
+async function uploadFiles(fileList) {
+  const p = state.currentProject;
+  for (const file of fileList) {
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${p.id}/files`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      toast(`Uploading ${file.name}… indexing started`, 'info');
+    } catch (e) {
+      toast(`Upload failed: ${e.message}`, 'error');
+    }
+  }
+  setTimeout(loadFiles, 2000);
+}
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').style.borderColor = 'var(--border-mid)';
+  uploadFiles(e.dataTransfer.files);
+}
+
+function statusBadge(status) {
+  const map = {
+    uploaded: 'badge-dim',
+    indexing: 'badge-amber',
+    indexed:  'badge-green',
+    error:    'badge-red',
+  };
+  return `<span class="badge ${map[status] || 'badge-dim'}">${status}</span>`;
+}
+
+// ── Stage 2 — Analyze & Map ───────────────────────────────────────────
+async function renderStage2(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 2 — Analyze &amp; Map</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchMapTab('editor', this)">Mapping Editor</button>
+      <button class="tab-btn" onclick="switchMapTab('ai', this)">AI Suggestions</button>
+      <button class="tab-btn" onclick="switchMapTab('templates', this)">Templates</button>
+      <button class="tab-btn" onclick="switchMapTab('viewer', this)">Record Viewer</button>
+    </div>
+    <div id="map-tab-content"></div>`;
+
+  renderMapEditorTab();
+}
+
+function switchMapTab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const fns = {
+    editor: renderMapEditorTab,
+    ai:     renderAISuggestionsTab,
+    templates: renderTemplatesTab,
+    viewer: renderRecordViewerTab,
+  };
+  (fns[tab] || renderMapEditorTab)();
+}
+
+async function renderMapEditorTab() {
+  const p = state.currentProject;
+  const content = document.getElementById('map-tab-content');
+  content.innerHTML = `
+    <div class="map-toolbar">
+      <input class="form-input map-filter-input" id="map-filter" placeholder="Filter by tag…" oninput="filterMaps(this.value)">
+      <select class="form-select" style="width:150px" onchange="filterMaps(document.getElementById('map-filter').value, this.value)">
+        <option value="">All</option>
+        <option value="approved">Approved</option>
+        <option value="pending">Pending AI</option>
+        <option value="manual">Manual (unapproved)</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="openNewMapModal()">+ Add Map</button>
+      <button class="btn btn-ghost btn-sm" onclick="openLoadTemplateModal()">⇄ Load Template</button>
+      <button class="btn btn-ghost btn-sm" onclick="approveAll()">✓ Approve All</button>
+    </div>
+    <div id="map-table-wrap"><div class="spinner"></div></div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="openSaveTemplateModal()">⊞ Save as Template</button>
+    </div>`;
+
+  loadMaps();
+}
+
+async function loadMaps(filter = '') {
+  const p = state.currentProject;
+  const wrap = document.getElementById('map-table-wrap');
+  if (!wrap) return;
+  try {
+    let url = `/projects/${p.id}/maps`;
+    if (filter) url += `?status=${filter}`;
+    const maps = await api('GET', url);
+
+    if (!maps.length) {
+      wrap.innerHTML = `<div class="empty-state" style="padding:32px">
+        <div class="empty-title">No maps yet</div>
+        <div class="empty-body">Add maps manually, load a template, or run AI Suggestions.</div>
+      </div>`;
+      return;
+    }
+
+    wrap.innerHTML = `<table class="data-table">
+      <thead><tr>
+        <th>Source</th><th>→</th><th>Target</th><th>Transform</th><th>Origin</th><th>Confidence</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="map-rows">
+        ${maps.map(m => mapRow(m)).join('')}
+      </tbody>
+    </table>`;
+  } catch {}
+}
+
+function mapRow(m) {
+  const origin = m.source_label.startsWith('template')
+    ? `<span class="badge badge-cerulean">template</span>`
+    : m.ai_suggested
+    ? `<span class="badge badge-purple">AI</span>`
+    : `<span class="badge badge-dim">manual</span>`;
+
+  const conf = m.ai_confidence != null
+    ? `<span class="${m.ai_confidence >= 0.7 ? 'text-green' : m.ai_confidence >= 0.4 ? 'text-amber' : 'text-red'} mono">${Math.round(m.ai_confidence * 100)}%</span>`
+    : `<span class="text-dim">—</span>`;
+
+  const rowClass = m.approved ? 'map-row-approved' : m.ai_suggested ? 'map-row-ai' : '';
+
+  return `<tr class="${rowClass}" id="map-${m.id}">
+    <td class="mono text-cerulean">${m.source_tag}${m.source_sub ? m.source_sub : ''}</td>
+    <td class="text-dim">→</td>
+    <td class="mono">${m.target_tag}${m.target_sub ? m.target_sub : ''}</td>
+    <td><span class="badge badge-dim">${m.transform_type}</span></td>
+    <td>${origin}</td>
+    <td>${conf}</td>
+    <td>${m.approved ? '<span class="badge badge-green">approved</span>' : '<span class="badge badge-amber">pending</span>'}</td>
+    <td style="display:flex;gap:4px">
+      ${!m.approved ? `<button class="btn btn-ghost btn-sm" onclick="approveMap('${m.id}')">✓</button>` : ''}
+      <button class="btn btn-ghost btn-sm" onclick="deleteMap('${m.id}')">✕</button>
+    </td>
+  </tr>`;
+}
+
+function filterMaps(text, status = '') {
+  loadMaps(status);
+}
+
+async function approveMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await api('POST', `/projects/${p.id}/maps/${mapId}/approve`);
+    toast('Map approved', 'success');
+    loadMaps();
+  } catch {}
+}
+
+async function deleteMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await api('DELETE', `/projects/${p.id}/maps/${mapId}`);
+    toast('Map deleted', 'success');
+    loadMaps();
+  } catch {}
+}
+
+async function approveAll() {
+  const p = state.currentProject;
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/approve-all`, { min_confidence: 0.70 });
+    toast(`Approved ${res.approved_count} maps`, 'success');
+    loadMaps();
+  } catch {}
+}
+
+function openNewMapModal() {
+  openModal(`
+    <div class="modal-title">Add Field Map</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Source Tag *</label>
+        <input class="form-input" id="nm-src-tag" placeholder="852">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Source Subfield</label>
+        <input class="form-input" id="nm-src-sub" placeholder="\$h">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target Tag *</label>
+        <input class="form-input" id="nm-tgt-tag" placeholder="952">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target Subfield</label>
+        <input class="form-input" id="nm-tgt-sub" placeholder="\$o">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Transform Type</label>
+      <select class="form-select" id="nm-transform">
+        <option value="copy">copy — direct copy</option>
+        <option value="regex">regex — pattern substitution</option>
+        <option value="lookup">lookup — value table</option>
+        <option value="const">const — constant value</option>
+        <option value="fn">fn — Python lambda</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Expression / Value</label>
+      <input class="form-input" id="nm-fn" placeholder="Leave blank for copy">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notes</label>
+      <input class="form-input" id="nm-notes" placeholder="Optional">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="nm-approve">
+      <label for="nm-approve" style="font-size:12px;color:var(--text-secondary)">Mark as approved immediately</label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewMap()">Add Map</button>
+    </div>`);
+}
+
+async function submitNewMap() {
+  const p = state.currentProject;
+  const body = {
+    source_tag: document.getElementById('nm-src-tag').value.trim(),
+    source_sub: document.getElementById('nm-src-sub').value.trim() || null,
+    target_tag: document.getElementById('nm-tgt-tag').value.trim(),
+    target_sub: document.getElementById('nm-tgt-sub').value.trim() || null,
+    transform_type: document.getElementById('nm-transform').value,
+    transform_fn: document.getElementById('nm-fn').value.trim() || null,
+    notes: document.getElementById('nm-notes').value.trim() || null,
+    approved: document.getElementById('nm-approve').checked,
+  };
+  if (!body.source_tag || !body.target_tag) { toast('Source and target tags are required', 'warn'); return; }
+  try {
+    await api('POST', `/projects/${p.id}/maps`, body);
+    closeModal();
+    toast('Map added', 'success');
+    loadMaps();
+  } catch {}
+}
+
+function openSaveTemplateModal() {
+  openModal(`
+    <div class="modal-title">Save as Template</div>
+    <div class="form-group">
+      <label class="form-label">Template Name *</label>
+      <input class="form-input" id="st-name" placeholder="e.g. Symphony → Koha Standard">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Version</label>
+        <input class="form-input" id="st-version" value="1.0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Scope</label>
+        <select class="form-select" id="st-scope">
+          <option value="project">Project only</option>
+          <option value="global">Global (all engineers)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea class="form-textarea" id="st-desc" placeholder="Optional notes about this template"></textarea>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="st-pending">
+      <label for="st-pending" style="font-size:12px;color:var(--text-secondary)">Include pending AI suggestions</label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitSaveTemplate()">Save Template</button>
+    </div>`);
+}
+
+async function submitSaveTemplate() {
+  const p = state.currentProject;
+  const name = document.getElementById('st-name').value.trim();
+  if (!name) { toast('Template name is required', 'warn'); return; }
+  try {
+    await api('POST', `/templates?project_id=${p.id}`, {
+      name,
+      version: document.getElementById('st-version').value.trim() || '1.0',
+      scope: document.getElementById('st-scope').value,
+      description: document.getElementById('st-desc').value.trim() || null,
+      include_pending: document.getElementById('st-pending').checked,
+    });
+    closeModal();
+    toast('Template save queued', 'success');
+  } catch {}
+}
+
+function openLoadTemplateModal() {
+  openModal(`
+    <div class="modal-title">Load Template</div>
+    <div class="form-group">
+      <label class="form-label">Template ID</label>
+      <input class="form-input" id="lt-id" placeholder="Template UUID">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Load Mode</label>
+      <select class="form-select" id="lt-mode">
+        <option value="merge">Merge — add without overwriting approved maps</option>
+        <option value="replace">Replace — clear all existing maps first</option>
+      </select>
+    </div>
+    <div class="alert alert-warn">Replace mode will delete all existing maps for this project.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitLoadTemplate()">Load Template</button>
+    </div>`);
+}
+
+async function submitLoadTemplate() {
+  const p = state.currentProject;
+  const id = document.getElementById('lt-id').value.trim();
+  if (!id) { toast('Template ID is required', 'warn'); return; }
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/load-template`, {
+      template_id: id,
+      mode: document.getElementById('lt-mode').value,
+    });
+    closeModal();
+    toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped, ${res.maps_conflicted} replaced`, 'success');
+    loadMaps();
+  } catch {}
+}
+
+async function renderAISuggestionsTab() {
+  const p = state.currentProject;
+  const content = document.getElementById('map-tab-content');
+  content.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="runAISuggest()">✦ Run AI Analysis</button>
+      <span class="text-secondary" style="font-size:12px">Sends tag frequency + ${50} anonymised sample records to Claude</span>
+    </div>
+    <div id="ai-suggestions-wrap">
+      <div class="empty-state">
+        <div class="empty-icon">✦</div>
+        <div class="empty-title">No AI suggestions loaded</div>
+        <div class="empty-body">Click "Run AI Analysis" to get suggestions based on your uploaded MARC data.</div>
+      </div>
+    </div>`;
+
+  // Load pending AI maps if any
+  try {
+    const maps = await api('GET', `/projects/${p.id}/maps?status=pending`);
+    if (maps.length) renderAISuggestionRows(maps);
+  } catch {}
+}
+
+function renderAISuggestionRows(maps) {
+  const wrap = document.getElementById('ai-suggestions-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div class="alert alert-info">${maps.length} suggestions pending review. Accept individually or use Approve All in the editor.</div>
+    <table class="data-table">
+      <thead><tr><th>Source</th><th>→</th><th>Target</th><th>Transform</th><th>Confidence</th><th>Reasoning</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${maps.map(m => `<tr>
+          <td class="mono text-cerulean">${m.source_tag}${m.source_sub || ''}</td>
+          <td class="text-dim">→</td>
+          <td class="mono">${m.target_tag}${m.target_sub || ''}</td>
+          <td><span class="badge badge-dim">${m.transform_type}</span></td>
+          <td><span class="${m.ai_confidence >= 0.7 ? 'text-green' : m.ai_confidence >= 0.4 ? 'text-amber' : 'text-red'} mono">${Math.round((m.ai_confidence||0)*100)}%</span></td>
+          <td style="max-width:260px;font-size:11px;color:var(--text-secondary)">${m.ai_reasoning || '—'}</td>
+          <td style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" onclick="approveMap('${m.id}')">✓ Accept</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteMap('${m.id}')">✕</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function runAISuggest() {
+  const p = state.currentProject;
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/ai-suggest`);
+    toast(`AI analysis started (task ${res.task_id.slice(0,8)}…)`, 'info');
+  } catch {}
+}
+
+async function renderTemplatesTab() {
+  const content = document.getElementById('map-tab-content');
+  content.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <select class="form-select" style="width:160px" id="tmpl-scope-filter" onchange="loadTemplateList()">
+        <option value="">All scopes</option>
+        <option value="global">Global</option>
+        <option value="project">Project</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="loadTemplateList()">↻ Refresh</button>
+    </div>
+    <div id="template-list"><div class="spinner"></div></div>`;
+  loadTemplateList();
+}
+
+async function loadTemplateList() {
+  const scope = document.getElementById('tmpl-scope-filter')?.value || '';
+  const wrap = document.getElementById('template-list');
+  if (!wrap) return;
+  try {
+    let url = '/templates';
+    if (scope) url += `?scope=${scope}`;
+    const templates = await api('GET', url);
+    if (!templates.length) {
+      wrap.innerHTML = `<div class="empty-state" style="padding:32px"><div class="empty-title">No templates found</div></div>`;
+      return;
+    }
+    wrap.innerHTML = `<table class="data-table">
+      <thead><tr><th>Name</th><th>Version</th><th>Scope</th><th>ILS</th><th>Maps</th><th>Uses</th><th>Actions</th></tr></thead>
+      <tbody>
+        ${templates.map(t => `<tr>
+          <td class="mono">${t.name}</td>
+          <td class="text-dim mono">v${t.version}</td>
+          <td>${t.scope === 'global' ? '<span class="badge badge-purple">global</span>' : '<span class="badge badge-cerulean">project</span>'}</td>
+          <td class="text-secondary">${t.source_ils || '—'}</td>
+          <td class="mono">${t.maps ? t.maps.length : '—'}</td>
+          <td class="mono text-dim">${t.use_count}</td>
+          <td style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" onclick="loadThisTemplate('${t.id}')">Load</button>
+            ${t.scope === 'project' ? `<button class="btn btn-ghost btn-sm" onclick="promoteTemplate('${t.id}')">↑ Global</button>` : ''}
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  } catch {}
+}
+
+async function loadThisTemplate(templateId) {
+  const p = state.currentProject;
+  if (!p) { toast('Select a project first', 'warn'); return; }
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/load-template`, { template_id: templateId, mode: 'merge' });
+    toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped`, 'success');
+  } catch {}
+}
+
+async function promoteTemplate(templateId) {
+  try {
+    await api('POST', `/templates/${templateId}/promote`);
+    toast('Template promoted to global', 'success');
+    loadTemplateList();
+  } catch {}
+}
+
+function renderRecordViewerTab() {
+  const content = document.getElementById('map-tab-content');
+  content.innerHTML = `
+    <div class="alert alert-info">Record Viewer — multi-pane MARC viewer coming in next iteration.</div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Quick Record Fetch</span></div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <div class="form-group" style="margin:0;flex:1">
+          <label class="form-label">File ID</label>
+          <input class="form-input" id="rv-file-id" placeholder="file UUID">
+        </div>
+        <div class="form-group" style="margin:0;width:100px">
+          <label class="form-label">Record #</label>
+          <input class="form-input" id="rv-idx" type="number" value="0">
+        </div>
+        <button class="btn btn-primary" onclick="fetchRecord()">Fetch</button>
+      </div>
+      <div id="rv-result" style="margin-top:16px"></div>
+    </div>`;
+}
+
+async function fetchRecord() {
+  const p = state.currentProject;
+  const fileId = document.getElementById('rv-file-id').value.trim();
+  const idx = parseInt(document.getElementById('rv-idx').value) || 0;
+  if (!fileId) { toast('Enter a file ID', 'warn'); return; }
+  try {
+    const record = await api('GET', `/projects/${p.id}/files/${fileId}/records/${idx}`);
+    const wrap = document.getElementById('rv-result');
+    wrap.innerHTML = `
+      <div class="mono" style="font-size:11px;background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius);padding:12px;max-height:400px;overflow-y:auto">
+        <div class="text-dim">Leader: ${record.leader}</div>
+        <div class="text-secondary" style="margin-bottom:8px">${record.title}</div>
+        ${record.fields.map(f => {
+          if (f.data !== undefined) return `<div><span class="text-cerulean">${f.tag}</span>  ${f.data}</div>`;
+          return `<div><span class="text-cerulean">${f.tag}</span> ${f.ind1}${f.ind2} ${f.subfields.map(s => `<span class="text-dim">$${s.code}</span> ${s.value}`).join(' ')}</div>`;
+        }).join('')}
+      </div>`;
+  } catch {}
+}
+
+// ── Stage stubs ───────────────────────────────────────────────────────
+function renderStageStub(n, label) {
+  return function(el) {
+    const p = state.currentProject;
+    el.innerHTML = `
+      <div class="page-header">
+        <div>
+          <div class="page-title">Stage ${n} — ${label}</div>
+          <div class="page-subtitle">${p?.library_name || ''}</div>
+        </div>
+      </div>
+      ${p ? pipelineBar(p) : ''}
+      <div class="empty-state">
+        <div class="empty-icon">⧖</div>
+        <div class="empty-title">Stage ${n} — Coming Next Sprint</div>
+        <div class="empty-body">This stage is specced and ready. Implementation starts after Stage 2 is complete.</div>
+      </div>`;
+  };
+}
+
+// ── Project Log ───────────────────────────────────────────────────────
+async function renderProjectLog(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Project Log</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <a class="btn btn-ghost btn-sm" href="${API_BASE}/projects/${p.id}/log/export?format=csv" target="_blank">⬇ CSV</a>
+        <a class="btn btn-ghost btn-sm" href="${API_BASE}/projects/${p.id}/log/export?format=txt" target="_blank">⬇ TXT</a>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <select class="form-select" style="width:140px" id="log-stage-filter" onchange="loadLog()">
+        <option value="">All stages</option>
+        ${[1,2,3,4,5,6].map(i => `<option value="${i}">Stage ${i}</option>`).join('')}
+      </select>
+      <select class="form-select" style="width:140px" id="log-level-filter" onchange="loadLog()">
+        <option value="">All levels</option>
+        <option value="info">Info</option>
+        <option value="warn">Warn</option>
+        <option value="error">Error</option>
+        <option value="complete">Complete</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="loadLog()">↻ Refresh</button>
+    </div>
+    <div class="log-terminal" id="log-terminal"><div class="spinner"></div></div>
+    <div id="log-summary" style="margin-top:12px;display:flex;gap:16px;font-family:var(--mono);font-size:11px"></div>`;
+
+  loadLog();
+}
+
+async function loadLog() {
+  const p = state.currentProject;
+  const stage = document.getElementById('log-stage-filter')?.value || '';
+  const level = document.getElementById('log-level-filter')?.value || '';
+  const term = document.getElementById('log-terminal');
+  if (!term) return;
+
+  try {
+    let url = `/projects/${p.id}/log?limit=500`;
+    if (stage) url += `&stage=${stage}`;
+    if (level) url += `&level=${level}`;
+    const data = await api('GET', url);
+
+    if (!data.items.length) {
+      term.innerHTML = `<div class="text-dim">No log entries found.</div>`;
+      return;
+    }
+
+    const levelClass = { info: 'level-info', warn: 'level-warn', error: 'level-err', complete: 'level-ok' };
+    term.innerHTML = data.items.slice().reverse().map(e =>
+      `<div class="log-line ${levelClass[e.level] || 'level-info'}">
+        <span class="log-ts">${new Date(e.created_at).toISOString().slice(11,19)}</span>
+        <span class="log-tag">${e.tag || (e.stage ? `[s${e.stage}]` : '[sys]')}</span>
+        <span class="log-msg">${e.message}</span>
+      </div>`
+    ).join('');
+
+    // Summary counts
+    const counts = data.items.reduce((acc, e) => { acc[e.level] = (acc[e.level]||0)+1; return acc; }, {});
+    const summary = document.getElementById('log-summary');
+    if (summary) {
+      summary.innerHTML = `
+        <span class="text-green">✓ ${counts.complete||0} complete</span>
+        <span class="text-dim">· ${counts.info||0} info</span>
+        <span class="text-amber">· ${counts.warn||0} warnings</span>
+        <span class="text-red">· ${counts.error||0} errors</span>
+        <span class="text-dim">· ${data.total} total</span>`;
+    }
+  } catch {}
+}
+
+// ── Templates page ────────────────────────────────────────────────────
+async function renderTemplates(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Map Templates</div>
+        <div class="page-subtitle">Shared mapping sets — global and project-scoped</div>
+      </div>
+    </div>
+    <div id="templates-page-wrap"><div class="spinner"></div></div>`;
+
+  try {
+    const templates = await api('GET', '/templates');
+    const wrap = document.getElementById('templates-page-wrap');
+    if (!templates.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">◧</div><div class="empty-title">No templates yet</div><div class="empty-body">Save a mapping set as a template from Stage 2.</div></div>`;
+      return;
+    }
+    const globals = templates.filter(t => t.scope === 'global');
+    const projects = templates.filter(t => t.scope === 'project');
+    wrap.innerHTML = `
+      ${globals.length ? `<div class="card-title" style="margin-bottom:10px">GLOBAL TEMPLATES</div>
+        ${globals.map(t => templateCard(t)).join('')}<br>` : ''}
+      ${projects.length ? `<div class="card-title" style="margin-bottom:10px">PROJECT TEMPLATES</div>
+        ${projects.map(t => templateCard(t)).join('')}` : ''}`;
+  } catch {}
+}
+
+function templateCard(t) {
+  return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${t.scope==='global'?'var(--purple)':'var(--cerulean)'}">
+    <div class="card-header">
+      <div>
+        <span class="mono" style="font-size:13px;font-weight:600">${t.name}</span>
+        <span class="text-dim mono" style="margin-left:8px">v${t.version}</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" onclick="promoteTemplate('${t.id}')">↑ Global</button>` : ''}
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;font-size:12px;color:var(--text-secondary)">
+      <span>${t.maps?.length || 0} maps</span>
+      <span>·</span>
+      <span>${t.source_ils || 'ILS unknown'}</span>
+      <span>·</span>
+      <span>Used ${t.use_count}×</span>
+    </div>
+    ${t.description ? `<div style="margin-top:6px;font-size:12px;color:var(--text-dim)">${t.description}</div>` : ''}
+  </div>`;
+}
+
+// ── Suggestions ───────────────────────────────────────────────────────
+async function renderSuggestions(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Suggestions &amp; Feedback</div>
+        <div class="page-subtitle">Feature requests, bugs, and workflow ideas</div>
+      </div>
+      <button class="btn btn-primary" onclick="openNewSuggestionModal()">+ Submit</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <select class="form-select" style="width:160px" id="sg-type-filter" onchange="loadSuggestions()">
+        <option value="">All types</option>
+        <option value="feature">Feature</option>
+        <option value="bug">Bug</option>
+        <option value="workflow">Workflow</option>
+        <option value="discussion">Discussion</option>
+      </select>
+      <select class="form-select" style="width:160px" id="sg-status-filter" onchange="loadSuggestions()">
+        <option value="">All statuses</option>
+        <option value="open">Open</option>
+        <option value="confirmed">Confirmed</option>
+        <option value="in_progress">In Progress</option>
+        <option value="shipped">Shipped</option>
+      </select>
+    </div>
+    <div id="suggestions-list"><div class="spinner"></div></div>`;
+
+  loadSuggestions();
+}
+
+async function loadSuggestions() {
+  const type = document.getElementById('sg-type-filter')?.value || '';
+  const status = document.getElementById('sg-status-filter')?.value || '';
+  const wrap = document.getElementById('suggestions-list');
+  if (!wrap) return;
+
+  try {
+    let url = '/suggestions';
+    const params = [];
+    if (type) params.push(`type=${type}`);
+    if (status) params.push(`status=${status}`);
+    if (params.length) url += '?' + params.join('&');
+
+    const items = await api('GET', url);
+    if (!items.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No suggestions found</div></div>`;
+      return;
+    }
+
+    const typeBadge = { feature: 'badge-cerulean', bug: 'badge-red', workflow: 'badge-green', discussion: 'badge-amber' };
+    const statusBadge2 = { open: 'badge-dim', confirmed: 'badge-cerulean', in_progress: 'badge-amber', shipped: 'badge-green', closed: 'badge-dim' };
+
+    wrap.innerHTML = items.map(s => `
+      <div class="suggestion-card" style="border-left:3px solid ${s.type==='feature'?'var(--cerulean)':s.type==='bug'?'var(--red)':s.type==='workflow'?'var(--green)':'var(--amber)'}">
+        <div class="suggestion-vote">
+          <button class="vote-btn" onclick="voteSuggestion('${s.id}', this)">▲</button>
+          <div class="vote-count">${s.vote_count}</div>
+        </div>
+        <div class="suggestion-body">
+          <div class="suggestion-title">${s.title}</div>
+          <div class="suggestion-desc">${s.body}</div>
+          <div class="suggestion-meta">
+            <span class="badge ${typeBadge[s.type] || 'badge-dim'}">${s.type}</span>
+            <span class="badge ${statusBadge2[s.status] || 'badge-dim'}">${s.status}</span>
+            ${s.submitted_by ? `<span class="text-dim" style="font-size:11px">${s.submitted_by}</span>` : ''}
+            <span class="text-dim" style="font-size:11px">${new Date(s.created_at).toLocaleDateString()}</span>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch {}
+}
+
+async function voteSuggestion(id, btn) {
+  try {
+    const res = await api('POST', `/suggestions/${id}/vote?user_email=engineer@bws.com`);
+    btn.classList.toggle('voted', res.voted);
+    btn.nextElementSibling.textContent = res.vote_count;
+  } catch {}
+}
+
+function openNewSuggestionModal() {
+  openModal(`
+    <div class="modal-title">Submit Suggestion</div>
+    <div class="form-group">
+      <label class="form-label">Type *</label>
+      <select class="form-select" id="ns-type">
+        <option value="feature">Feature Request</option>
+        <option value="bug">Bug Report</option>
+        <option value="workflow">Workflow Idea</option>
+        <option value="discussion">Discussion</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Title *</label>
+      <input class="form-input" id="ns-title" placeholder="Short summary">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Details *</label>
+      <textarea class="form-textarea" id="ns-body" placeholder="Describe the idea, bug, or workflow improvement"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitSuggestion()">Submit</button>
+    </div>`);
+}
+
+async function submitSuggestion() {
+  const title = document.getElementById('ns-title').value.trim();
+  const body = document.getElementById('ns-body').value.trim();
+  if (!title || !body) { toast('Title and details are required', 'warn'); return; }
+  try {
+    await api('POST', '/suggestions', {
+      type: document.getElementById('ns-type').value,
+      title,
+      body,
+    });
+    closeModal();
+    toast('Suggestion submitted', 'success');
+    loadSuggestions();
+  } catch {}
+}
+
+// ── Init ─────────────────────────────────────────────────────────────
+navigate('dashboard');
+checkHealth();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>
