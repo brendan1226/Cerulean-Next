@@ -7,11 +7,14 @@ GET  /projects/{id}/files/{fid}/records/{n}     — fetch record N (0-indexed)
 GET  /projects/{id}/files/{fid}/tags            — tag frequency histogram
 """
 
+import logging
 import os
 import uuid
 from pathlib import Path
 
 import pymarc
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +28,7 @@ from cerulean.tasks.ingest import ingest_marc_task
 settings = get_settings()
 router = APIRouter(prefix="/projects", tags=["files"])
 
-ALLOWED_EXTENSIONS = {".mrc", ".marc", ".mrk", ".txt", ".csv"}
+ALLOWED_EXTENSIONS = {".mrc", ".marc", ".mrk", ".txt", ".csv", ".dat", ".tsv", ".xml", ".json"}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
@@ -61,11 +64,16 @@ async def upload_file(
     with open(storage_path, "wb") as fh:
         fh.write(content)
 
+    # Derive format from extension
+    format_map = {".mrc": "iso2709", ".marc": "iso2709", ".mrk": "mrk", ".txt": "mrk", ".csv": "csv", ".dat": "iso2709", ".tsv": "csv", ".xml": "marcxml", ".json": "json"}
+    file_format = format_map.get(suffix, "iso2709")
+
     # Create MARCFile row
     marc_file = MARCFile(
         id=file_id,
         project_id=project_id,
         filename=file.filename or f"upload{suffix}",
+        file_format=file_format,
         storage_path=storage_path,
         file_size_bytes=len(content),
         status="uploaded",
@@ -164,6 +172,7 @@ def _read_record_at_index(storage_path: str, index: int) -> pymarc.Record | None
                 if i == index:
                     return record
     except Exception:
+        logger.warning("Error reading record at index %d from %s", index, storage_path, exc_info=True)
         return None
     return None
 
@@ -176,8 +185,8 @@ def _record_to_dict(record: pymarc.Record, index: int) -> dict:
             fields.append({"tag": field.tag, "data": field.data})
         else:
             subfields = []
-            for code, value in zip(field.subfields[0::2], field.subfields[1::2]):
-                subfields.append({"code": code, "value": value})
+            for sf in field.subfields:
+                subfields.append({"code": sf.code, "value": sf.value})
             fields.append({
                 "tag": field.tag,
                 "ind1": field.indicator1,

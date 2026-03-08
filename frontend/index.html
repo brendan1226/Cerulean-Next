@@ -1141,7 +1141,7 @@ async function renderStage1(el) {
           <div style="font-size:28px;margin-bottom:8px;opacity:0.4">⇑</div>
           <div class="mono" style="font-size:12px;color:var(--text-secondary)">Drop files here or click to browse</div>
         </div>
-        <input type="file" id="file-input" style="display:none" multiple accept=".mrc,.marc,.mrk,.txt,.csv"
+        <input type="file" id="file-input" style="display:none" multiple accept=".mrc,.marc,.mrk,.txt,.csv,.dat,.tsv,.xml,.json"
           onchange="uploadFiles(this.files)">
       </div>
       <div class="card">
@@ -1205,10 +1205,13 @@ async function uploadFiles(fileList) {
     fd.append('file', file);
     try {
       const res = await fetch(`${API_BASE}/projects/${p.id}/files`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(await res.text());
-      toast(`Uploading ${file.name}… indexing started`, 'info');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
+        throw new Error(err.detail?.message || err.detail || `HTTP ${res.status}`);
+      }
+      toast(`${file.name} uploaded — indexing started`, 'success');
     } catch (e) {
-      toast(`Upload failed: ${e.message}`, 'error');
+      toast(`Upload failed (${file.name}): ${e.message}`, 'error');
     }
   }
   setTimeout(loadFiles, 2000);
@@ -1984,13 +1987,8 @@ async function submitSuggestion() {
   } catch (e) { console.error(e); }
 }
 
-// ── Init ─────────────────────────────────────────────────────────────
-navigate('dashboard');
-checkHealth();
-setInterval(checkHealth, 30000);
+// ── Init runs after second script block loads (see below) ────────────
 </script>
-</body>
-</html>
 <script>
 // ═══════════════════════════════════════════════════════════════════
 // CERULEAN NEXT — STAGE 3, 4, 5, 6 + AUTH
@@ -2876,4 +2874,11 @@ window.navigate = function(view, params = {}) {
   if (renderer) renderer(viewEl);
   updateBreadcrumb(view);
 };
+
+// ── Init ─────────────────────────────────────────────────────────────
+navigate('dashboard');
+checkHealth();
+setInterval(checkHealth, 30000);
 </script>
+</body>
+</html>

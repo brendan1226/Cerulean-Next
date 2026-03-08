@@ -11,8 +11,11 @@ All tasks write AuditEvent rows via AuditLogger.
 
 import csv
 import json
+import logging
 import os
 import re
+
+logger = logging.getLogger(__name__)
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +28,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001, write_marc as _write_marc
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -531,6 +535,7 @@ def _apply_fn(value: str, expression: str | None) -> str:
         result = eval(expression, {"__builtins__": _SAFE_BUILTINS}, {"value": value})
         return str(result) if result is not None else value
     except Exception:
+        logger.debug("Expression eval failed: %r on value %r", expression, value, exc_info=True)
         return value
 
 
@@ -561,30 +566,8 @@ def _set_value(record: pymarc.Record, tag: str, sub: str | None, value: str) -> 
         ))
 
 
-def _iter_marc(path: str, fmt: str = "iso2709"):
-    """Yield pymarc Record objects from a MARC file."""
-    if fmt == "mrk":
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            yield from pymarc.MARCReader(fh)
-    else:
-        with open(path, "rb") as fh:
-            reader = pymarc.MARCReader(
-                fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
-            )
-            yield from reader
 
-
-def _write_marc(records: list[pymarc.Record], output_path: str) -> None:
-    """Write a list of pymarc Records to an ISO2709 file."""
-    with open(output_path, "wb") as fh:
-        for record in records:
-            fh.write(record.as_marc())
-
-
-def _get_001(record: pymarc.Record) -> str | None:
-    """Extract 001 control number from a record."""
-    fields = record.get_fields("001")
-    return fields[0].data if fields else None
+# _iter_marc, _write_marc, _get_001 imported from cerulean.utils.marc
 
 
 def _update_manifest_error(db: Session, manifest_id: str, error_msg: str) -> None:

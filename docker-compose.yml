@@ -61,6 +61,7 @@ services:
 
 
   # ── Celery beat (scheduled tasks) ───────────────
+  # Uses redbeat (Redis-backed scheduler) — no Django dependency.
   beat:
     build:
       context: .
@@ -68,14 +69,14 @@ services:
     command: >
       celery -A cerulean.tasks.celery_app beat
       --loglevel=info
-      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+      --scheduler redbeat.RedBeatScheduler
     volumes:
       - .:/app
     environment:
       - DATABASE_URL=postgresql+asyncpg://cerulean:cerulean@postgres:5432/cerulean
       - REDIS_URL=redis://redis:6379/0
+      - REDBEAT_REDIS_URL=redis://redis:6379/1
     depends_on:
-      - postgres
       - redis
     networks:
       - cerulean

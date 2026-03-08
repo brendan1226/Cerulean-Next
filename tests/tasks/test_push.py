@@ -2,7 +2,7 @@
 
 import pytest
 
-from cerulean.tasks.push import _iter_marc
+from cerulean.utils.marc import iter_marc as _iter_marc
 
 
 # ══════════════════════════════════════════════════════════════════════

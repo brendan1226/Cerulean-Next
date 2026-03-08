@@ -23,6 +23,7 @@ from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from cerulean.core.config import get_settings
+from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
 
@@ -441,16 +442,5 @@ def _extract_values(record: pymarc.Record, tag: str, sub: str | None) -> list[st
     return values
 
 
-def _get_001(record: pymarc.Record) -> str | None:
-    """Extract 001 control number from a record."""
-    fields = record.get_fields("001")
-    return fields[0].data if fields else None
 
-
-def _iter_marc(path: str):
-    """Yield pymarc Record objects from an ISO2709 MARC file."""
-    with open(path, "rb") as fh:
-        reader = pymarc.MARCReader(
-            fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
-        )
-        yield from reader
+# _get_001 and _iter_marc imported from cerulean.utils.marc

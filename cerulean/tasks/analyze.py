@@ -419,7 +419,7 @@ def _records_to_text(records: list) -> str:
             if field.is_control_field():
                 lines.append(f"  {field.tag}: {field.data}")
             else:
-                subs = " ".join(f"${c} {v}" for c, v in zip(field.subfields[::2], field.subfields[1::2]))
+                subs = " ".join(f"${sf.code} {sf.value}" for sf in field.subfields)
                 lines.append(f"  {field.tag} {field.indicator1}{field.indicator2} {subs}")
     return "\n".join(lines)
 

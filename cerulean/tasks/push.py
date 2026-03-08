@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.utils.marc import iter_marc as _iter_marc
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -74,14 +75,8 @@ def _update_push_manifest(db: Session, manifest_id: str, **kwargs) -> None:
     db.commit()
 
 
-def _iter_marc(path: str):
-    """Yield pymarc Record objects from an ISO2709 MARC file."""
-    import pymarc
-    with open(path, "rb") as fh:
-        reader = pymarc.MARCReader(
-            fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
-        )
-        yield from reader
+
+# _iter_marc imported from cerulean.utils.marc
 
 
 # ══════════════════════════════════════════════════════════════════════════

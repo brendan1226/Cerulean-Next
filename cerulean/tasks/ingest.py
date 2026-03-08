@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.utils.marc import iter_marc as _iter_marc
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -310,25 +311,8 @@ def _parse_marc_file(path: str) -> tuple[str, int]:
     return fmt, count
 
 
-def _iter_marc(
-    path: str, fmt: str = "iso2709"
-) -> Generator[pymarc.Record, None, None]:
-    """Yield pymarc Record objects from a MARC file.
 
-    Args:
-        path: Absolute path to the MARC file.
-        fmt: Format identifier — "iso2709" (binary) or "mrk" (MARCMaker text).
-
-    Yields:
-        pymarc.Record instances parsed from the file.
-    """
-    if fmt == "mrk":
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            yield from pymarc.MARCReader(fh)
-    else:
-        with open(path, "rb") as fh:
-            reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
-            yield from reader
+# _iter_marc imported from cerulean.utils.marc
 
 
 def _read_sample(path: str, max_records: int = 200) -> list[pymarc.Record]:
