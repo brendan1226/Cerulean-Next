@@ -33,7 +33,12 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from cerulean.core.database import Base
+from cerulean.models.project import Project
+from cerulean.models.marc_file import MARCFile
+from cerulean.models.field_map import FieldMap
 
+from cerulean.models.transform_manifest import TransformManifest
+# ... etc
 
 # ─── helpers ──────────────────────────────────────────────────────────────
 

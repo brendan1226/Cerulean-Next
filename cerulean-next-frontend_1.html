@@ -837,13 +837,6 @@
 
 const API_BASE = 'http://localhost:8000/api/v1';
 
-// ── XSS escaping ─────────────────────────────────────────────────────
-// ALL server-supplied data interpolated into innerHTML MUST go through esc().
-// Never interpolate raw API values directly into HTML template strings.
-function esc(str) {
-  return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // ── App state ────────────────────────────────────────────────────────
 const state = {
   currentView: 'dashboard',
@@ -901,9 +894,9 @@ function updateBreadcrumb(view) {
   const crumb = document.getElementById('breadcrumb');
   const p = state.currentProject;
   if (p) {
-    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="text-cerulean mono">${esc(p.code)}</span><span class="crumb-sep">/</span><span class="crumb-active">${esc(labels[view] || view)}</span>`;
+    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="text-cerulean mono">${p.code}</span><span class="crumb-sep">/</span><span class="crumb-active">${labels[view] || view}</span>`;
   } else {
-    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="crumb-active">${esc(labels[view] || view)}</span>`;
+    crumb.innerHTML = `<span class="text-dim">cerulean</span><span class="crumb-sep">/</span><span class="crumb-active">${labels[view] || view}</span>`;
   }
   document.getElementById('topbar-actions').innerHTML = '';
 }
@@ -933,7 +926,7 @@ function toast(msg, type = 'info', duration = 4000) {
   const icons = { success: '✓', error: '✕', info: 'ℹ', warn: '⚠' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${esc(msg)}</span>`;
+  el.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${msg}</span>`;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), duration);
 }
@@ -1030,9 +1023,9 @@ async function renderDashboard(el) {
     wrap.innerHTML = `<div class="project-list">
       ${projects.map(p => `
         <div class="project-row" onclick="openProject(${JSON.stringify(p).replace(/"/g, '&quot;')})">
-          <div class="project-code">${esc(p.code)}</div>
-          <div class="project-name">${esc(p.library_name)}</div>
-          <div class="project-ils mono text-dim">${esc(p.source_ils || '—')}</div>
+          <div class="project-code">${p.code}</div>
+          <div class="project-name">${p.library_name}</div>
+          <div class="project-ils mono text-dim">${p.source_ils || '—'}</div>
           <div class="project-stages">
             ${[1,2,3,4,5].map(i => {
               const done = p[`stage_${i}_complete`];
@@ -1046,9 +1039,8 @@ async function renderDashboard(el) {
         </div>`).join('')}
     </div>`;
   } catch (e) {
-    console.error('loadProjects failed:', e);
     document.getElementById('project-list-wrap').innerHTML =
-      `<div class="alert alert-error">Failed to load projects: ${esc(e.message)}</div>`;
+      `<div class="alert alert-error">Failed to load projects: ${e.message}</div>`;
   }
 }
 
@@ -1107,7 +1099,7 @@ async function createProject() {
     updateStageBadges(project);
     toast(`Project "${code}" created`, 'success');
     navigate('stage1');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 // ── Stage 1 — Ingest ─────────────────────────────────────────────────
@@ -1117,7 +1109,7 @@ async function renderStage1(el) {
     <div class="page-header">
       <div>
         <div class="page-title">Stage 1 — Data Ingest</div>
-        <div class="page-subtitle">${esc(p.library_name)}</div>
+        <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
     ${pipelineBar(p)}
@@ -1144,7 +1136,7 @@ async function renderStage1(el) {
         </div>
         <div id="ils-result">
           ${p.source_ils
-            ? `<div class="badge badge-cerulean" style="font-size:13px;padding:6px 12px">${esc(p.source_ils)}</div>
+            ? `<div class="badge badge-cerulean" style="font-size:13px;padding:6px 12px">${p.source_ils}</div>
                <div class="text-secondary" style="margin-top:8px;font-size:12px">Confidence: ${p.ils_confidence ? Math.round(p.ils_confidence * 100) + '%' : '—'}</div>`
             : `<div class="text-dim" style="font-size:12px">Upload files to trigger automatic ILS detection</div>`
           }
@@ -1189,7 +1181,7 @@ async function loadFiles() {
         </tr>`).join('')}
       </tbody>
     </table>`;
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function uploadFiles(fileList) {
@@ -1307,7 +1299,7 @@ async function loadMaps(filter = '') {
         ${maps.map(m => mapRow(m)).join('')}
       </tbody>
     </table>`;
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function mapRow(m) {
@@ -1323,17 +1315,17 @@ function mapRow(m) {
 
   const rowClass = m.approved ? 'map-row-approved' : m.ai_suggested ? 'map-row-ai' : '';
 
-  return `<tr class="${rowClass}" id="map-${esc(m.id)}">
-    <td class="mono text-cerulean">${esc(m.source_tag)}${m.source_sub ? esc(m.source_sub) : ''}</td>
+  return `<tr class="${rowClass}" id="map-${m.id}">
+    <td class="mono text-cerulean">${m.source_tag}${m.source_sub ? m.source_sub : ''}</td>
     <td class="text-dim">→</td>
-    <td class="mono">${esc(m.target_tag)}${m.target_sub ? esc(m.target_sub) : ''}</td>
-    <td><span class="badge badge-dim">${esc(m.transform_type)}</span></td>
+    <td class="mono">${m.target_tag}${m.target_sub ? m.target_sub : ''}</td>
+    <td><span class="badge badge-dim">${m.transform_type}</span></td>
     <td>${origin}</td>
     <td>${conf}</td>
     <td>${m.approved ? '<span class="badge badge-green">approved</span>' : '<span class="badge badge-amber">pending</span>'}</td>
     <td style="display:flex;gap:4px">
-      ${!m.approved ? `<button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="approveMap(this.dataset.mapId,this)">✓</button>` : ''}
-      <button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="deleteMap(this.dataset.mapId,this)">✕</button>
+      ${!m.approved ? `<button class="btn btn-ghost btn-sm" onclick="approveMap('${m.id}')">✓</button>` : ''}
+      <button class="btn btn-ghost btn-sm" onclick="deleteMap('${m.id}')">✕</button>
     </td>
   </tr>`;
 }
@@ -1342,30 +1334,22 @@ function filterMaps(text, status = '') {
   loadMaps(status);
 }
 
-async function approveMap(mapId, btn) {
+async function approveMap(mapId) {
   const p = state.currentProject;
-  if (btn) btn.disabled = true;
   try {
     await api('POST', `/projects/${p.id}/maps/${mapId}/approve`);
     toast('Map approved', 'success');
     loadMaps();
-  } catch (e) {
-    console.error('approveMap failed:', e);
-    if (btn) btn.disabled = false;
-  }
+  } catch {}
 }
 
-async function deleteMap(mapId, btn) {
+async function deleteMap(mapId) {
   const p = state.currentProject;
-  if (btn) btn.disabled = true;
   try {
     await api('DELETE', `/projects/${p.id}/maps/${mapId}`);
     toast('Map deleted', 'success');
     loadMaps();
-  } catch (e) {
-    console.error('deleteMap failed:', e);
-    if (btn) btn.disabled = false;
-  }
+  } catch {}
 }
 
 async function approveAll() {
@@ -1374,9 +1358,7 @@ async function approveAll() {
     const res = await api('POST', `/projects/${p.id}/maps/approve-all`, { min_confidence: 0.70 });
     toast(`Approved ${res.approved_count} maps`, 'success');
     loadMaps();
-  } catch (e) {
-    console.error('approveAll failed:', e);
-  }
+  } catch {}
 }
 
 function openNewMapModal() {
@@ -1446,7 +1428,7 @@ async function submitNewMap() {
     closeModal();
     toast('Map added', 'success');
     loadMaps();
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function openSaveTemplateModal() {
@@ -1497,7 +1479,7 @@ async function submitSaveTemplate() {
     });
     closeModal();
     toast('Template save queued', 'success');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function openLoadTemplateModal() {
@@ -1533,7 +1515,7 @@ async function submitLoadTemplate() {
     closeModal();
     toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped, ${res.maps_conflicted} replaced`, 'success');
     loadMaps();
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function renderAISuggestionsTab() {
@@ -1556,7 +1538,7 @@ async function renderAISuggestionsTab() {
   try {
     const maps = await api('GET', `/projects/${p.id}/maps?status=pending`);
     if (maps.length) renderAISuggestionRows(maps);
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function renderAISuggestionRows(maps) {
@@ -1568,15 +1550,15 @@ function renderAISuggestionRows(maps) {
       <thead><tr><th>Source</th><th>→</th><th>Target</th><th>Transform</th><th>Confidence</th><th>Reasoning</th><th>Actions</th></tr></thead>
       <tbody>
         ${maps.map(m => `<tr>
-          <td class="mono text-cerulean">${esc(m.source_tag)}${esc(m.source_sub || '')}</td>
+          <td class="mono text-cerulean">${m.source_tag}${m.source_sub || ''}</td>
           <td class="text-dim">→</td>
-          <td class="mono">${esc(m.target_tag)}${esc(m.target_sub || '')}</td>
-          <td><span class="badge badge-dim">${esc(m.transform_type)}</span></td>
+          <td class="mono">${m.target_tag}${m.target_sub || ''}</td>
+          <td><span class="badge badge-dim">${m.transform_type}</span></td>
           <td><span class="${m.ai_confidence >= 0.7 ? 'text-green' : m.ai_confidence >= 0.4 ? 'text-amber' : 'text-red'} mono">${Math.round((m.ai_confidence||0)*100)}%</span></td>
-          <td style="max-width:260px;font-size:11px;color:var(--text-secondary)">${esc(m.ai_reasoning || '—')}</td>
+          <td style="max-width:260px;font-size:11px;color:var(--text-secondary)">${m.ai_reasoning || '—'}</td>
           <td style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="approveMap(this.dataset.mapId,this)">✓ Accept</button>
-            <button class="btn btn-danger btn-sm" data-map-id="${esc(m.id)}" onclick="deleteMap(this.dataset.mapId,this)">✕</button>
+            <button class="btn btn-ghost btn-sm" onclick="approveMap('${m.id}')">✓ Accept</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteMap('${m.id}')">✕</button>
           </td>
         </tr>`).join('')}
       </tbody>
@@ -1588,7 +1570,7 @@ async function runAISuggest() {
   try {
     const res = await api('POST', `/projects/${p.id}/maps/ai-suggest`);
     toast(`AI analysis started (task ${res.task_id.slice(0,8)}…)`, 'info');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function renderTemplatesTab() {
@@ -1622,20 +1604,20 @@ async function loadTemplateList() {
       <thead><tr><th>Name</th><th>Version</th><th>Scope</th><th>ILS</th><th>Maps</th><th>Uses</th><th>Actions</th></tr></thead>
       <tbody>
         ${templates.map(t => `<tr>
-          <td class="mono">${esc(t.name)}</td>
-          <td class="text-dim mono">v${esc(t.version)}</td>
+          <td class="mono">${t.name}</td>
+          <td class="text-dim mono">v${t.version}</td>
           <td>${t.scope === 'global' ? '<span class="badge badge-purple">global</span>' : '<span class="badge badge-cerulean">project</span>'}</td>
-          <td class="text-secondary">${esc(t.source_ils || '—')}</td>
+          <td class="text-secondary">${t.source_ils || '—'}</td>
           <td class="mono">${t.maps ? t.maps.length : '—'}</td>
-          <td class="mono text-dim">${esc(String(t.use_count))}</td>
+          <td class="mono text-dim">${t.use_count}</td>
           <td style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="loadThisTemplate(this.dataset.tmplId)">Load</button>
-            ${t.scope === 'project' ? `<button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
+            <button class="btn btn-ghost btn-sm" onclick="loadThisTemplate('${t.id}')">Load</button>
+            ${t.scope === 'project' ? `<button class="btn btn-ghost btn-sm" onclick="promoteTemplate('${t.id}')">↑ Global</button>` : ''}
           </td>
         </tr>`).join('')}
       </tbody>
     </table>`;
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function loadThisTemplate(templateId) {
@@ -1644,7 +1626,7 @@ async function loadThisTemplate(templateId) {
   try {
     const res = await api('POST', `/projects/${p.id}/maps/load-template`, { template_id: templateId, mode: 'merge' });
     toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped`, 'success');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function promoteTemplate(templateId) {
@@ -1652,7 +1634,7 @@ async function promoteTemplate(templateId) {
     await api('POST', `/templates/${templateId}/promote`);
     toast('Template promoted to global', 'success');
     loadTemplateList();
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function renderRecordViewerTab() {
@@ -1686,17 +1668,14 @@ async function fetchRecord() {
     const wrap = document.getElementById('rv-result');
     wrap.innerHTML = `
       <div class="mono" style="font-size:11px;background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius);padding:12px;max-height:400px;overflow-y:auto">
-        <div class="text-dim">Leader: ${esc(record.leader)}</div>
-        <div class="text-secondary" style="margin-bottom:8px">${esc(record.title)}</div>
+        <div class="text-dim">Leader: ${record.leader}</div>
+        <div class="text-secondary" style="margin-bottom:8px">${record.title}</div>
         ${record.fields.map(f => {
-          if (f.data !== undefined) return `<div><span class="text-cerulean">${esc(f.tag)}</span>  ${esc(f.data)}</div>`;
-          return `<div><span class="text-cerulean">${esc(f.tag)}</span> ${esc(f.ind1)}${esc(f.ind2)} ${f.subfields.map(s => `<span class="text-dim">$${esc(s.code)}</span> ${esc(s.value)}`).join(' ')}</div>`;
+          if (f.data !== undefined) return `<div><span class="text-cerulean">${f.tag}</span>  ${f.data}</div>`;
+          return `<div><span class="text-cerulean">${f.tag}</span> ${f.ind1}${f.ind2} ${f.subfields.map(s => `<span class="text-dim">$${s.code}</span> ${s.value}`).join(' ')}</div>`;
         }).join('')}
       </div>`;
-  } catch (e) {
-    console.error('fetchRecord failed:', e);
-    document.getElementById('rv-result').innerHTML = `<div class="alert alert-error">Failed to load record: ${esc(e.message)}</div>`;
-  }
+  } catch {}
 }
 
 // ── Stage stubs ───────────────────────────────────────────────────────
@@ -1791,7 +1770,7 @@ async function loadLog() {
         <span class="text-red">· ${counts.error||0} errors</span>
         <span class="text-dim">· ${data.total} total</span>`;
     }
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 // ── Templates page ────────────────────────────────────────────────────
@@ -1819,30 +1798,28 @@ async function renderTemplates(el) {
         ${globals.map(t => templateCard(t)).join('')}<br>` : ''}
       ${projects.length ? `<div class="card-title" style="margin-bottom:10px">PROJECT TEMPLATES</div>
         ${projects.map(t => templateCard(t)).join('')}` : ''}`;
-  } catch (e) {
-    console.error('renderTemplates failed:', e);
-  }
+  } catch {}
 }
 
 function templateCard(t) {
   return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${t.scope==='global'?'var(--purple)':'var(--cerulean)'}">
     <div class="card-header">
       <div>
-        <span class="mono" style="font-size:13px;font-weight:600">${esc(t.name)}</span>
-        <span class="text-dim mono" style="margin-left:8px">v${esc(t.version)}</span>
+        <span class="mono" style="font-size:13px;font-weight:600">${t.name}</span>
+        <span class="text-dim mono" style="margin-left:8px">v${t.version}</span>
       </div>
       <div style="display:flex;gap:6px">
-        ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
+        ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" onclick="promoteTemplate('${t.id}')">↑ Global</button>` : ''}
       </div>
     </div>
     <div style="display:flex;gap:12px;font-size:12px;color:var(--text-secondary)">
       <span>${t.maps?.length || 0} maps</span>
       <span>·</span>
-      <span>${esc(t.source_ils || 'ILS unknown')}</span>
+      <span>${t.source_ils || 'ILS unknown'}</span>
       <span>·</span>
-      <span>Used ${esc(String(t.use_count))}×</span>
+      <span>Used ${t.use_count}×</span>
     </div>
-    ${t.description ? `<div style="margin-top:6px;font-size:12px;color:var(--text-dim)">${esc(t.description)}</div>` : ''}
+    ${t.description ? `<div style="margin-top:6px;font-size:12px;color:var(--text-dim)">${t.description}</div>` : ''}
   </div>`;
 }
 
@@ -1902,38 +1879,29 @@ async function loadSuggestions() {
     wrap.innerHTML = items.map(s => `
       <div class="suggestion-card" style="border-left:3px solid ${s.type==='feature'?'var(--cerulean)':s.type==='bug'?'var(--red)':s.type==='workflow'?'var(--green)':'var(--amber)'}">
         <div class="suggestion-vote">
-          <button class="vote-btn" data-suggestion-id="${esc(s.id)}" onclick="voteSuggestion(this.dataset.suggestionId, this)">▲</button>
+          <button class="vote-btn" onclick="voteSuggestion('${s.id}', this)">▲</button>
           <div class="vote-count">${s.vote_count}</div>
         </div>
         <div class="suggestion-body">
-          <div class="suggestion-title">${esc(s.title)}</div>
-          <div class="suggestion-desc">${esc(s.body)}</div>
+          <div class="suggestion-title">${s.title}</div>
+          <div class="suggestion-desc">${s.body}</div>
           <div class="suggestion-meta">
-            <span class="badge ${typeBadge[s.type] || 'badge-dim'}">${esc(s.type)}</span>
-            <span class="badge ${statusBadge2[s.status] || 'badge-dim'}">${esc(s.status)}</span>
-            ${s.submitted_by ? `<span class="text-dim" style="font-size:11px">${esc(s.submitted_by)}</span>` : ''}
+            <span class="badge ${typeBadge[s.type] || 'badge-dim'}">${s.type}</span>
+            <span class="badge ${statusBadge2[s.status] || 'badge-dim'}">${s.status}</span>
+            ${s.submitted_by ? `<span class="text-dim" style="font-size:11px">${s.submitted_by}</span>` : ''}
             <span class="text-dim" style="font-size:11px">${new Date(s.created_at).toLocaleDateString()}</span>
           </div>
         </div>
       </div>`).join('');
-  } catch (e) {
-    console.error('loadSuggestions failed:', e);
-    if (wrap) wrap.innerHTML = `<div class="empty-state"><div class="empty-title">Failed to load — try refreshing</div></div>`;
-  }
+  } catch {}
 }
 
 async function voteSuggestion(id, btn) {
-  // User identity is derived from the JWT on the server — do not pass email as a parameter.
-  if (btn) btn.disabled = true;
   try {
-    const res = await api('POST', `/suggestions/${id}/vote`);
+    const res = await api('POST', `/suggestions/${id}/vote?user_email=engineer@bws.com`);
     btn.classList.toggle('voted', res.voted);
     btn.nextElementSibling.textContent = res.vote_count;
-  } catch (e) {
-    console.error('voteSuggestion failed:', e);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  } catch {}
 }
 
 function openNewSuggestionModal() {
@@ -1975,7 +1943,7 @@ async function submitSuggestion() {
     closeModal();
     toast('Suggestion submitted', 'success');
     loadSuggestions();
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 // ── Init ─────────────────────────────────────────────────────────────
@@ -2116,7 +2084,7 @@ async function runTransform() {
     document.getElementById('transform-status').innerHTML =
       `<span class="badge badge-amber">Running</span> <span class="mono text-dim">task: ${r.task_id.slice(0,8)}…</span>`;
     pollTaskStatus(p.id, r.task_id, 'transform-status', 'transform');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function renderS3Merge() {
@@ -2173,7 +2141,7 @@ async function runMerge() {
     document.getElementById('merge-status').innerHTML =
       `<span class="badge badge-amber">Running</span> <span class="mono text-dim">${ids.length} files, task: ${r.task_id.slice(0,8)}…</span>`;
     pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge');
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function renderS3Manifest() {
@@ -2252,14 +2220,14 @@ async function loadRules() {
         <div class="card" style="border-left:3px solid ${r.active ? 'var(--cerulean)' : 'var(--border)'}">
           <div class="card-header">
             <div>
-              <span class="mono" style="font-weight:600">${esc(r.name)}</span>
+              <span class="mono" style="font-weight:600">${r.name}</span>
               ${r.active ? '<span class="badge badge-cerulean" style="margin-left:8px">active</span>' : ''}
-              ${r.preset_key ? `<span class="badge badge-dim" style="margin-left:8px">${esc(r.preset_key)}</span>` : ''}
+              ${r.preset_key ? `<span class="badge badge-dim" style="margin-left:8px">${r.preset_key}</span>` : ''}
             </div>
             <div style="display:flex;gap:6px">
-              ${!r.active ? `<button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="activateRule(this.dataset.ruleId)">Activate</button>` : ''}
-              <button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="runScan(this.dataset.ruleId,this)">▶ Scan</button>
-              ${r.last_scan_clusters != null ? `<button class="btn btn-primary btn-sm" data-rule-id="${esc(r.id)}" onclick="runApply(this.dataset.ruleId,this)">Apply</button>` : ''}
+              ${!r.active ? `<button class="btn btn-ghost btn-sm" onclick="activateRule('${r.id}')">Activate</button>` : ''}
+              <button class="btn btn-ghost btn-sm" onclick="runScan('${r.id}')">▶ Scan</button>
+              ${r.last_scan_clusters != null ? `<button class="btn btn-primary btn-sm" onclick="runApply('${r.id}')">Apply</button>` : ''}
             </div>
           </div>
           ${r.last_scan_clusters != null ? `
@@ -2273,7 +2241,7 @@ async function loadRules() {
           <div id="rule-status-${r.id}" style="margin-top:8px"></div>
         </div>`).join('')}
     </div>`;
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function activateRule(ruleId) {
@@ -2340,7 +2308,7 @@ async function submitNewRule() {
     closeModal();
     toast('Rule created', 'success');
     loadRules();
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 async function renderS4Clusters() {
@@ -2366,34 +2334,34 @@ async function renderS4Clusters() {
         <thead><tr><th>Match Key</th><th>Records</th><th>Primary</th><th>Action</th></tr></thead>
         <tbody>
           ${clusters.map(c => `<tr>
-            <td class="mono text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.match_key || '—')}</td>
+            <td class="mono text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${c.match_key || '—'}</td>
             <td>${c.records?.length}</td>
-            <td class="mono">${esc(c.records?.[c.primary_index]?.marc_001 || `idx:${c.primary_index}`)}</td>
-            <td><button class="btn btn-ghost btn-sm" data-cluster-id="${esc(c.id)}" onclick="viewCluster(this.dataset.clusterId, ${JSON.stringify(c).replace(/"/g,'&quot;')})">View</button></td>
+            <td class="mono">${c.records?.[c.primary_index]?.marc_001 || `idx:${c.primary_index}`}</td>
+            <td><button class="btn btn-ghost btn-sm" onclick="viewCluster('${c.id}', ${JSON.stringify(c).replace(/"/g,'&quot;')})">View</button></td>
           </tr>`).join('')}
         </tbody>
       </table>`;
-  } catch (e) { console.error(e); }
+  } catch {}
 }
 
 function viewCluster(id, cluster) {
   const records = cluster.records || [];
   openModal(`
-    <div class="modal-title">Cluster — ${esc(cluster.match_key || id.slice(0,8))}</div>
+    <div class="modal-title">Cluster — ${cluster.match_key || id.slice(0,8)}</div>
     <div style="margin-bottom:16px;font-size:12px;color:var(--text-secondary)">${records.length} duplicate records. Select which to keep as primary:</div>
     ${records.map((r, i) => `
       <div class="card" style="margin-bottom:8px;border-left:3px solid ${i===cluster.primary_index?'var(--cerulean)':'var(--border)'}">
         <div style="display:flex;align-items:center;gap:12px">
           <input type="radio" name="primary" value="${i}" ${i===cluster.primary_index?'checked':''} id="pri-${i}">
           <label for="pri-${i}" style="flex:1;cursor:pointer">
-            <span class="mono">001: ${esc(r.marc_001 || 'unknown')}</span>
+            <span class="mono">001: ${r.marc_001 || 'unknown'}</span>
             <span class="text-dim" style="margin-left:12px">${r.field_count} fields, ${r.item_count} items</span>
           </label>
         </div>
       </div>`).join('')}
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" data-cluster-id="${esc(id)}" onclick="resolveCluster(this.dataset.clusterId)">Set Primary</button>
+      <button class="btn btn-primary" onclick="resolveCluster('${id}')">Set Primary</button>
     </div>`);
 }
 

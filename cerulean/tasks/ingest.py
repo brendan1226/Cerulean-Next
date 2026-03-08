@@ -12,10 +12,10 @@ All tasks write AuditEvent rows via AuditLogger.
 
 import os
 from collections import Counter
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pymarc
-from celery import shared_task
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session
 
@@ -32,10 +32,10 @@ _engine = create_engine(_sync_url, pool_pre_ping=True)
 # INGEST MARC TASK
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @celery_app.task(bind=True, name="cerulean.tasks.ingest.ingest_marc_task")
 def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
-    """
-    Parse a MARC file, count records, and mark it indexed.
+    """Parse a MARC file, count records, and mark it indexed.
 
     Args:
         project_id: UUID string of the owning project.
@@ -44,6 +44,9 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
 
     Returns:
         dict with record_count and file_format detected.
+
+    Raises:
+        Exception: Re-raised after writing an AuditEvent and marking the file error.
     """
     from cerulean.models import MARCFile
 
@@ -73,6 +76,7 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
         detect_ils_task.apply_async(args=[project_id, file_id, storage_path], queue="ingest")
         tag_frequency_task.apply_async(args=[project_id, file_id, storage_path], queue="analyze")
 
+        log.complete(f"Ingest complete — {record_count:,} records")
         return {"record_count": record_count, "file_format": file_format}
 
     except Exception as exc:
@@ -89,19 +93,32 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
 # Each heuristic receives a list of pymarc Record objects (sample).
 # Returns (ils_name, confidence) or (None, 0.0).
 
-_ILS_HEURISTICS = []
+_ILS_HEURISTICS: list[tuple[str, Callable[[list[pymarc.Record]], tuple[str | None, float]]]] = []
 
 
-def ils_heuristic(name: str):
-    """Decorator to register an ILS detection heuristic."""
-    def decorator(fn):
+def ils_heuristic(
+    name: str,
+) -> Callable[[Callable[[list[pymarc.Record]], tuple[str | None, float]]], Callable]:
+    """Decorator to register an ILS detection heuristic.
+
+    Args:
+        name: Human-readable ILS name, used as the detection result string.
+
+    Returns:
+        Decorator that registers and returns the wrapped function unchanged.
+    """
+
+    def decorator(
+        fn: Callable[[list[pymarc.Record]], tuple[str | None, float]],
+    ) -> Callable[[list[pymarc.Record]], tuple[str | None, float]]:
         _ILS_HEURISTICS.append((name, fn))
         return fn
+
     return decorator
 
 
 @ils_heuristic("SirsiDynix Symphony")
-def _detect_symphony(records: list) -> tuple[str | None, float]:
+def _detect_symphony(records: list[pymarc.Record]) -> tuple[str | None, float]:
     # Symphony exports typically have 035$a with "(Sirsi)" or 999$l location codes
     hits = sum(
         1 for r in records
@@ -113,42 +130,55 @@ def _detect_symphony(records: list) -> tuple[str | None, float]:
 
 
 @ils_heuristic("Innovative Interfaces (III) Millennium / Sierra")
-def _detect_iii(records: list) -> tuple[str | None, float]:
+def _detect_iii(records: list[pymarc.Record]) -> tuple[str | None, float]:
     # III exports often have 907 (bib record number) or 945 (item) local fields
     hits = sum(
         1 for r in records
-        if r.get_fields("907") or r.get_fields("945")
+        if any(f.tag in ("907", "945") for f in r.fields)
     )
     conf = hits / max(len(records), 1)
-    return ("Innovative Interfaces (III)", conf) if conf > 0.4 else (None, 0.0)
+    return ("Innovative Interfaces (III) Millennium / Sierra", conf) if conf > 0.4 else (None, 0.0)
 
 
 @ils_heuristic("Polaris")
-def _detect_polaris(records: list) -> tuple[str | None, float]:
-    # Polaris uses 949 for items and often 035$a "(PLS)"
+def _detect_polaris(records: list[pymarc.Record]) -> tuple[str | None, float]:
+    # Polaris uses 949 for item data with specific subfield patterns
     hits = sum(
         1 for r in records
-        if r.get_fields("949")
-        or any("PLS" in (f["a"] or "") for f in r.get_fields("035") if f["a"])
+        if any(f.tag == "949" and f["t"] for f in r.get_fields("949"))
     )
     conf = hits / max(len(records), 1)
-    return ("Polaris", conf) if conf > 0.35 else (None, 0.0)
+    return ("Polaris", conf) if conf > 0.4 else (None, 0.0)
 
 
-@ils_heuristic("Koha (already Koha)")
-def _detect_koha(records: list) -> tuple[str | None, float]:
-    # Data that's already in Koha will have 952 item fields
-    hits = sum(1 for r in records if r.get_fields("952"))
+@ils_heuristic("Koha")
+def _detect_koha(records: list[pymarc.Record]) -> tuple[str | None, float]:
+    # Koha exports use 952 for items and often have 942 for record-level item type
+    hits = sum(
+        1 for r in records
+        if any(f.tag in ("952", "942") for f in r.fields)
+    )
     conf = hits / max(len(records), 1)
     return ("Koha", conf) if conf > 0.5 else (None, 0.0)
 
 
 @celery_app.task(bind=True, name="cerulean.tasks.ingest.detect_ils_task")
 def detect_ils_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
-    """
-    Run ILS detection heuristics on a MARC file.
-    Samples up to 200 records for speed.
-    Updates both MARCFile.ils_signal and Project.source_ils (if not already set).
+    """Run ILS detection heuristics on a MARC file.
+
+    Samples up to 200 records for speed. Updates both MARCFile.ils_signal
+    and Project.source_ils (if not already set).
+
+    Args:
+        project_id: UUID string of the owning project.
+        file_id: UUID string of the MARCFile row.
+        storage_path: Absolute path to the uploaded .mrc file.
+
+    Returns:
+        dict with detected ils name and confidence score.
+
+    Raises:
+        Exception: Re-raised after writing an AuditEvent.
     """
     from cerulean.models import MARCFile, Project
 
@@ -158,7 +188,8 @@ def detect_ils_task(self, project_id: str, file_id: str, storage_path: str) -> d
     try:
         sample = _read_sample(storage_path, max_records=200)
 
-        best_ils, best_conf = None, 0.0
+        best_ils: str | None = None
+        best_conf: float = 0.0
         for ils_name, heuristic in _ILS_HEURISTICS:
             ils, conf = heuristic(sample)
             if conf > best_conf:
@@ -182,6 +213,7 @@ def detect_ils_task(self, project_id: str, file_id: str, storage_path: str) -> d
                 project.ils_confidence = best_conf
             db.commit()
 
+        log.complete(f"ILS detection complete — {best_ils or 'unknown'}")
         return {"ils": best_ils, "confidence": best_conf}
 
     except Exception as exc:
@@ -193,12 +225,24 @@ def detect_ils_task(self, project_id: str, file_id: str, storage_path: str) -> d
 # TAG FREQUENCY TASK
 # ══════════════════════════════════════════════════════════════════════════
 
+
 @celery_app.task(bind=True, name="cerulean.tasks.ingest.tag_frequency_task")
 def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
-    """
-    Build a complete tag frequency histogram across all records in a file.
+    """Build a complete tag frequency histogram across all records in a file.
+
     Stored as JSONB on MARCFile.tag_frequency: {"001": 42118, "245": 42118, ...}
     Sorted descending by count.
+
+    Args:
+        project_id: UUID string of the owning project.
+        file_id: UUID string of the MARCFile row.
+        storage_path: Absolute path to the .mrc file to analyse.
+
+    Returns:
+        dict with unique_tags count and total record_count.
+
+    Raises:
+        Exception: Re-raised after writing an AuditEvent.
     """
     from cerulean.models import MARCFile
 
@@ -206,8 +250,8 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
     log.info("Building tag frequency histogram")
 
     try:
-        counter: Counter = Counter()
-        record_count = 0
+        counter: Counter[str] = Counter()
+        record_count: int = 0
         milestone = 10_000
 
         for record in _iter_marc(storage_path):
@@ -219,9 +263,8 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
                     state="PROGRESS",
                     meta={"records_processed": record_count},
                 )
-                log.info(f"Tag frequency: {record_count:,} records processed")
 
-        # Sort by count descending
+        # Sort descending by count for display convenience
         tag_freq = dict(sorted(counter.items(), key=lambda x: x[1], reverse=True))
 
         with Session(_engine) as db:
@@ -232,7 +275,9 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
             )
             db.commit()
 
-        log.complete(f"Tag frequency complete — {len(tag_freq)} unique tags across {record_count:,} records")
+        log.complete(
+            f"Tag frequency complete — {len(tag_freq)} unique tags across {record_count:,} records"
+        )
         return {"unique_tags": len(tag_freq), "record_count": record_count}
 
     except Exception as exc:
@@ -244,13 +289,16 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _parse_marc_file(path: str) -> tuple[str, int]:
-    """
-    Detect file format and count records.
+    """Detect file format and count records.
+
+    Args:
+        path: Absolute path to the MARC file.
 
     Returns:
-        (file_format, record_count)
-        file_format is "iso2709" or "mrk"
+        Tuple of (file_format, record_count).
+        file_format is "iso2709" or "mrk".
     """
     path_lower = path.lower()
     if path_lower.endswith(".mrk") or path_lower.endswith(".txt"):
@@ -262,8 +310,18 @@ def _parse_marc_file(path: str) -> tuple[str, int]:
     return fmt, count
 
 
-def _iter_marc(path: str, fmt: str = "iso2709"):
-    """Yield pymarc Record objects from a file."""
+def _iter_marc(
+    path: str, fmt: str = "iso2709"
+) -> Generator[pymarc.Record, None, None]:
+    """Yield pymarc Record objects from a MARC file.
+
+    Args:
+        path: Absolute path to the MARC file.
+        fmt: Format identifier — "iso2709" (binary) or "mrk" (MARCMaker text).
+
+    Yields:
+        pymarc.Record instances parsed from the file.
+    """
     if fmt == "mrk":
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             yield from pymarc.MARCReader(fh)
@@ -273,9 +331,17 @@ def _iter_marc(path: str, fmt: str = "iso2709"):
             yield from reader
 
 
-def _read_sample(path: str, max_records: int = 200) -> list:
-    """Read up to max_records records from a MARC file for heuristic analysis."""
-    sample = []
+def _read_sample(path: str, max_records: int = 200) -> list[pymarc.Record]:
+    """Read up to max_records records from a MARC file for heuristic analysis.
+
+    Args:
+        path: Absolute path to the MARC file.
+        max_records: Maximum number of records to return. Defaults to 200.
+
+    Returns:
+        List of up to max_records pymarc.Record objects.
+    """
+    sample: list[pymarc.Record] = []
     for record in _iter_marc(path):
         sample.append(record)
         if len(sample) >= max_records:
@@ -283,9 +349,18 @@ def _read_sample(path: str, max_records: int = 200) -> list:
     return sample
 
 
-def _set_file_status(file_id: str, status: str, error_message: str | None = None) -> None:
-    """Update MARCFile.status synchronously."""
+def _set_file_status(
+    file_id: str, status: str, error_message: str | None = None
+) -> None:
+    """Update MARCFile.status synchronously.
+
+    Args:
+        file_id: UUID string of the MARCFile row.
+        status: New status value (e.g. "indexing", "indexed", "error").
+        error_message: Optional error detail written when status is "error".
+    """
     from cerulean.models import MARCFile
+
     with Session(_engine) as db:
         db.execute(
             update(MARCFile)
