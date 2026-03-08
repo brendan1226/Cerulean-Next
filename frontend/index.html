@@ -786,6 +786,10 @@
           <span class="nav-icon">⑤</span> Push to Koha
           <span class="stage-badge" id="badge-s5">—</span>
         </div>
+        <div class="nav-item" data-view="stage6" onclick="navigate('stage6')">
+          <span class="nav-icon">⑥</span> KTD Sandbox
+          <span class="stage-badge" id="badge-s6">—</span>
+        </div>
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
         </div>
@@ -835,7 +839,7 @@
    API_BASE points to FastAPI. All state in memory.
    ═══════════════════════════════════════════════════════════════════════ */
 
-const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE = window.location.origin + '/api/v1';
 
 // ── XSS escaping ─────────────────────────────────────────────────────
 // ALL server-supplied data interpolated into innerHTML MUST go through esc().
@@ -894,6 +898,7 @@ function updateBreadcrumb(view) {
     stage3: 'Stage 3 — Transform',
     stage4: 'Stage 4 — Validate & Dedup',
     stage5: 'Stage 5 — Push to Koha',
+    stage6: 'Stage 6 — KTD Sandbox',
     'project-log': 'Project Log',
     templates: 'Templates',
     suggestions: 'Suggestions',
@@ -952,7 +957,7 @@ function closeModal(e) {
 // ── API health check ─────────────────────────────────────────────────
 async function checkHealth() {
   try {
-    const res = await fetch('http://localhost:8000/api/health');
+    const res = await fetch(window.location.origin + '/api/health');
     const ok = res.ok;
     document.getElementById('api-dot').className = `status-dot ${ok ? 'ok' : 'err'}`;
     document.getElementById('api-status-text').textContent = ok ? 'API online' : 'API offline';
@@ -970,6 +975,7 @@ function pipelineBar(project) {
     { n: 3, label: 'Transform' },
     { n: 4, label: 'Dedup' },
     { n: 5, label: 'Push' },
+    { n: 6, label: 'Sandbox' },
   ];
   return `<div class="pipeline-bar">
     ${stages.map((s, i) => {
@@ -988,7 +994,7 @@ function pipelineBar(project) {
 }
 
 function updateStageBadges(project) {
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= 6; i++) {
     const badge = document.getElementById(`badge-s${i}`);
     if (!badge) continue;
     const done = project[`stage_${i}_complete`];
@@ -1987,15 +1993,13 @@ setInterval(checkHealth, 30000);
 </html>
 <script>
 // ═══════════════════════════════════════════════════════════════════
-// CERULEAN NEXT — STAGE 3, 4, 5 + AUTH ADDITIONS
-// Appended to main frontend shell
+// CERULEAN NEXT — STAGE 3, 4, 5, 6 + AUTH
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Auth state ─────────────────────────────────────────────────────
 let _authToken = sessionStorage.getItem('cerulean_token') || '';
 
 // Override api() to include auth header
-const _origApi = window.api || api;
 window.api = async function(method, path, body = null) {
   try {
     const opts = {
@@ -2060,7 +2064,9 @@ async function doLogin() {
   }
 }
 
-// ── Stage 3 — Transform ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Stage 3 — Transform & Merge
+// ══════════════════════════════════════════════════════════════════
 window.renderStage3 = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
@@ -2080,11 +2086,6 @@ window.renderStage3 = async function(el) {
   renderS3Transform();
 };
 
-// Override the stub
-const _stubs = window._stubs || {};
-window._stubs = _stubs;
-_stubs[3] = window.renderStage3;
-
 function switchS3Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -2092,7 +2093,6 @@ function switchS3Tab(tab, btn) {
 }
 
 function renderS3Transform() {
-  const p = state.currentProject;
   document.getElementById('s3-tab').innerHTML = `
     <div class="alert alert-info">
       Transform applies your approved field maps to every indexed MARC file.
@@ -2101,7 +2101,7 @@ function renderS3Transform() {
     <div class="card" style="max-width:480px">
       <div class="card-header"><span class="card-title">Run Transform</span></div>
       <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
-        Approved maps: applies all maps with status=approved to all indexed files.
+        Applies all approved maps to all indexed files.
       </p>
       <button class="btn btn-primary" onclick="runTransform()">▶ Start Transform</button>
       <div id="transform-status" style="margin-top:12px"></div>
@@ -2115,7 +2115,7 @@ async function runTransform() {
     if (!r) return;
     document.getElementById('transform-status').innerHTML =
       `<span class="badge badge-amber">Running</span> <span class="mono text-dim">task: ${r.task_id.slice(0,8)}…</span>`;
-    pollTaskStatus(p.id, r.task_id, 'transform-status', 'transform');
+    pollTaskStatus(p.id, r.task_id, 'transform-status', 'transform', 'transform');
   } catch (e) { console.error(e); }
 }
 
@@ -2129,7 +2129,7 @@ function renderS3Merge() {
     <div class="card" style="max-width:560px">
       <div class="card-header"><span class="card-title">Merge Files</span></div>
       <div class="form-group">
-        <label class="form-label">File IDs (one per line, in merge order)</label>
+        <label class="form-label">File IDs (one per line, in merge order — leave blank for all)</label>
         <textarea class="form-textarea" id="merge-file-ids" placeholder="file-uuid-1&#10;file-uuid-2"></textarea>
       </div>
       <div class="form-group">
@@ -2137,16 +2137,8 @@ function renderS3Merge() {
         <input class="form-input" id="merge-csv" placeholder="/data/projects/${p.id}/items.csv">
       </div>
       <div class="form-group">
-        <label class="form-label">Items Join Type</label>
-        <select class="form-select" id="merge-join">
-          <option value="left">left — keep all bibs, attach items where matched</option>
-          <option value="inner">inner — only bibs with at least one item</option>
-          <option value="outer">outer — keep all bibs and all items</option>
-        </select>
-      </div>
-      <div class="form-group">
         <label class="form-label">Items CSV key column (matches bib 001)</label>
-        <input class="form-input" id="merge-bib-key" value="001">
+        <input class="form-input" id="merge-bib-key" value="biblionumber">
       </div>
       <button class="btn btn-primary" onclick="runMerge()">▶ Start Merge</button>
       <div id="merge-status" style="margin-top:12px"></div>
@@ -2155,24 +2147,22 @@ function renderS3Merge() {
 
 async function runMerge() {
   const p = state.currentProject;
-  const ids = document.getElementById('merge-file-ids').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+  let ids = document.getElementById('merge-file-ids').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
   if (!ids.length) {
-    // Auto-load all file IDs
     const files = await window.api('GET', `/projects/${p.id}/files`);
     if (!files) return;
-    ids.push(...files.filter(f => f.status === 'indexed').map(f => f.id));
+    ids = files.filter(f => f.status === 'indexed').map(f => f.id);
   }
   try {
     const r = await window.api('POST', `/projects/${p.id}/transform/merge`, {
       file_ids: ids,
       items_csv_path: document.getElementById('merge-csv').value.trim() || null,
-      items_join_type: document.getElementById('merge-join').value,
-      items_bib_key: document.getElementById('merge-bib-key').value.trim() || '001',
+      items_csv_key_column: document.getElementById('merge-bib-key').value.trim() || 'biblionumber',
     });
     if (!r) return;
     document.getElementById('merge-status').innerHTML =
       `<span class="badge badge-amber">Running</span> <span class="mono text-dim">${ids.length} files, task: ${r.task_id.slice(0,8)}…</span>`;
-    pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge');
+    pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge', 'transform');
   } catch (e) { console.error(e); }
 }
 
@@ -2181,27 +2171,41 @@ async function renderS3Manifest() {
   const wrap = document.getElementById('s3-tab');
   wrap.innerHTML = `<div class="spinner"></div>`;
   try {
-    const m = await window.api('GET', `/projects/${p.id}/transform/manifest`);
-    if (!m) return;
+    const manifests = await window.api('GET', `/projects/${p.id}/transform/manifest`);
+    if (!manifests || !manifests.length) {
+      wrap.innerHTML = `<div class="alert alert-warn">No manifest yet — run Merge first.</div>`;
+      return;
+    }
+    const m = manifests[0]; // most recent
     wrap.innerHTML = `
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-value">${m.total_records?.toLocaleString()}</div></div>
-        <div class="stat-card"><div class="stat-label">Items Joined</div><div class="stat-value">${m.items_joined?.toLocaleString()}</div></div>
-        <div class="stat-card"><div class="stat-label">Files Merged</div><div class="stat-value">${m.files?.length}</div></div>
+        <div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-value">${(m.total_records||0).toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Items Joined</div><div class="stat-value">${(m.items_joined||0).toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Files Processed</div><div class="stat-value">${m.files_processed||0}</div></div>
       </div>
       <div class="card">
-        <div class="card-title" style="margin-bottom:8px">File Breakdown</div>
-        <table class="data-table">
-          <thead><tr><th>Filename</th><th>Records</th></tr></thead>
-          <tbody>${(m.files||[]).map(f => `<tr><td class="mono">${f.filename}</td><td class="mono">${f.records?.toLocaleString()}</td></tr>`).join('')}</tbody>
-        </table>
+        <div class="card-header">
+          <span class="card-title">Latest ${esc(m.task_type)} Run</span>
+          <span class="badge ${m.status==='complete'?'badge-green':m.status==='error'?'badge-red':'badge-amber'}">${esc(m.status)}</span>
+        </div>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary)">
+          <span>Type: ${esc(m.task_type)}</span>
+          <span>·</span>
+          <span>Output: ${esc(m.output_path || '—')}</span>
+          <span>·</span>
+          <span>Started: ${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}</span>
+        </div>
+        ${m.error_message ? `<div class="alert alert-error" style="margin-top:12px">${esc(m.error_message)}</div>` : ''}
+        ${m.duplicate_001s?.length ? `<div class="alert alert-warn" style="margin-top:12px">${m.duplicate_001s.length} duplicate 001 values detected — review in Stage 4</div>` : ''}
       </div>`;
   } catch {
     wrap.innerHTML = `<div class="alert alert-warn">No manifest yet — run Merge first.</div>`;
   }
 }
 
-// ── Stage 4 — Dedup ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Stage 4 — Validate & Dedup
+// ══════════════════════════════════════════════════════════════════
 window.renderStage4 = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
@@ -2227,11 +2231,11 @@ function switchS4Tab(tab, btn) {
 }
 
 async function renderS4Rules() {
-  const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
   wrap.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <button class="btn btn-primary btn-sm" onclick="openNewRuleModal()">+ New Rule</button>
+      <button class="btn btn-ghost btn-sm" onclick="createPresets()">+ Create All Presets</button>
     </div>
     <div id="rules-list"><div class="spinner"></div></div>`;
   loadRules();
@@ -2244,7 +2248,7 @@ async function loadRules() {
   try {
     const rules = await window.api('GET', `/projects/${p.id}/dedup/rules`);
     if (!rules || !rules.length) {
-      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No rules yet</div><div class="empty-body">Create a dedup rule to begin scanning.</div></div>`;
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No rules yet</div><div class="empty-body">Create a rule or use "Create All Presets" to add the standard four.</div></div>`;
       return;
     }
     wrap.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
@@ -2255,11 +2259,13 @@ async function loadRules() {
               <span class="mono" style="font-weight:600">${esc(r.name)}</span>
               ${r.active ? '<span class="badge badge-cerulean" style="margin-left:8px">active</span>' : ''}
               ${r.preset_key ? `<span class="badge badge-dim" style="margin-left:8px">${esc(r.preset_key)}</span>` : ''}
+              <span class="badge badge-dim" style="margin-left:8px">${esc(r.on_duplicate)}</span>
             </div>
             <div style="display:flex;gap:6px">
               ${!r.active ? `<button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="activateRule(this.dataset.ruleId)">Activate</button>` : ''}
-              <button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="runScan(this.dataset.ruleId,this)">▶ Scan</button>
-              ${r.last_scan_clusters != null ? `<button class="btn btn-primary btn-sm" data-rule-id="${esc(r.id)}" onclick="runApply(this.dataset.ruleId,this)">Apply</button>` : ''}
+              <button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="runScan(this.dataset.ruleId)">▶ Scan</button>
+              ${r.last_scan_clusters != null ? `<button class="btn btn-primary btn-sm" data-rule-id="${esc(r.id)}" onclick="runApply(this.dataset.ruleId)">Apply</button>` : ''}
+              <button class="btn btn-danger btn-sm" data-rule-id="${esc(r.id)}" onclick="deleteRule(this.dataset.ruleId)">✕</button>
             </div>
           </div>
           ${r.last_scan_clusters != null ? `
@@ -2276,26 +2282,43 @@ async function loadRules() {
   } catch (e) { console.error(e); }
 }
 
+async function createPresets() {
+  const p = state.currentProject;
+  try {
+    const created = await window.api('POST', `/projects/${p.id}/dedup/presets`);
+    if (!created) return;
+    toast(`Created ${created.length} preset rules`, 'success');
+    loadRules();
+  } catch (e) { console.error(e); }
+}
+
 async function activateRule(ruleId) {
   const p = state.currentProject;
-  await window.api('POST', `/projects/${p.id}/dedup/rules/${ruleId}/activate`);
+  await window.api('PATCH', `/projects/${p.id}/dedup/rules/${ruleId}`, { active: true });
+  loadRules();
+}
+
+async function deleteRule(ruleId) {
+  const p = state.currentProject;
+  await window.api('DELETE', `/projects/${p.id}/dedup/rules/${ruleId}`);
+  toast('Rule deleted', 'success');
   loadRules();
 }
 
 async function runScan(ruleId) {
   const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/dedup/scan?rule_id=${ruleId}`);
+  const r = await window.api('POST', `/projects/${p.id}/dedup/scan`, { rule_id: ruleId });
   if (!r) return;
   toast('Dedup scan started', 'info');
-  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-scan', () => loadRules());
+  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-scan', 'dedup', () => loadRules());
 }
 
 async function runApply(ruleId) {
   const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/dedup/apply?rule_id=${ruleId}`);
+  const r = await window.api('POST', `/projects/${p.id}/dedup/apply`, { rule_id: ruleId });
   if (!r) return;
   toast('Dedup apply started', 'info');
-  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-apply', () => loadRules());
+  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-apply', 'dedup', () => loadRules());
 }
 
 function openNewRuleModal() {
@@ -2317,9 +2340,16 @@ function openNewRuleModal() {
     <div class="form-group">
       <label class="form-label">On Duplicate</label>
       <select class="form-select" id="nr-action">
-        <option value="keep_first">keep_first — keep record with most items</option>
+        <option value="keep_first">keep_first — keep primary record</option>
         <option value="keep_most_fields">keep_most_fields — keep richest record</option>
+        <option value="keep_most_items">keep_most_items — keep record with most 952 fields</option>
+        <option value="merge_holdings">merge_holdings — keep primary, copy 952s from others</option>
+        <option value="write_exceptions">write_exceptions — keep all, write exceptions CSV</option>
       </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="nr-active">
+      <label for="nr-active" style="font-size:12px;color:var(--text-secondary)">Set as active rule</label>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -2336,6 +2366,7 @@ async function submitNewRule() {
       name,
       preset_key: document.getElementById('nr-preset').value,
       on_duplicate: document.getElementById('nr-action').value,
+      active: document.getElementById('nr-active').checked,
     });
     closeModal();
     toast('Rule created', 'success');
@@ -2346,7 +2377,6 @@ async function submitNewRule() {
 async function renderS4Clusters() {
   const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
-  // Get active rule first
   const rules = await window.api('GET', `/projects/${p.id}/dedup/rules`);
   const active = rules?.find(r => r.active);
   if (!active) {
@@ -2355,21 +2385,23 @@ async function renderS4Clusters() {
   }
   wrap.innerHTML = `<div class="spinner"></div>`;
   try {
-    const clusters = await window.api('GET', `/projects/${p.id}/dedup/clusters?rule_id=${active.id}&resolved=false&limit=100`);
-    if (!clusters?.length) {
+    const data = await window.api('GET', `/projects/${p.id}/dedup/clusters?rule_id=${active.id}&resolved=false&limit=100`);
+    const clusters = data?.items || [];
+    const total = data?.total || 0;
+    if (!clusters.length) {
       wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No open clusters</div><div class="empty-body">Run a scan to detect duplicates.</div></div>`;
       return;
     }
     wrap.innerHTML = `
-      <div class="alert alert-info">${clusters.length} open clusters shown (max 100). Use Apply to resolve all automatically.</div>
+      <div class="alert alert-info">${total} total open clusters (showing ${clusters.length}). Use Apply to resolve all automatically.</div>
       <table class="data-table">
         <thead><tr><th>Match Key</th><th>Records</th><th>Primary</th><th>Action</th></tr></thead>
         <tbody>
           ${clusters.map(c => `<tr>
             <td class="mono text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.match_key || '—')}</td>
             <td>${c.records?.length}</td>
-            <td class="mono">${esc(c.records?.[c.primary_index]?.marc_001 || `idx:${c.primary_index}`)}</td>
-            <td><button class="btn btn-ghost btn-sm" data-cluster-id="${esc(c.id)}" onclick="viewCluster(this.dataset.clusterId, ${JSON.stringify(c).replace(/"/g,'&quot;')})">View</button></td>
+            <td class="mono">${esc(c.records?.[c.primary_index]?.marc_001 || 'idx:' + c.primary_index)}</td>
+            <td><button class="btn btn-ghost btn-sm" data-cluster-id="${esc(c.id)}" data-cluster='${JSON.stringify(c).replace(/'/g,"&#39;")}' onclick="viewCluster(this.dataset.clusterId, JSON.parse(this.dataset.cluster))">View</button></td>
           </tr>`).join('')}
         </tbody>
       </table>`;
@@ -2409,7 +2441,9 @@ async function resolveCluster(clusterId) {
   renderS4Clusters();
 }
 
-// ── Stage 5 — Push ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// Stage 5 — Push to Koha
+// ══════════════════════════════════════════════════════════════════
 window.renderStage5 = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
@@ -2425,6 +2459,7 @@ window.renderStage5 = async function(el) {
       <button class="tab-btn" onclick="switchS5Tab('patrons', this)">Patrons</button>
       <button class="tab-btn" onclick="switchS5Tab('holds', this)">Holds</button>
       <button class="tab-btn" onclick="switchS5Tab('reindex', this)">ES Reindex</button>
+      <button class="tab-btn" onclick="switchS5Tab('manifests', this)">Manifests</button>
     </div>
     <div id="s5-tab"></div>`;
   renderS5Bibs();
@@ -2433,7 +2468,7 @@ window.renderStage5 = async function(el) {
 function switchS5Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ({ bibs: renderS5Bibs, patrons: renderS5Patrons, holds: renderS5Holds, reindex: renderS5Reindex })[tab]();
+  ({ bibs: renderS5Bibs, patrons: renderS5Patrons, holds: renderS5Holds, reindex: renderS5Reindex, manifests: renderS5Manifests })[tab]();
 }
 
 function renderS5Bibs() {
@@ -2445,32 +2480,17 @@ function renderS5Bibs() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header"><span class="card-title">Preflight</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Tests connectivity to ${esc(p.koha_url || 'Koha (set URL in project settings)')}</p>
         <button class="btn btn-ghost" onclick="runPreflight()">▶ Run Preflight</button>
         <div id="preflight-status" style="margin-top:12px"></div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">Bib Import (bulkmarcimport)</span></div>
-        <div class="form-group">
-          <label class="form-label">Koha Instance</label>
-          <input class="form-input" id="push-instance" value="kohadev">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Match Field</label>
-          <input class="form-input" id="push-match" value="001">
-        </div>
-        <div class="form-group">
-          <label class="form-label">On Conflict</label>
-          <select class="form-select" id="push-conflict">
-            <option value="skip">skip — don't import if match found</option>
-            <option value="overwrite">overwrite — replace existing</option>
-            <option value="add_new">add_new — always create</option>
-          </select>
-        </div>
+        <div class="card-header"><span class="card-title">Bib Import</span></div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-          <input type="checkbox" id="push-deduped" checked>
-          <label for="push-deduped" style="font-size:12px">Use deduped file if available</label>
+          <input type="checkbox" id="push-dry-run" checked>
+          <label for="push-dry-run" style="font-size:12px;color:var(--text-secondary)">Dry run (count only, no HTTP calls)</label>
         </div>
-        <button class="btn btn-primary" onclick="runPushBibs()">▶ Start Import</button>
+        <button class="btn btn-primary" onclick="runPushBibs()">▶ Push Bibs</button>
         <div id="bibs-status" style="margin-top:12px"></div>
       </div>
     </div>`;
@@ -2478,32 +2498,45 @@ function renderS5Bibs() {
 
 async function runPreflight() {
   const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/push/preflight`);
-  if (!r) return;
-  pollTaskStatus(p.id, r.task_id, 'preflight-status', 'preflight');
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/preflight`);
+    if (!r) return;
+    toast('Preflight check started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'preflight-status', 'preflight', 'push');
+  } catch (e) { console.error(e); }
 }
 
 async function runPushBibs() {
   const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/push/bibs`, {
-    koha_instance: document.getElementById('push-instance').value,
-    match_field: document.getElementById('push-match').value,
-    on_conflict: document.getElementById('push-conflict').value,
-    use_deduped: document.getElementById('push-deduped').checked,
-  });
-  if (!r) return;
-  toast('bulkmarcimport started', 'info');
-  pollTaskStatus(p.id, r.task_id, 'bibs-status', 'bulkmarc');
+  const dryRun = document.getElementById('push-dry-run').checked;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/start`, {
+      dry_run: dryRun,
+      push_bibs: true,
+      push_patrons: false,
+      push_holds: false,
+      push_circ: false,
+      reindex: false,
+    });
+    if (!r) return;
+    const taskId = r.task_ids?.bulkmarc;
+    if (!taskId) { toast('No task ID returned', 'warn'); return; }
+    document.getElementById('bibs-status').innerHTML =
+      `<span class="badge badge-amber">Running</span> <span class="mono text-dim">task: ${taskId.slice(0,8)}… ${dryRun ? '(dry run)' : ''}</span>`;
+    pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
+  } catch (e) { console.error(e); }
 }
 
 function renderS5Patrons() {
+  const p = state.currentProject;
   document.getElementById('s5-tab').innerHTML = `
     <div class="card" style="max-width:520px">
       <div class="card-header"><span class="card-title">Patron Import</span></div>
-      <div class="alert alert-info">CSV must have headers: surname, firstname, cardnumber, categorycode, branchcode</div>
-      <div class="form-group">
-        <label class="form-label">Patrons CSV Path</label>
-        <input class="form-input" id="patron-csv" placeholder="/data/projects/…/patrons.csv">
+      <div class="alert alert-info">Place patrons.csv at /data/projects/${esc(p.id)}/patrons.csv<br>
+        Headers: surname, firstname, cardnumber, categorycode, branchcode, email, phone, address, city</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <input type="checkbox" id="patron-dry-run" checked>
+        <label for="patron-dry-run" style="font-size:12px;color:var(--text-secondary)">Dry run (validate only)</label>
       </div>
       <button class="btn btn-primary" onclick="runPushPatrons()">▶ Import Patrons</button>
       <div id="patrons-status" style="margin-top:12px"></div>
@@ -2512,21 +2545,33 @@ function renderS5Patrons() {
 
 async function runPushPatrons() {
   const p = state.currentProject;
-  const csv = document.getElementById('patron-csv').value.trim();
-  if (!csv) { toast('CSV path required', 'warn'); return; }
-  const r = await window.api('POST', `/projects/${p.id}/push/patrons`, { csv_path: csv });
-  if (!r) return;
-  pollTaskStatus(p.id, r.task_id, 'patrons-status', 'patrons');
+  const dryRun = document.getElementById('patron-dry-run').checked;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/start`, {
+      dry_run: dryRun,
+      push_bibs: false,
+      push_patrons: true,
+      push_holds: false,
+      push_circ: false,
+      reindex: false,
+    });
+    if (!r) return;
+    const taskId = r.task_ids?.patrons;
+    if (!taskId) { toast('No task ID returned', 'warn'); return; }
+    pollTaskStatus(p.id, taskId, 'patrons-status', 'patrons', 'push');
+  } catch (e) { console.error(e); }
 }
 
 function renderS5Holds() {
+  const p = state.currentProject;
   document.getElementById('s5-tab').innerHTML = `
     <div class="card" style="max-width:520px">
       <div class="card-header"><span class="card-title">Holds Import</span></div>
-      <div class="alert alert-info">CSV must have: borrowernumber, biblionumber, branchcode</div>
-      <div class="form-group">
-        <label class="form-label">Holds CSV Path</label>
-        <input class="form-input" id="holds-csv" placeholder="/data/projects/…/holds.csv">
+      <div class="alert alert-info">Place holds.csv at /data/projects/${esc(p.id)}/holds.csv<br>
+        Headers: patron_id, biblio_id, pickup_library_id, item_id, notes</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <input type="checkbox" id="holds-dry-run" checked>
+        <label for="holds-dry-run" style="font-size:12px;color:var(--text-secondary)">Dry run (validate only)</label>
       </div>
       <button class="btn btn-primary" onclick="runPushHolds()">▶ Import Holds</button>
       <div id="holds-status" style="margin-top:12px"></div>
@@ -2535,22 +2580,28 @@ function renderS5Holds() {
 
 async function runPushHolds() {
   const p = state.currentProject;
-  const csv = document.getElementById('holds-csv').value.trim();
-  if (!csv) { toast('CSV path required', 'warn'); return; }
-  const r = await window.api('POST', `/projects/${p.id}/push/holds`, { csv_path: csv });
-  if (!r) return;
-  pollTaskStatus(p.id, r.task_id, 'holds-status', 'holds');
+  const dryRun = document.getElementById('holds-dry-run').checked;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/start`, {
+      dry_run: dryRun,
+      push_bibs: false,
+      push_patrons: false,
+      push_holds: true,
+      push_circ: false,
+      reindex: false,
+    });
+    if (!r) return;
+    const taskId = r.task_ids?.holds;
+    if (!taskId) { toast('No task ID returned', 'warn'); return; }
+    pollTaskStatus(p.id, taskId, 'holds-status', 'holds', 'push');
+  } catch (e) { console.error(e); }
 }
 
 function renderS5Reindex() {
   document.getElementById('s5-tab').innerHTML = `
     <div class="card" style="max-width:480px">
       <div class="card-header"><span class="card-title">ES Reindex</span></div>
-      <div class="alert alert-warn">Run this AFTER all bibs are imported. Do not run mid-import.</div>
-      <div class="form-group">
-        <label class="form-label">Koha Instance</label>
-        <input class="form-input" id="reindex-instance" value="kohadev">
-      </div>
+      <div class="alert alert-warn">Run this AFTER all bibs are imported. Marks Stage 5 as complete.</div>
       <button class="btn btn-primary" onclick="runReindex()">▶ Rebuild Index</button>
       <div id="reindex-status" style="margin-top:12px"></div>
     </div>`;
@@ -2558,33 +2609,233 @@ function renderS5Reindex() {
 
 async function runReindex() {
   const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/push/reindex`, {
-    koha_instance: document.getElementById('reindex-instance').value,
-  });
-  if (!r) return;
-  toast('ES reindex started', 'info');
-  pollTaskStatus(p.id, r.task_id, 'reindex-status', 'reindex');
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/start`, {
+      dry_run: false,
+      push_bibs: false,
+      push_patrons: false,
+      push_holds: false,
+      push_circ: false,
+      reindex: true,
+    });
+    if (!r) return;
+    const taskId = r.task_ids?.reindex;
+    if (!taskId) { toast('No task ID returned', 'warn'); return; }
+    toast('ES reindex started', 'info');
+    pollTaskStatus(p.id, taskId, 'reindex-status', 'reindex', 'push');
+  } catch (e) { console.error(e); }
 }
 
-// ── Generic task poller ────────────────────────────────────────────
-function pollTaskStatus(projectId, taskId, statusElId, label, onComplete) {
+async function renderS5Manifests() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s5-tab');
+  wrap.innerHTML = `<div class="spinner"></div>`;
+  try {
+    const manifests = await window.api('GET', `/projects/${p.id}/push/manifests`);
+    if (!manifests || !manifests.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No push runs yet</div><div class="empty-body">Run a push task to see manifests here.</div></div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Type</th><th>Status</th><th>Dry Run</th><th>Total</th><th>Success</th><th>Failed</th><th>Started</th></tr></thead>
+        <tbody>
+          ${manifests.map(m => `<tr>
+            <td class="mono">${esc(m.task_type)}</td>
+            <td><span class="badge ${m.status==='complete'?'badge-green':m.status==='error'?'badge-red':'badge-amber'}">${esc(m.status)}</span></td>
+            <td>${m.dry_run ? '<span class="text-dim">yes</span>' : '<span class="text-green">no</span>'}</td>
+            <td class="mono">${m.records_total != null ? m.records_total.toLocaleString() : '—'}</td>
+            <td class="mono text-green">${m.records_success != null ? m.records_success.toLocaleString() : '—'}</td>
+            <td class="mono text-red">${m.records_failed != null ? m.records_failed.toLocaleString() : '—'}</td>
+            <td class="text-dim" style="font-size:11px">${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) { console.error(e); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 6 — KTD Sandbox
+// ══════════════════════════════════════════════════════════════════
+window.renderStage6 = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 6 — KTD Sandbox</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Sandbox Control</span></div>
+        <div id="sandbox-current"><div class="spinner"></div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Instance History</span></div>
+        <div id="sandbox-instances"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+  loadSandboxStatus();
+  loadSandboxInstances();
+};
+
+async function loadSandboxStatus() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('sandbox-current');
+  if (!wrap) return;
+  try {
+    const status = await window.api('GET', `/projects/${p.id}/sandbox/status`);
+    if (!status || status.state === 'none') {
+      wrap.innerHTML = `
+        <p class="text-secondary" style="font-size:12px;margin-bottom:16px">No active sandbox. Provision a KTD container to test your Koha migration.</p>
+        <div class="form-group">
+          <label class="form-label">Koha Version (optional)</label>
+          <input class="form-input" id="sandbox-version" placeholder="master (default)">
+        </div>
+        <button class="btn btn-primary" onclick="provisionSandbox()">▶ Provision Sandbox</button>`;
+    } else if (status.state === 'PROGRESS' || status.state === 'PENDING' || status.state === 'STARTED') {
+      const step = status.progress?.step || 'starting';
+      wrap.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="spinner" style="width:16px;height:16px"></div>
+          <span class="badge badge-amber">Provisioning</span>
+          <span class="text-dim mono">${esc(step)}</span>
+        </div>`;
+      setTimeout(loadSandboxStatus, 3000);
+    } else if (status.state === 'SUCCESS') {
+      const r = status.result || {};
+      if (r.status === 'running') {
+        wrap.innerHTML = `
+          <div style="margin-bottom:12px">
+            <span class="badge badge-green">Running</span>
+            <span class="mono text-secondary" style="margin-left:8px">${esc(r.container_name || '')}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text-secondary)">
+            <div>Container: <span class="mono">${esc(r.container_id || '—')}</span></div>
+            <div>URL: <a href="${esc(r.koha_url || '#')}" target="_blank" class="text-cerulean">${esc(r.koha_url || '—')}</a></div>
+            <div>Port: <span class="mono">${r.port || '—'}</span></div>
+          </div>
+          <button class="btn btn-danger" style="margin-top:16px" onclick="teardownSandbox()">■ Teardown</button>`;
+      } else {
+        wrap.innerHTML = `
+          <div class="alert alert-error">${esc(r.error || 'Sandbox failed to start')}</div>
+          <button class="btn btn-primary" style="margin-top:12px" onclick="provisionSandbox()">▶ Retry Provision</button>`;
+      }
+    } else if (status.state === 'FAILURE') {
+      wrap.innerHTML = `
+        <div class="alert alert-error">${esc(status.error || 'Provision failed')}</div>
+        <button class="btn btn-primary" style="margin-top:12px" onclick="provisionSandbox()">▶ Retry Provision</button>`;
+    } else {
+      // stopped or other
+      wrap.innerHTML = `
+        <p class="text-secondary" style="font-size:12px;margin-bottom:16px">No active sandbox.</p>
+        <div class="form-group">
+          <label class="form-label">Koha Version (optional)</label>
+          <input class="form-input" id="sandbox-version" placeholder="master (default)">
+        </div>
+        <button class="btn btn-primary" onclick="provisionSandbox()">▶ Provision Sandbox</button>`;
+    }
+  } catch (e) {
+    wrap.innerHTML = `
+      <p class="text-secondary" style="font-size:12px;margin-bottom:16px">No active sandbox.</p>
+      <div class="form-group">
+        <label class="form-label">Koha Version (optional)</label>
+        <input class="form-input" id="sandbox-version" placeholder="master (default)">
+      </div>
+      <button class="btn btn-primary" onclick="provisionSandbox()">▶ Provision Sandbox</button>`;
+  }
+}
+
+async function loadSandboxInstances() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('sandbox-instances');
+  if (!wrap) return;
+  try {
+    const instances = await window.api('GET', `/projects/${p.id}/sandbox/instances`);
+    if (!instances || !instances.length) {
+      wrap.innerHTML = `<div class="text-dim" style="font-size:12px">No instances yet.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Container</th><th>Status</th><th>Port</th><th>Created</th></tr></thead>
+        <tbody>
+          ${instances.map(i => `<tr>
+            <td class="mono" style="font-size:11px">${esc(i.container_name || i.container_id?.slice(0,12) || '—')}</td>
+            <td><span class="badge ${i.status==='running'?'badge-green':i.status==='stopped'?'badge-dim':i.status==='error'?'badge-red':'badge-amber'}">${esc(i.status)}</span></td>
+            <td class="mono">${i.exposed_port || '—'}</td>
+            <td class="text-dim" style="font-size:11px">${new Date(i.created_at).toLocaleString()}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) { console.error(e); }
+}
+
+async function provisionSandbox() {
+  const p = state.currentProject;
+  const version = document.getElementById('sandbox-version')?.value?.trim() || null;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/sandbox/provision`, version ? { koha_version: version } : {});
+    if (!r) return;
+    toast('Sandbox provisioning started', 'info');
+    setTimeout(loadSandboxStatus, 2000);
+  } catch (e) { console.error(e); }
+}
+
+async function teardownSandbox() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/sandbox/teardown`);
+    if (!r) return;
+    toast('Sandbox teardown started', 'info');
+    setTimeout(() => {
+      loadSandboxStatus();
+      loadSandboxInstances();
+    }, 3000);
+  } catch (e) { console.error(e); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Generic task poller (stage-aware status endpoints)
+// ══════════════════════════════════════════════════════════════════
+function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onComplete) {
   const el = document.getElementById(statusElId);
   if (!el) return;
 
+  // Use correct status endpoint per stage
+  const statusEndpoints = {
+    transform: `/projects/${projectId}/transform/status?task_id=${taskId}`,
+    dedup:     `/projects/${projectId}/dedup/status?task_id=${taskId}`,
+    push:      `/projects/${projectId}/push/status?task_id=${taskId}`,
+    sandbox:   `/projects/${projectId}/sandbox/status`,
+  };
+  const statusUrl = statusEndpoints[stageType] || statusEndpoints.transform;
+
   const poll = async () => {
     try {
-      const r = await window.api('GET', `/projects/${projectId}/transform/status?task_id=${taskId}`);
+      const r = await window.api('GET', statusUrl);
       if (!r) return;
-      if (r.status === 'SUCCESS') {
-        el.innerHTML = `<span class="badge badge-green">Complete</span> ${JSON.stringify(r.result || {}).slice(0,120)}`;
+      const s = r.state || r.status;
+      if (s === 'SUCCESS') {
+        const resultStr = r.result ? JSON.stringify(r.result).slice(0, 120) : '';
+        el.innerHTML = `<span class="badge badge-green">Complete</span> <span class="text-dim mono" style="font-size:11px">${esc(resultStr)}</span>`;
         toast(`${label} complete`, 'success');
         if (onComplete) onComplete();
-      } else if (r.status === 'FAILURE') {
-        el.innerHTML = `<span class="badge badge-red">Failed</span> <span class="text-red">${r.result || 'error'}</span>`;
+      } else if (s === 'FAILURE') {
+        el.innerHTML = `<span class="badge badge-red">Failed</span> <span class="text-red" style="font-size:12px">${esc(r.error || 'error')}</span>`;
         toast(`${label} failed`, 'error');
       } else {
-        const prog = r.progress?.records ? ` — ${r.progress.records.toLocaleString()} records` : '';
-        el.innerHTML = `<span class="badge badge-amber">Running</span><span class="text-dim mono" style="margin-left:8px">${r.status}${prog}</span>`;
+        const prog = r.progress;
+        let progText = '';
+        if (prog) {
+          if (prog.records_done) progText = ` — ${prog.records_done.toLocaleString()} records`;
+          else if (prog.records_scanned) progText = ` — ${prog.records_scanned.toLocaleString()} scanned`;
+          else if (prog.records_written) progText = ` — ${prog.records_written.toLocaleString()} written`;
+          else if (prog.step) progText = ` — ${prog.step}`;
+        }
+        el.innerHTML = `<span class="badge badge-amber">Running</span><span class="text-dim mono" style="margin-left:8px">${esc(s)}${progText}</span>`;
         setTimeout(poll, 2000);
       }
     } catch { setTimeout(poll, 3000); }
@@ -2592,9 +2843,9 @@ function pollTaskStatus(projectId, taskId, statusElId, label, onComplete) {
   poll();
 }
 
-// ── Wire up stage renderers ────────────────────────────────────────
-// Override the stub renderers from original script
-const _origNavigate = window.navigate;
+// ══════════════════════════════════════════════════════════════════
+// Override navigate — add stage6 + sandbox breadcrumb
+// ══════════════════════════════════════════════════════════════════
 window.navigate = function(view, params = {}) {
   state.currentView = view;
   Object.assign(state, params);
@@ -2609,16 +2860,17 @@ window.navigate = function(view, params = {}) {
 
   const viewEl = document.getElementById('view');
   const renders = {
-    dashboard:    renderDashboard,
+    dashboard:     renderDashboard,
     'new-project': renderNewProject,
-    stage1:       renderStage1,
-    stage2:       renderStage2,
-    stage3:       window.renderStage3 || renderStageStub(3, 'Transform'),
-    stage4:       window.renderStage4 || renderStageStub(4, 'Dedup'),
-    stage5:       window.renderStage5 || renderStageStub(5, 'Push to Koha'),
+    stage1:        renderStage1,
+    stage2:        renderStage2,
+    stage3:        window.renderStage3,
+    stage4:        window.renderStage4,
+    stage5:        window.renderStage5,
+    stage6:        window.renderStage6,
     'project-log': renderProjectLog,
-    templates:    renderTemplates,
-    suggestions:  renderSuggestions,
+    templates:     renderTemplates,
+    suggestions:   renderSuggestions,
   };
   const renderer = renders[view];
   if (renderer) renderer(viewEl);

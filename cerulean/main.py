@@ -5,9 +5,11 @@ FastAPI application factory. All routers registered here.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from cerulean.core.config import get_settings
 from cerulean.core.logging import configure_logging, get_logger
@@ -60,3 +62,12 @@ app.include_router(transform.router,   prefix="/api/v1")
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+# ── Frontend ──────────────────────────────────────
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse(_FRONTEND_DIR / "index.html")
