@@ -5,14 +5,17 @@ All SQLAlchemy ORM models. Import from here to ensure Alembic autogenerate
 picks up all tables via the shared Base metadata.
 
 Models:
-    Project       — top-level migration project
-    MARCFile      — uploaded MARC / CSV file
-    FieldMap      — source→target field mapping (manual / AI / template)
-    MapTemplate   — saved reusable mapping set (project or global scope)
-    DedupRule     — deduplication rule configuration
-    DedupCluster  — detected duplicate group (written by dedup scan)
-    AuditEvent    — append-only project event log
-    Suggestion    — engineer feedback / feature request
+    Project        — top-level migration project
+    MARCFile       — uploaded MARC / CSV file
+    FieldMap       — source→target field mapping (manual / AI / template)
+    MapTemplate    — saved reusable mapping set (project or global scope)
+    TransformManifest — tracks transform/merge pipeline runs
+    DedupRule      — deduplication rule configuration
+    DedupCluster   — detected duplicate group (written by dedup scan)
+    PushManifest   — tracks a push-to-Koha pipeline run
+    SandboxInstance — KTD sandbox container lifecycle
+    AuditEvent     — append-only project event log
+    Suggestion     — engineer feedback / feature request
     SuggestionVote — upvote join table
 """
 
@@ -33,12 +36,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from cerulean.core.database import Base
-from cerulean.models.project import Project
-from cerulean.models.marc_file import MARCFile
-from cerulean.models.field_map import FieldMap
-
-from cerulean.models.transform_manifest import TransformManifest
-# ... etc
 
 # ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -97,6 +94,9 @@ class Project(Base):
     maps: Mapped[list["FieldMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     dedup_rules: Mapped[list["DedupRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    transform_manifests: Mapped[list["TransformManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    push_manifests: Mapped[list["PushManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    sandbox_instances: Mapped[list["SandboxInstance"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -225,6 +225,46 @@ class MapTemplate(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# TRANSFORM MANIFEST
+# ══════════════════════════════════════════════════════════════════════════
+
+class TransformManifest(Base):
+    """
+    Tracks a transform or merge pipeline run.
+
+    Created by the /transform/start or /transform/merge endpoint,
+    updated by the Celery task on completion or failure.
+    """
+
+    __tablename__ = "transform_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "transform" | "merge"
+    status: Mapped[str] = mapped_column(String(20), default="running")  # "running" | "complete" | "error"
+    celery_task_id: Mapped[str | None] = mapped_column(String(200))
+
+    # Results (populated on completion)
+    output_path: Mapped[str | None] = mapped_column(Text)
+    files_processed: Mapped[int | None] = mapped_column(Integer)
+    total_records: Mapped[int | None] = mapped_column(Integer)
+    records_skipped: Mapped[int | None] = mapped_column(Integer)
+    items_joined: Mapped[int | None] = mapped_column(Integer)
+    duplicate_001s: Mapped[list | None] = mapped_column(JSONB)   # [{value, count}]
+    file_ids: Mapped[list | None] = mapped_column(JSONB)         # source file UUIDs
+    items_csv_path: Mapped[str | None] = mapped_column(Text)
+
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, default=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="transform_manifests")
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # DEDUP RULE
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -278,6 +318,68 @@ class DedupCluster(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     rule: Mapped["DedupRule"] = relationship(back_populates="clusters")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PUSH MANIFEST
+# ══════════════════════════════════════════════════════════════════════════
+
+class PushManifest(Base):
+    """Tracks a push-to-Koha pipeline run (preflight, bulkmarc, patrons, holds, circ, reindex)."""
+
+    __tablename__ = "push_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    # "preflight" | "bulkmarc" | "patrons" | "holds" | "circ" | "reindex"
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # "running" | "complete" | "error"
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    celery_task_id: Mapped[str | None] = mapped_column(String(200))
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    records_total: Mapped[int | None] = mapped_column(Integer)
+    records_success: Mapped[int | None] = mapped_column(Integer)
+    records_failed: Mapped[int | None] = mapped_column(Integer)
+
+    error_message: Mapped[str | None] = mapped_column(Text)
+    result_data: Mapped[dict | None] = mapped_column(JSONB)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, default=_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="push_manifests")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SANDBOX INSTANCE
+# ══════════════════════════════════════════════════════════════════════════
+
+class SandboxInstance(Base):
+    """KTD sandbox container lifecycle tracker."""
+
+    __tablename__ = "sandbox_instances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    container_id: Mapped[str | None] = mapped_column(String(100))
+    container_name: Mapped[str | None] = mapped_column(String(200))
+
+    # "provisioning" | "running" | "stopping" | "stopped" | "error"
+    status: Mapped[str] = mapped_column(String(20), default="provisioning")
+
+    koha_url: Mapped[str | None] = mapped_column(String(500))
+    exposed_port: Mapped[int | None] = mapped_column(Integer)
+    celery_task_id: Mapped[str | None] = mapped_column(String(200))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="sandbox_instances")
 
 
 # ══════════════════════════════════════════════════════════════════════════
