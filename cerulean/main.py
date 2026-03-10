@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from cerulean.core.config import get_settings
 from cerulean.core.logging import configure_logging, get_logger
@@ -45,7 +46,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import projects, files, maps, templates, dedup, push, sandbox, log, suggestions, transform  # noqa: E402
+from cerulean.api.routers import projects, files, maps, templates, dedup, push, sandbox, log, suggestions, transform, reference  # noqa: E402
 
 app.include_router(projects.router,    prefix="/api/v1")
 app.include_router(files.router,       prefix="/api/v1")
@@ -57,6 +58,7 @@ app.include_router(sandbox.router,     prefix="/api/v1")
 app.include_router(log.router,         prefix="/api/v1")
 app.include_router(suggestions.router, prefix="/api/v1")
 app.include_router(transform.router,   prefix="/api/v1")
+app.include_router(reference.router,   prefix="/api/v1")
 
 
 @app.get("/api/health")
@@ -64,8 +66,11 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
-# ── Frontend ──────────────────────────────────────
+# ── Static files ──────────────────────────────────
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+_VENDOR_DIR = _FRONTEND_DIR / "vendor"
+if _VENDOR_DIR.is_dir():
+    app.mount("/vendor", StaticFiles(directory=str(_VENDOR_DIR)), name="vendor")
 
 
 @app.get("/")

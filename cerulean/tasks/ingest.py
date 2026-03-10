@@ -11,7 +11,7 @@ All tasks write AuditEvent rows via AuditLogger.
 """
 
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Generator
 from pathlib import Path
 
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
-from cerulean.utils.marc import iter_marc as _iter_marc
+from cerulean.utils.marc import iter_marc as _iter_marc, is_valid_marc as _is_valid_marc
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -57,6 +57,13 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
     try:
         _set_file_status(file_id, "indexing")
 
+        # Validate file contains MARC data before proceeding
+        is_marc, detail = _is_valid_marc(storage_path)
+        if not is_marc:
+            log.warn(f"File is not valid MARC data: {detail}")
+            _set_file_status(file_id, "not_marc", detail)
+            return {"record_count": 0, "file_format": "unknown", "error": detail}
+
         file_format, record_count = _parse_marc_file(storage_path)
 
         with Session(_engine) as db:
@@ -76,6 +83,17 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
         # Chain: kick off ILS detection and tag frequency automatically
         detect_ils_task.apply_async(args=[project_id, file_id, storage_path], queue="ingest")
         tag_frequency_task.apply_async(args=[project_id, file_id, storage_path], queue="analyze")
+
+        # Index to Elasticsearch if configured (non-blocking)
+        try:
+            from cerulean.core.search import get_es_client, ensure_index, index_marc_records
+            es = get_es_client()
+            if es:
+                ensure_index(es)
+                indexed = index_marc_records(es, project_id, file_id, _iter_marc(storage_path))
+                log.info(f"Indexed {indexed:,} records to Elasticsearch")
+        except Exception as es_exc:
+            log.warn(f"Elasticsearch indexing skipped: {es_exc}")
 
         log.complete(f"Ingest complete — {record_count:,} records")
         return {"record_count": record_count, "file_format": file_format}
@@ -187,6 +205,12 @@ def detect_ils_task(self, project_id: str, file_id: str, storage_path: str) -> d
     log.info("Running ILS detection heuristics")
 
     try:
+        # Guard: skip if file is not valid MARC
+        is_marc, detail = _is_valid_marc(storage_path)
+        if not is_marc:
+            log.warn(f"Skipping ILS detection — not valid MARC: {detail}")
+            return {"ils": None, "confidence": 0.0, "skipped": True}
+
         sample = _read_sample(storage_path, max_records=200)
 
         best_ils: str | None = None
@@ -251,13 +275,25 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
     log.info("Building tag frequency histogram")
 
     try:
+        # Guard: skip if file is not valid MARC
+        is_marc, detail = _is_valid_marc(storage_path)
+        if not is_marc:
+            log.warn(f"Skipping tag frequency — not valid MARC: {detail}")
+            return {"unique_tags": 0, "record_count": 0, "skipped": True}
+
         counter: Counter[str] = Counter()
+        sub_counter: dict[str, Counter] = defaultdict(Counter)
         record_count: int = 0
         milestone = 10_000
 
         for record in _iter_marc(storage_path):
+            if record is None:
+                continue
             for field in record.fields:
                 counter[field.tag] += 1
+                if not field.is_control_field():
+                    for sf in field.subfields:
+                        sub_counter[field.tag][sf.code] += 1
             record_count += 1
             if record_count % milestone == 0:
                 self.update_state(
@@ -267,12 +303,13 @@ def tag_frequency_task(self, project_id: str, file_id: str, storage_path: str) -
 
         # Sort descending by count for display convenience
         tag_freq = dict(sorted(counter.items(), key=lambda x: x[1], reverse=True))
+        subfield_freq = {tag: dict(subs) for tag, subs in sub_counter.items()}
 
         with Session(_engine) as db:
             db.execute(
                 update(MARCFile)
                 .where(MARCFile.id == file_id)
-                .values(tag_frequency=tag_freq)
+                .values(tag_frequency=tag_freq, subfield_frequency=subfield_freq)
             )
             db.commit()
 
@@ -307,7 +344,7 @@ def _parse_marc_file(path: str) -> tuple[str, int]:
     else:
         fmt = "iso2709"
 
-    count = sum(1 for _ in _iter_marc(path, fmt))
+    count = sum(1 for r in _iter_marc(path, fmt) if r is not None)
     return fmt, count
 
 
@@ -327,6 +364,8 @@ def _read_sample(path: str, max_records: int = 200) -> list[pymarc.Record]:
     """
     sample: list[pymarc.Record] = []
     for record in _iter_marc(path):
+        if record is None:
+            continue
         sample.append(record)
         if len(sample) >= max_records:
             break

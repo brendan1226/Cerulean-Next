@@ -10,12 +10,17 @@ GET  /projects/{id}/transform/manifest   — list transform/merge manifests
 import uuid
 from datetime import datetime
 
+import redis
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
+
+_settings = get_settings()
+_redis = redis.from_url(_settings.redis_url)
 from cerulean.models import AuditEvent, FieldMap, MARCFile, Project, TransformManifest
 from cerulean.schemas.transform import (
     MergeStartRequest,
@@ -168,8 +173,15 @@ async def transform_status(
     result_data = None
     error = None
 
+    # Check if paused via Redis flag
+    is_paused = _redis.exists(f"cerulean:pause:{project_id}")
+    if is_paused and state in ("PROGRESS", "PAUSED", "STARTED"):
+        state = "PAUSED"
+
     if state == "PROGRESS":
         progress = async_result.info
+    elif state == "PAUSED":
+        progress = async_result.info if isinstance(async_result.info, dict) else None
     elif state == "SUCCESS":
         result_data = async_result.result
     elif state == "FAILURE":
@@ -197,6 +209,174 @@ async def list_manifests(
 
     result = await db.execute(q)
     return result.scalars().all()
+
+
+@router.get("/{project_id}/transform/preview")
+async def preview_transformed(
+    project_id: str,
+    record_index: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview a transformed record alongside the original for comparison."""
+    import pymarc
+    from pathlib import Path
+
+    await _require_project(project_id, db)
+
+    # Find the latest successful transform manifest
+    result = await db.execute(
+        select(TransformManifest)
+        .where(TransformManifest.project_id == project_id,
+               TransformManifest.task_type == "transform",
+               TransformManifest.status == "complete")
+        .order_by(TransformManifest.started_at.desc())
+        .limit(1)
+    )
+    manifest = result.scalar_one_or_none()
+    if not manifest:
+        raise HTTPException(404, detail={"error": "NO_TRANSFORM", "message": "No completed transform found."})
+
+    # Get the first transformed file
+    transformed_dir = Path(get_settings().data_root) / project_id / "transformed"
+    transformed_files = sorted(transformed_dir.glob("*_transformed.mrc")) if transformed_dir.exists() else []
+    if not transformed_files:
+        raise HTTPException(404, detail={"error": "NO_FILES", "message": "No transformed files found."})
+
+    # Also find the original file for comparison
+    original_files = []
+    if manifest.file_ids:
+        orig_result = await db.execute(
+            select(MARCFile).where(MARCFile.id.in_(manifest.file_ids))
+            .order_by(MARCFile.sort_order, MARCFile.created_at)
+        )
+        original_files = [f.storage_path for f in orig_result.scalars().all()]
+
+    def read_record(path, valid_idx):
+        """Read the N-th valid (non-None) record from a MARC file."""
+        try:
+            with open(path, "rb") as fh:
+                reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                count = 0
+                for rec in reader:
+                    if rec is None:
+                        continue
+                    if count == valid_idx:
+                        return _record_to_preview(rec, valid_idx)
+                    count += 1
+        except Exception:
+            pass
+        return None
+
+    # Count total records across all transformed files
+    total_records = manifest.total_records or 0
+
+    # Find which file and local index this global index maps to
+    transformed_record = None
+    original_record = None
+    global_idx = 0
+    for tf_idx, tf_path in enumerate(transformed_files):
+        try:
+            with open(str(tf_path), "rb") as fh:
+                reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                local_valid = 0
+                for rec in reader:
+                    if rec is None:
+                        continue
+                    if global_idx == record_index:
+                        transformed_record = _record_to_preview(rec, record_index)
+                        # Read the corresponding original
+                        if tf_idx < len(original_files):
+                            original_record = read_record(original_files[tf_idx], local_valid)
+                        break
+                    global_idx += 1
+                    local_valid += 1
+            if transformed_record:
+                break
+        except Exception:
+            continue
+
+    if not transformed_record:
+        raise HTTPException(404, detail={"error": "RECORD_NOT_FOUND", "message": f"No record at index {record_index}."})
+
+    return {
+        "record_index": record_index,
+        "total_records": total_records,
+        "original": original_record,
+        "transformed": transformed_record,
+    }
+
+
+def _record_to_preview(record, index):
+    """Serialize a pymarc Record to a compact preview dict."""
+    fields = []
+    for field in record.fields:
+        if field.is_control_field():
+            fields.append({"tag": field.tag, "data": field.data})
+        else:
+            subs = [{"code": sf.code, "value": sf.value} for sf in field.subfields]
+            fields.append({"tag": field.tag, "ind1": field.indicator1, "ind2": field.indicator2, "subfields": subs})
+    return {
+        "index": index,
+        "title": record.title or "",
+        "fields": fields,
+    }
+
+
+@router.post("/{project_id}/transform/clear")
+async def clear_transform_results(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete all transformed files and manifests so the user can start fresh."""
+    from pathlib import Path
+
+    project = await _require_project(project_id, db)
+
+    # Delete transformed files on disk
+    project_dir = Path(get_settings().data_root) / project_id / "transformed"
+    deleted_files = 0
+    if project_dir.is_dir():
+        for f in project_dir.glob("*_transformed.mrc"):
+            f.unlink()
+            deleted_files += 1
+
+    # Also delete merged.mrc if present
+    merged = Path(get_settings().data_root) / project_id / "merged.mrc"
+    if merged.is_file():
+        merged.unlink()
+        deleted_files += 1
+
+    # Delete transform/merge manifests
+    result = await db.execute(
+        delete(TransformManifest).where(TransformManifest.project_id == project_id)
+    )
+    manifests_deleted = result.rowcount
+
+    # Reset stage 3 completion
+    project.stage_3_complete = False
+    if (project.current_stage or 0) > 3:
+        project.current_stage = 3
+
+    await _log(db, project_id, stage=3, level="info", tag="[transform]",
+               message=f"Cleared previous results: {deleted_files} file(s), {manifests_deleted} manifest(s)")
+
+    return {
+        "deleted_files": deleted_files,
+        "manifests_deleted": manifests_deleted,
+    }
+
+
+@router.post("/{project_id}/transform/pause")
+async def pause_transform(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Set pause flag — running transform will pause at the next record."""
+    await _require_project(project_id, db)
+    _redis.set(f"cerulean:pause:{project_id}", "1")
+    return {"status": "paused"}
+
+
+@router.post("/{project_id}/transform/resume")
+async def resume_transform(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Clear pause flag — transform resumes processing."""
+    await _require_project(project_id, db)
+    _redis.delete(f"cerulean:pause:{project_id}")
+    return {"status": "resumed"}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

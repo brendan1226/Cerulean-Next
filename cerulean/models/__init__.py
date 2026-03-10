@@ -86,6 +86,9 @@ class Project(Base):
     patron_count: Mapped[int | None] = mapped_column(Integer)
     hold_count: Mapped[int | None] = mapped_column(Integer)
 
+    # Archive
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
@@ -121,6 +124,9 @@ class MARCFile(Base):
 
     # Tag frequency histogram — stored as JSONB: {"001": 42118, "245": 42118, ...}
     tag_frequency: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Subfield frequency — {"245": {"a": 6182, "b": 3421}, ...}
+    subfield_frequency: Mapped[dict | None] = mapped_column(JSONB)
 
     # Status: "uploaded" | "indexing" | "indexed" | "error"
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
@@ -162,10 +168,14 @@ class FieldMap(Base):
     target_sub: Mapped[str | None] = mapped_column(String(5))             # e.g. "$o"
 
     # Transform
-    # "copy" | "regex" | "lookup" | "const" | "fn"
+    # "copy" | "regex" | "lookup" | "const" | "fn" | "preset"
     transform_type: Mapped[str] = mapped_column(String(20), default="copy")
     # Expression, regex pattern, lookup table name, constant value, or Python lambda string
     transform_fn: Mapped[str | None] = mapped_column(Text)
+    # Preset transform key (e.g. "date_mdy_to_dmy") — used when transform_type="preset"
+    preset_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # True = move (delete source field after copy), False = copy (keep original)
+    delete_source: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Origin
     ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)

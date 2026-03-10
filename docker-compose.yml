@@ -26,6 +26,7 @@ services:
       - DATA_ROOT=/data/projects
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SECRET_KEY=${SECRET_KEY:-changeme-dev-only}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +54,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATA_ROOT=/data/projects
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
     depends_on:
       - postgres
       - redis
@@ -137,6 +139,28 @@ services:
       - cerulean
 
 
+  # ── Elasticsearch (optional full-text search) ────
+  # Start with: docker compose --profile search up
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    profiles: ["search"]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cerulean
+
+
   # ── MinIO (optional S3-compatible file store) ────
   minio:
     # Pinned to RELEASE.2024-11-07T00-52-20Z — update deliberately, not via :latest.
@@ -162,6 +186,7 @@ volumes:
   redis-data:
   minio-data:
   cerulean-data:
+  es-data:
 
 
 networks:

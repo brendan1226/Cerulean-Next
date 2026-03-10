@@ -18,6 +18,8 @@ class FieldMapCreate(BaseModel):
     target_sub: str | None = None
     transform_type: str = "copy"
     transform_fn: str | None = None
+    preset_key: str | None = None
+    delete_source: bool = False
     notes: str | None = None
     approved: bool = False
 
@@ -29,6 +31,8 @@ class FieldMapUpdate(BaseModel):
     target_sub: str | None = None
     transform_type: str | None = None
     transform_fn: str | None = None
+    preset_key: str | None = None
+    delete_source: bool | None = None
     notes: str | None = None
     approved: bool | None = None
 
@@ -44,6 +48,8 @@ class FieldMapOut(BaseModel):
     target_sub: str | None
     transform_type: str
     transform_fn: str | None
+    preset_key: str | None
+    delete_source: bool
     ai_suggested: bool
     ai_confidence: float | None
     ai_reasoning: str | None
@@ -65,6 +71,8 @@ class AISuggestion(BaseModel):
     target_sub: str | None
     transform_type: str
     transform_fn: str | None
+    preset_key: str | None = None
+    delete_source: bool = False
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
 

@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     s3_bucket: str = "cerulean"
 
+    # ── Elasticsearch (optional) ────────────────────
+    elasticsearch_url: str | None = None  # e.g. "http://elasticsearch:9200"
+
     # ── App behaviour ─────────────────────────────
     debug: bool = False
     log_level: str = "info"

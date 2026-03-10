@@ -78,6 +78,8 @@ async def create_map(
         target_sub=body.target_sub,
         transform_type=body.transform_type,
         transform_fn=body.transform_fn,
+        preset_key=body.preset_key,
+        delete_source=body.delete_source,
         notes=body.notes,
         approved=body.approved,
         ai_suggested=False,
@@ -109,7 +111,8 @@ async def update_map(
     was_ai = field_map.ai_suggested
 
     for attr in ("source_tag", "source_sub", "target_tag", "target_sub",
-                 "transform_type", "transform_fn", "notes", "approved"):
+                 "transform_type", "transform_fn", "preset_key", "delete_source",
+                 "notes", "approved"):
         val = getattr(body, attr)
         if val is not None:
             setattr(field_map, attr, val)
@@ -181,6 +184,56 @@ async def ai_suggest_maps(
         task_id=task.id,
         message="AI analysis started. Suggestions will appear in the AI Suggestions tab.",
     )
+
+
+@router.get("/{project_id}/maps/validate")
+async def validate_maps(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate all approved maps before running a transform.
+
+    Returns a list of issues (empty = all good).
+    """
+    from cerulean.tasks.transform import _validate_map
+
+    await _require_project(project_id, db)
+
+    result = await db.execute(
+        select(FieldMap)
+        .where(FieldMap.project_id == project_id, FieldMap.approved == True)  # noqa: E712
+        .order_by(FieldMap.sort_order, FieldMap.created_at)
+    )
+    maps = result.scalars().all()
+
+    if not maps:
+        return {"valid": False, "approved_count": 0, "issues": [
+            {"map": "—", "source": "—", "target": "—", "reason": "No approved maps found"}
+        ]}
+
+    issues = []
+    for m in maps:
+        md = {
+            "source_tag": m.source_tag, "source_sub": m.source_sub,
+            "target_tag": m.target_tag, "target_sub": m.target_sub,
+            "transform_type": m.transform_type, "transform_fn": m.transform_fn,
+            "preset_key": m.preset_key,
+        }
+        ok, reason = _validate_map(md)
+        if not ok:
+            issues.append({
+                "map": m.id,
+                "source": f"{m.source_tag}{m.source_sub or ''}",
+                "target": f"{m.target_tag}{m.target_sub or ''}",
+                "reason": reason,
+            })
+
+    return {
+        "valid": len(issues) == 0,
+        "approved_count": len(maps),
+        "valid_count": len(maps) - len(issues),
+        "issues": issues,
+    }
 
 
 @router.post("/{project_id}/maps/{map_id}/approve", response_model=FieldMapOut)

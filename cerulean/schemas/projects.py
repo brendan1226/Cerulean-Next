@@ -23,6 +23,7 @@ class ProjectUpdate(BaseModel):
     koha_url: str | None = None
     koha_token: str | None = None
     source_ils: str | None = None
+    archived: bool | None = None
 
 
 class ProjectOut(BaseModel):
@@ -43,6 +44,7 @@ class ProjectOut(BaseModel):
     stage_4_complete: bool
     stage_5_complete: bool
     stage_6_complete: bool
+    archived: bool
     bib_count_ingested: int | None
     bib_count_post_dedup: int | None
     bib_count_pushed: int | None
@@ -83,3 +85,4 @@ class TagFrequencyOut(BaseModel):
     file_id: str
     record_count: int
     tags: dict[str, int]   # {"245": 42118, "852": 41900, ...}
+    subfield_frequency: dict[str, dict[str, int]] | None = None

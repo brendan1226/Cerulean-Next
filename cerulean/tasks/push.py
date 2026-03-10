@@ -40,6 +40,26 @@ _PROGRESS_INTERVAL = 500
 # ══════════════════════════════════════════════════════════════════════════
 
 
+def _find_marc_paths(project_id: str) -> list[Path]:
+    """Find best available MARC output files in priority order.
+
+    Priority: merged_deduped.mrc > merged.mrc > transformed/*.mrc
+    """
+    project_dir = Path(settings.data_root) / project_id
+    deduped = project_dir / "merged_deduped.mrc"
+    if deduped.is_file():
+        return [deduped]
+    merged = project_dir / "merged.mrc"
+    if merged.is_file():
+        return [merged]
+    transformed_dir = project_dir / "transformed"
+    if transformed_dir.is_dir():
+        transformed = sorted(transformed_dir.glob("*_transformed.mrc"))
+        if transformed:
+            return transformed
+    return []
+
+
 def _decrypt_token(encrypted: str) -> str:
     """Decrypt a Fernet-encrypted Koha API token."""
     f = Fernet(settings.fernet_key.encode())
@@ -181,13 +201,10 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
     log.info(f"Bulk MARC push starting (dry_run={dry_run})")
 
     try:
-        # Locate merged file (prefer deduped)
-        project_dir = Path(settings.data_root) / project_id
-        marc_path = project_dir / "merged_deduped.mrc"
-        if not marc_path.is_file():
-            marc_path = project_dir / "merged.mrc"
-        if not marc_path.is_file():
-            error_msg = "No merged MARC file found"
+        # Locate MARC output files (prefer deduped > merged > transformed)
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            error_msg = "No transformed or merged MARC files found"
             log.error(error_msg)
             with Session(_engine) as db:
                 _update_push_manifest(db, manifest_id,
@@ -195,49 +212,53 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                                       completed_at=datetime.utcnow())
             return {"error": error_msg}
 
+        log.info(f"Pushing from {len(marc_paths)} file(s): {[p.name for p in marc_paths]}")
+
         total = 0
         success = 0
         failed = 0
 
         if dry_run:
             # Count records only
-            for record in _iter_marc(str(marc_path)):
-                total += 1
-                success += 1
-                if total % _PROGRESS_INTERVAL == 0:
-                    self.update_state(state="PROGRESS", meta={
-                        "records_done": total, "dry_run": True,
-                    })
+            for marc_path in marc_paths:
+                for record in _iter_marc(str(marc_path)):
+                    total += 1
+                    success += 1
+                    if total % _PROGRESS_INTERVAL == 0:
+                        self.update_state(state="PROGRESS", meta={
+                            "records_done": total, "dry_run": True,
+                        })
         else:
             base_url, headers = _koha_client(project_id)
             push_headers = {**headers, "Content-Type": "application/marc"}
 
             with httpx.Client(timeout=60.0) as client:
-                for record in _iter_marc(str(marc_path)):
-                    total += 1
-                    try:
-                        resp = client.post(
-                            f"{base_url}/api/v1/biblios",
-                            content=record.as_marc(),
-                            headers=push_headers,
-                        )
-                        if resp.status_code < 300:
-                            success += 1
-                        else:
+                for marc_path in marc_paths:
+                    for record in _iter_marc(str(marc_path)):
+                        total += 1
+                        try:
+                            resp = client.post(
+                                f"{base_url}/api/v1/biblios",
+                                content=record.as_marc(),
+                                headers=push_headers,
+                            )
+                            if resp.status_code < 300:
+                                success += 1
+                            else:
+                                failed += 1
+                                if failed <= 10:
+                                    log.warn(f"Record {total} failed: HTTP {resp.status_code}")
+                        except httpx.HTTPError as exc:
                             failed += 1
                             if failed <= 10:
-                                log.warn(f"Record {total} failed: HTTP {resp.status_code}")
-                    except httpx.HTTPError as exc:
-                        failed += 1
-                        if failed <= 10:
-                            log.warn(f"Record {total} HTTP error: {exc}")
+                                log.warn(f"Record {total} HTTP error: {exc}")
 
-                    if total % _PROGRESS_INTERVAL == 0:
-                        self.update_state(state="PROGRESS", meta={
-                            "records_done": total,
-                            "records_success": success,
-                            "records_failed": failed,
-                        })
+                        if total % _PROGRESS_INTERVAL == 0:
+                            self.update_state(state="PROGRESS", meta={
+                                "records_done": total,
+                                "records_success": success,
+                                "records_failed": failed,
+                            })
 
         # Update manifest and project
         with Session(_engine) as db:

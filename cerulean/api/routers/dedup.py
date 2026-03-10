@@ -203,7 +203,7 @@ async def scan_dedup(
     if not project.stage_3_complete:
         raise HTTPException(409, detail={
             "error": "STAGE_3_INCOMPLETE",
-            "message": "Stage 3 (merge) must be complete before dedup scan.",
+            "message": "Stage 3 (transform) must be complete before dedup scan.",
         })
 
     # Verify rule exists

@@ -603,10 +603,75 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Progress bar ── */
+    .progress-bar-wrap {
+      width: 100%;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      overflow: hidden;
+      height: 24px;
+      position: relative;
+      margin: 8px 0;
+      border: 1px solid var(--border-mid);
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--cerulean), #3b82f6);
+      border-radius: 6px;
+      transition: width 0.5s ease;
+      min-width: 2px;
+    }
+    .progress-bar-fill.indeterminate {
+      width: 30% !important;
+      animation: indeterminate 1.5s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0%   { margin-left: 0;   width: 30%; }
+      50%  { margin-left: 35%; width: 30%; }
+      100% { margin-left: 70%; width: 30%; }
+    }
+    .progress-bar-fill.complete { background: linear-gradient(90deg, #22c55e, #16a34a); }
+    .progress-bar-fill.error { background: linear-gradient(90deg, #ef4444, #dc2626); }
+    .progress-bar-fill.paused { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+    .progress-bar-text {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-primary);
+      font-weight: 600;
+      text-shadow: 0 0 3px var(--bg-primary);
+    }
+
+    /* ── Global task bar ── */
+    #global-task-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 1500;
+      background: var(--bg-primary);
+      border-top: 1px solid var(--border-mid);
+      padding: 6px 16px;
+      display: none;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+    }
+    #global-task-bar.visible { display: flex; }
+    #global-task-bar .gtb-label { font-weight: 600; white-space: nowrap; }
+    #global-task-bar .gtb-progress { flex: 1; max-width: 400px; }
+    #global-task-bar .gtb-detail { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
+    #global-task-bar .gtb-actions { margin-left: auto; display: flex; gap: 8px; }
+
     /* ── Toast notifications ── */
     #toast-container {
       position: fixed;
-      bottom: 20px;
+      bottom: 44px;
       right: 20px;
       z-index: 2000;
       display: flex;
@@ -743,6 +808,145 @@
     .suggestion-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
     .suggestion-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
     .suggestion-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    /* ── Archive UI ── */
+    .project-row.archived {
+      opacity: 0.5;
+      border-left: 3px solid var(--text-dim);
+    }
+    .project-row.archived .project-code { color: var(--text-dim); }
+    .archive-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .archive-toggle input { cursor: pointer; }
+
+    /* ── Stage 2 Three-Panel Layout ── */
+    .s2-panels {
+      display: grid;
+      grid-template-columns: 300px 1fr 340px;
+      gap: 12px;
+      height: calc(100vh - 200px);
+      min-height: 500px;
+    }
+    .s2-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .s2-panel-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .s2-panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .s2-file-item {
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      transition: background 0.15s;
+    }
+    .s2-file-item:hover { background: var(--bg-hover); }
+    .s2-file-item.active { background: var(--cerulean-dim); border: 1px solid rgba(0,188,212,0.2); }
+    .s2-chart-wrap { padding: 8px 0; }
+    .s2-tag-list { margin-top: 8px; }
+    .s2-tag-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-family: var(--mono);
+      cursor: pointer;
+      border-radius: var(--radius);
+      transition: background 0.1s;
+    }
+    .s2-tag-row:hover { background: var(--bg-hover); }
+    .s2-tag-row.active { background: var(--cerulean-dim); color: var(--cerulean); }
+    .s2-record-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .s2-field-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 11px;
+      font-family: var(--mono);
+      border-bottom: 1px solid var(--border);
+    }
+    .s2-field-tag { color: var(--cerulean); width: 36px; flex-shrink: 0; }
+    .s2-field-ind { color: var(--text-dim); width: 20px; flex-shrink: 0; }
+    .s2-field-content { flex: 1; word-break: break-all; }
+    .s2-field-content .sf-code { color: var(--amber); }
+    .s2-subfield-bar { height: 4px; border-radius: 2px; background: var(--cerulean-dim); margin-top: 2px; }
+    .s2-map-item {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+    .s2-map-item.approved { border-left: 3px solid var(--green); }
+    .s2-map-item.pending { border-left: 3px solid var(--amber); }
+    .s2-map-dup-src {
+      background: var(--amber-dim); border-radius: 3px; padding: 0 4px;
+      outline: 1px dashed var(--amber);
+    }
+    .s2-map-dup-tgt {
+      background: var(--red-dim); border-radius: 3px; padding: 0 4px;
+      outline: 1px dashed var(--red);
+    }
+
+    /* ── Transform info button + panel ── */
+    .transform-info-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--cerulean-dim); border: 1px solid var(--border-mid);
+      color: var(--cerulean); font-size: 11px; font-weight: 600;
+      cursor: pointer; margin-left: 6px; vertical-align: middle;
+      transition: background 0.15s, border-color 0.15s;
+      font-family: var(--sans); line-height: 1; padding: 0;
+    }
+    .transform-info-btn:hover {
+      background: var(--cerulean-glow); border-color: var(--cerulean);
+    }
+    .transform-info-panel {
+      display: none; margin-top: 6px; padding: 8px 10px;
+      background: var(--bg-hover); border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 12px;
+      color: var(--text-secondary); line-height: 1.5;
+    }
+    .transform-info-panel.visible { display: block; }
   </style>
 </head>
 <body>
@@ -793,6 +997,9 @@
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
         </div>
+        <div class="nav-item" data-view="project-settings" onclick="navigate('project-settings')">
+          <span class="nav-icon">⚙</span> Settings
+        </div>
       </div>
 
       <div class="nav-section-label">Platform</div>
@@ -826,12 +1033,19 @@
 
 <!-- ── Toast container ── -->
 <div id="toast-container"></div>
+<div id="global-task-bar">
+  <span class="gtb-label" id="gtb-label"></span>
+  <div class="gtb-progress" id="gtb-progress"></div>
+  <span class="gtb-detail" id="gtb-detail"></span>
+  <div class="gtb-actions" id="gtb-actions"></div>
+</div>
 
 <!-- ── Modals ── -->
 <div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
   <div class="modal" id="modal-body"></div>
 </div>
 
+<script src="/vendor/chart.min.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
    CERULEAN NEXT — FRONTEND SHELL
@@ -881,6 +1095,7 @@ function navigate(view, params = {}) {
     stage4:       window.renderStage4,
     stage5:       window.renderStage5,
     'project-log': renderProjectLog,
+    'project-settings': renderProjectSettings,
     templates:    renderTemplates,
     suggestions:  renderSuggestions,
   };
@@ -900,6 +1115,7 @@ function updateBreadcrumb(view) {
     stage5: 'Stage 5 — Push to Koha',
     stage6: 'Stage 6 — KTD Sandbox',
     'project-log': 'Project Log',
+    'project-settings': 'Settings',
     templates: 'Templates',
     suggestions: 'Suggestions',
   };
@@ -934,7 +1150,12 @@ async function api(method, path, body = null) {
 }
 
 // ── Toast ────────────────────────────────────────────────────────────
+window._lastToast = { msg: '', ts: 0 };
 function toast(msg, type = 'info', duration = 4000) {
+  // Suppress duplicate messages within 3 seconds
+  const now = Date.now();
+  if (msg === window._lastToast.msg && now - window._lastToast.ts < 3000) return;
+  window._lastToast = { msg, ts: now };
   const icons = { success: '✓', error: '✕', info: 'ℹ', warn: '⚠' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
@@ -1008,19 +1229,27 @@ function updateStageBadges(project) {
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── Dashboard ────────────────────────────────────────────────────────
+let _showArchived = false;
+
 async function renderDashboard(el) {
   el.innerHTML = `
     <div class="page-header">
       <div>
         <div class="page-title">Dashboard</div>
-        <div class="page-subtitle">All active migration projects</div>
+        <div class="page-subtitle">All migration projects</div>
       </div>
-      <button class="btn btn-primary" onclick="navigate('new-project')">+ New Project</button>
+      <div style="display:flex;gap:12px;align-items:center">
+        <label class="archive-toggle">
+          <input type="checkbox" id="show-archived-toggle" ${_showArchived ? 'checked' : ''} onchange="_showArchived=this.checked;renderDashboard(document.getElementById('view'))">
+          Show archived
+        </label>
+        <button class="btn btn-primary" onclick="navigate('new-project')">+ New Project</button>
+      </div>
     </div>
     <div id="project-list-wrap"><div class="spinner"></div></div>`;
 
   try {
-    const projects = await api('GET', '/projects');
+    const projects = await api('GET', `/projects?include_archived=${_showArchived}`);
     state.projects = projects;
     const wrap = document.getElementById('project-list-wrap');
 
@@ -1035,9 +1264,9 @@ async function renderDashboard(el) {
 
     wrap.innerHTML = `<div class="project-list">
       ${projects.map(p => `
-        <div class="project-row" onclick="openProject(${JSON.stringify(p).replace(/"/g, '&quot;')})">
+        <div class="project-row ${p.archived ? 'archived' : ''}" onclick="openProject(${JSON.stringify(p).replace(/"/g, '&quot;')})">
           <div class="project-code">${esc(p.code)}</div>
-          <div class="project-name">${esc(p.library_name)}</div>
+          <div class="project-name">${esc(p.library_name)}${p.archived ? ' <span class="badge badge-dim" style="margin-left:6px">Archived</span>' : ''}</div>
           <div class="project-ils mono text-dim">${esc(p.source_ils || '—')}</div>
           <div class="project-stages">
             ${[1,2,3,4,5].map(i => {
@@ -1049,6 +1278,9 @@ async function renderDashboard(el) {
           <span class="badge ${p.current_stage === 5 && p.stage_5_complete ? 'badge-green' : 'badge-cerulean'}">
             Stage ${p.current_stage}
           </span>
+          <button class="btn btn-ghost btn-sm" data-pid="${esc(p.id)}" data-archived="${p.archived}" onclick="event.stopPropagation();toggleArchive(this.dataset.pid, this.dataset.archived === 'true')">
+            ${p.archived ? 'Restore' : 'Archive'}
+          </button>
         </div>`).join('')}
     </div>`;
   } catch (e) {
@@ -1056,6 +1288,14 @@ async function renderDashboard(el) {
     document.getElementById('project-list-wrap').innerHTML =
       `<div class="alert alert-error">Failed to load projects: ${esc(e.message)}</div>`;
   }
+}
+
+async function toggleArchive(projectId, isCurrentlyArchived) {
+  try {
+    await api('PATCH', `/projects/${projectId}`, { archived: !isCurrentlyArchived });
+    toast(isCurrentlyArchived ? 'Project restored' : 'Project archived', 'success');
+    renderDashboard(document.getElementById('view'));
+  } catch (e) { console.error(e); }
 }
 
 function openProject(project) {
@@ -1182,16 +1422,17 @@ async function loadFiles() {
     }
     wrap.innerHTML = `<table class="data-table">
       <thead><tr>
-        <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th>
+        <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th><th></th>
       </tr></thead>
       <tbody>
         ${files.map(f => `<tr>
-          <td class="mono">${f.filename}</td>
+          <td class="mono">${esc(f.filename)}</td>
           <td><span class="badge badge-dim">${f.file_format || '—'}</span></td>
           <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
           <td class="text-secondary">${f.ils_signal || '—'}</td>
           <td>${statusBadge(f.status)}</td>
-          <td>${f.tag_frequency ? Object.keys(f.tag_frequency).length + ' tags' : '<span class="text-dim">pending</span>'}</td>
+          <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
+          <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button></td>
         </tr>`).join('')}
       </tbody>
     </table>`;
@@ -1200,21 +1441,97 @@ async function loadFiles() {
 
 async function uploadFiles(fileList) {
   const p = state.currentProject;
+  const wrap = document.getElementById('file-table-wrap');
   for (const file of fileList) {
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res = await fetch(`${API_BASE}/projects/${p.id}/files`, { method: 'POST', body: fd });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
-        throw new Error(err.detail?.message || err.detail || `HTTP ${res.status}`);
-      }
-      toast(`${file.name} uploaded — indexing started`, 'success');
-    } catch (e) {
-      toast(`Upload failed (${file.name}): ${e.message}`, 'error');
-    }
+    await _uploadSingleFile(p, file, wrap, 'auto');
   }
-  setTimeout(loadFiles, 2000);
+  // Poll file list until all are indexed
+  pollFileStatus();
+}
+
+async function _uploadSingleFile(project, file, wrap, mode) {
+  const fd = new FormData();
+  fd.append('file', file);
+  // Show upload progress bar
+  const uploadId = 'upload-' + Date.now();
+  if (wrap) {
+    const div = document.createElement('div');
+    div.id = uploadId;
+    div.style.marginBottom = '8px';
+    div.innerHTML = renderProgressBar({ label: `Uploading ${file.name}…` });
+    wrap.prepend(div);
+  }
+  try {
+    const url = `${API_BASE}/projects/${project.id}/files?mode=${mode}`;
+    const res = await fetch(url, { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
+      // Handle duplicate filename — show choice modal
+      if (res.status === 409 && err.detail?.error === 'DUPLICATE_FILENAME') {
+        const el = document.getElementById(uploadId);
+        if (el) el.remove();
+        _showDuplicateModal(project, file, wrap, err.detail);
+        return;
+      }
+      throw new Error(err.detail?.message || err.detail || `HTTP ${res.status}`);
+    }
+    const el = document.getElementById(uploadId);
+    if (el) el.innerHTML = renderProgressBar({ percent: 100, label: `${file.name} — indexing…`, detail: 'Processing…' });
+    toast(`${file.name} uploaded — indexing started`, 'success');
+  } catch (e) {
+    const el = document.getElementById(uploadId);
+    if (el) el.innerHTML = renderProgressBar({ percent: 100, label: `${file.name} failed`, status: 'error', detail: e.message });
+    toast(`Upload failed (${file.name}): ${e.message}`, 'error');
+  }
+}
+
+function _showDuplicateModal(project, file, wrap, detail) {
+  const fname = esc(detail.existing_file_id ? file.name : 'this file');
+  const existCount = detail.existing_record_count ?? '?';
+  const existStatus = detail.existing_status || 'unknown';
+  openModal(`
+    <div class="modal-title">Duplicate Filename</div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+      A file named <strong class="mono">${esc(file.name)}</strong> already exists in this project
+      (${existCount} records, status: ${esc(existStatus)}).
+    </p>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">What would you like to do?</p>
+    <div class="modal-footer" style="gap:8px">
+      <button class="btn btn-ghost" onclick="closeModal()">Skip</button>
+      <button class="btn btn-ghost" onclick="_dupAction('add')">Add as New</button>
+      <button class="btn btn-primary" onclick="_dupAction('replace')">Replace Existing</button>
+    </div>`);
+  // Store context for the action handler
+  window._dupCtx = { project, file, wrap };
+}
+
+async function _dupAction(mode) {
+  closeModal();
+  const ctx = window._dupCtx;
+  if (!ctx) return;
+  window._dupCtx = null;
+  await _uploadSingleFile(ctx.project, ctx.file, ctx.wrap, mode);
+  pollFileStatus();
+}
+
+function pollFileStatus() {
+  const p = state.currentProject;
+  if (!p) return;
+  let attempts = 0;
+  const poll = async () => {
+    attempts++;
+    try {
+      const files = await api('GET', `/projects/${p.id}/files`);
+      const pending = (files || []).filter(f => f.status !== 'indexed' && f.status !== 'error' && f.status !== 'not_marc');
+      if (pending.length === 0 || attempts > 60) {
+        loadFiles(); // final refresh
+        return;
+      }
+    } catch {}
+    loadFiles(); // refresh table with current status
+    setTimeout(poll, 3000);
+  };
+  setTimeout(poll, 2000);
 }
 
 function handleFileDrop(e) {
@@ -1223,133 +1540,433 @@ function handleFileDrop(e) {
   uploadFiles(e.dataTransfer.files);
 }
 
+function confirmDeleteFile(fileId, filename) {
+  openModal(`
+    <div class="modal-title">Delete File</div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+      Are you sure you want to delete <strong class="mono">${esc(filename)}</strong>?
+      This will remove the file and its analysis data. This cannot be undone.
+    </p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" style="background:var(--red)" onclick="doDeleteFile('${esc(fileId)}')">Delete</button>
+    </div>`);
+}
+
+async function doDeleteFile(fileId) {
+  const p = state.currentProject;
+  closeModal();
+  try {
+    await api('DELETE', `/projects/${p.id}/files/${fileId}`);
+    toast('File deleted', 'success');
+    loadFiles();
+  } catch (e) {
+    console.error(e);
+    toast('Failed to delete file: ' + (e.message || e), 'error');
+  }
+}
+
 function statusBadge(status) {
   const map = {
     uploaded: 'badge-dim',
     indexing: 'badge-amber',
     indexed:  'badge-green',
     error:    'badge-red',
+    not_marc: 'badge-red',
   };
-  return `<span class="badge ${map[status] || 'badge-dim'}">${status}</span>`;
+  return `<span class="badge ${map[status] || 'badge-dim'}">${status === 'not_marc' ? 'not MARC' : status}</span>`;
 }
 
-// ── Stage 2 — Analyze & Map ───────────────────────────────────────────
+// ── Stage 2 — Analyze & Map (Three-Panel Layout) ─────────────────────
+
+// Stage 2 local state
+const s2 = {
+  files: [],
+  selectedFile: null,
+  tagData: null,
+  subfieldData: null,
+  selectedTag: null,
+  recordIndex: 0,
+  currentRecord: null,
+  maps: [],
+  kohaFields: null,
+  tagChart: null,
+  subfieldChart: null,
+  presetCache: null,
+};
+
 async function renderStage2(el) {
   const p = state.currentProject;
   el.innerHTML = `
-    <div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
-        <div class="page-title">Stage 2 — Analyze &amp; Map</div>
-        <div class="page-subtitle">${p.library_name}</div>
+        <div class="page-title" style="font-size:16px">Stage 2 — Analyze &amp; Map</div>
+        <div class="text-secondary" style="font-size:12px">${esc(p.library_name)}</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="runAISuggest()" id="btn-ai-suggest">✦ AI Suggest</button>
+        <div id="ai-suggest-progress" style="display:none;min-width:200px"></div>
+        <button class="btn btn-ghost btn-sm" onclick="openSaveTemplateModal()">⊞ Save Template</button>
+        <button class="btn btn-ghost btn-sm" onclick="openLoadTemplateModal()">⇄ Load Template</button>
       </div>
     </div>
-    ${pipelineBar(p)}
-    <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchMapTab('editor', this)">Mapping Editor</button>
-      <button class="tab-btn" onclick="switchMapTab('ai', this)">AI Suggestions</button>
-      <button class="tab-btn" onclick="switchMapTab('templates', this)">Templates</button>
-      <button class="tab-btn" onclick="switchMapTab('viewer', this)">Record Viewer</button>
-    </div>
-    <div id="map-tab-content"></div>`;
-
-  renderMapEditorTab();
-}
-
-function switchMapTab(tab, btn) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  const fns = {
-    editor: renderMapEditorTab,
-    ai:     renderAISuggestionsTab,
-    templates: renderTemplatesTab,
-    viewer: renderRecordViewerTab,
-  };
-  (fns[tab] || renderMapEditorTab)();
-}
-
-async function renderMapEditorTab() {
-  const p = state.currentProject;
-  const content = document.getElementById('map-tab-content');
-  content.innerHTML = `
-    <div class="map-toolbar">
-      <input class="form-input map-filter-input" id="map-filter" placeholder="Filter by tag…" oninput="filterMaps(this.value)">
-      <select class="form-select" style="width:150px" onchange="filterMaps(document.getElementById('map-filter').value, this.value)">
-        <option value="">All</option>
-        <option value="approved">Approved</option>
-        <option value="pending">Pending AI</option>
-        <option value="manual">Manual (unapproved)</option>
-      </select>
-      <button class="btn btn-primary btn-sm" onclick="openNewMapModal()">+ Add Map</button>
-      <button class="btn btn-ghost btn-sm" onclick="openLoadTemplateModal()">⇄ Load Template</button>
-      <button class="btn btn-ghost btn-sm" onclick="approveAll()">✓ Approve All</button>
-    </div>
-    <div id="map-table-wrap"><div class="spinner"></div></div>
-    <div style="margin-top:16px;display:flex;gap:8px">
-      <button class="btn btn-ghost btn-sm" onclick="openSaveTemplateModal()">⊞ Save as Template</button>
+    <div class="s2-panels">
+      <!-- Left: Data Explorer -->
+      <div class="s2-panel">
+        <div class="s2-panel-header">Data Explorer</div>
+        <div class="s2-panel-body" id="s2-left">
+          <div class="spinner"></div>
+        </div>
+      </div>
+      <!-- Center: Record Inspector -->
+      <div class="s2-panel">
+        <div class="s2-panel-header">Record Inspector</div>
+        <div class="s2-record-nav" id="s2-record-nav">
+          <button class="btn btn-ghost btn-sm" onclick="s2PrevRecord()">◀</button>
+          <span class="mono text-secondary" style="font-size:11px">Record <span id="s2-rec-idx">0</span></span>
+          <button class="btn btn-ghost btn-sm" onclick="s2NextRecord()">▶</button>
+          <input class="form-input" id="s2-rec-jump" type="number" value="0" min="0" style="width:70px;padding:4px 6px;font-size:11px" onchange="s2JumpRecord(parseInt(this.value)||0)">
+        </div>
+        <div class="s2-panel-body" id="s2-center">
+          <div class="text-dim" style="font-size:12px;padding:20px;text-align:center">Select a file to inspect records</div>
+        </div>
+      </div>
+      <!-- Right: Field Mapper -->
+      <div class="s2-panel">
+        <div class="s2-panel-header">
+          Field Mapper
+          <button class="btn btn-ghost btn-sm" onclick="openNewMapModal()">+ Add</button>
+        </div>
+        <div class="s2-panel-body" id="s2-right">
+          <div class="spinner"></div>
+        </div>
+      </div>
     </div>`;
 
-  loadMaps();
+  // Load data in parallel
+  s2LoadFiles();
+  s2LoadMaps();
+  s2LoadKohaFields();
 }
+
+async function s2LoadFiles() {
+  const p = state.currentProject;
+  try {
+    const files = await api('GET', `/projects/${p.id}/files`);
+    s2.files = files || [];
+    const left = document.getElementById('s2-left');
+    if (!left) return;
+
+    if (!files.length) {
+      left.innerHTML = `<div class="text-dim" style="font-size:12px;text-align:center;padding:20px">No files uploaded. Go to Stage 1 to upload MARC files.</div>`;
+      return;
+    }
+
+    left.innerHTML = `
+      <div style="margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Files</div>
+      ${files.map(f => `
+        <div class="s2-file-item ${s2.selectedFile?.id === f.id ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectFile(${JSON.stringify(f).replace(/"/g,'&quot;')})">
+          <span class="mono" style="font-size:11px">${esc(f.filename)}</span>
+          <span class="text-dim mono" style="font-size:10px">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</span>
+        </div>`).join('')}
+      <div id="s2-tag-section"></div>`;
+
+    // Auto-select first file if none selected
+    if (!s2.selectedFile && files.length) {
+      s2SelectFile(files[0]);
+    } else if (s2.selectedFile) {
+      s2RenderTags();
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function s2SelectFile(file) {
+  s2.selectedFile = file;
+  s2.recordIndex = 0;
+  s2.selectedTag = null;
+
+  // Highlight active file
+  document.querySelectorAll('.s2-file-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.fid === file.id);
+  });
+
+  // Load tag frequency
+  try {
+    const tagData = await api('GET', `/projects/${state.currentProject.id}/files/${file.id}/tags`);
+    s2.tagData = tagData;
+    s2.subfieldData = tagData.subfield_frequency || null;
+    s2RenderTags();
+  } catch (e) {
+    console.error(e);
+    s2.tagData = null;
+  }
+
+  // Load first record
+  s2LoadRecord(0);
+}
+
+function s2RenderTags() {
+  const section = document.getElementById('s2-tag-section');
+  if (!section || !s2.tagData) return;
+
+  const tags = s2.tagData.tags || {};
+  const sortedTags = Object.entries(tags).sort((a, b) => b[1] - a[1]);
+  const topTags = sortedTags.slice(0, 20);
+
+  section.innerHTML = `
+    <div style="margin-top:16px;margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">
+      Tag Frequency (${Object.keys(tags).length} tags)
+    </div>
+    <div class="s2-chart-wrap"><canvas id="s2-tag-chart" height="180"></canvas></div>
+    <div class="s2-tag-list" id="s2-tag-list">
+      ${sortedTags.map(([tag, count]) => `
+        <div class="s2-tag-row ${s2.selectedTag === tag ? 'active' : ''}" onclick="s2SelectTag('${esc(tag)}')">
+          <span>${esc(tag)}</span>
+          <span class="text-dim">${count.toLocaleString()}</span>
+        </div>`).join('')}
+    </div>
+    <div id="s2-subfield-section"></div>`;
+
+  // Draw tag chart
+  s2DrawTagChart(topTags);
+}
+
+function s2DrawTagChart(topTags) {
+  if (s2.tagChart) { s2.tagChart.destroy(); s2.tagChart = null; }
+  const canvas = document.getElementById('s2-tag-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  s2.tagChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: topTags.map(t => t[0]),
+      datasets: [{
+        data: topTags.map(t => t[1]),
+        backgroundColor: 'rgba(0,188,212,0.4)',
+        borderColor: 'rgba(0,188,212,0.8)',
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#4A5A6A', font: { family: "'IBM Plex Mono'", size: 9 } }, grid: { color: 'rgba(0,188,212,0.06)' } },
+        y: { ticks: { color: '#4A5A6A', font: { family: "'IBM Plex Mono'", size: 9 } }, grid: { color: 'rgba(0,188,212,0.06)' } },
+      },
+      onClick: (e, elements) => {
+        if (elements.length) {
+          const tag = topTags[elements[0].index][0];
+          s2SelectTag(tag);
+        }
+      },
+    },
+  });
+}
+
+function s2SelectTag(tag) {
+  s2.selectedTag = tag;
+  // Highlight in list
+  document.querySelectorAll('.s2-tag-row').forEach(el => {
+    el.classList.toggle('active', el.textContent.startsWith(tag));
+  });
+  s2RenderSubfields(tag);
+}
+
+function s2RenderSubfields(tag) {
+  const section = document.getElementById('s2-subfield-section');
+  if (!section) return;
+
+  const subs = s2.subfieldData?.[tag];
+  if (!subs || !Object.keys(subs).length) {
+    section.innerHTML = `<div class="text-dim" style="font-size:11px;margin-top:12px;padding:8px">No subfield data for ${esc(tag)}</div>`;
+    return;
+  }
+
+  const sortedSubs = Object.entries(subs).sort((a, b) => b[1] - a[1]);
+  const maxCount = sortedSubs[0][1];
+
+  section.innerHTML = `
+    <div style="margin-top:12px;margin-bottom:6px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">
+      Subfields for ${esc(tag)}
+    </div>
+    <div class="s2-chart-wrap"><canvas id="s2-sub-chart" height="120"></canvas></div>
+    ${sortedSubs.map(([code, count]) => `
+      <div class="s2-tag-row">
+        <span><span class="text-amber">$${esc(code)}</span></span>
+        <span class="text-dim">${count.toLocaleString()}</span>
+      </div>
+      <div class="s2-subfield-bar" style="width:${Math.round(count/maxCount*100)}%;background:rgba(0,188,212,${0.2 + 0.6 * count/maxCount})"></div>
+    `).join('')}`;
+
+  // Draw subfield chart
+  if (s2.subfieldChart) { s2.subfieldChart.destroy(); s2.subfieldChart = null; }
+  const canvas = document.getElementById('s2-sub-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  s2.subfieldChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: sortedSubs.map(s => '$' + s[0]),
+      datasets: [{
+        data: sortedSubs.map(s => s[1]),
+        backgroundColor: 'rgba(245,166,35,0.4)',
+        borderColor: 'rgba(245,166,35,0.8)',
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#4A5A6A', font: { family: "'IBM Plex Mono'", size: 9 } }, grid: { color: 'rgba(0,188,212,0.06)' } },
+        y: { ticks: { color: '#4A5A6A', font: { family: "'IBM Plex Mono'", size: 9 } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// ── Center Panel: Record Inspector ──
+
+async function s2LoadRecord(index) {
+  const p = state.currentProject;
+  const f = s2.selectedFile;
+  if (!f) return;
+  const center = document.getElementById('s2-center');
+  if (!center) return;
+  center.innerHTML = `<div class="spinner" style="margin:20px auto"></div>`;
+
+  try {
+    const record = await api('GET', `/projects/${p.id}/files/${f.id}/records/${index}`);
+    s2.currentRecord = record;
+    s2.recordIndex = index;
+    document.getElementById('s2-rec-idx').textContent = index;
+    document.getElementById('s2-rec-jump').value = index;
+
+    center.innerHTML = `
+      <div style="margin-bottom:8px">
+        <span class="text-dim" style="font-size:10px">Leader:</span>
+        <span class="mono text-secondary" style="font-size:10px">${esc(record.leader)}</span>
+      </div>
+      <div style="margin-bottom:12px;font-size:12px;color:var(--text-primary);font-weight:500">${esc(record.title)}</div>
+      ${record.fields.map(f => {
+        if (f.data !== undefined) {
+          return `<div class="s2-field-row">
+            <span class="s2-field-tag">${esc(f.tag)}</span>
+            <span class="s2-field-ind"></span>
+            <span class="s2-field-content">${esc(f.data)}</span>
+          </div>`;
+        }
+        return `<div class="s2-field-row">
+          <span class="s2-field-tag">${esc(f.tag)}</span>
+          <span class="s2-field-ind">${esc(f.ind1)}${esc(f.ind2)}</span>
+          <span class="s2-field-content">${f.subfields.map(s => `<span class="sf-code">$${esc(s.code)}</span> ${esc(s.value)}`).join(' ')}</span>
+        </div>`;
+      }).join('')}`;
+  } catch (e) {
+    center.innerHTML = `<div class="alert alert-error" style="margin:12px">${esc(e.message)}</div>`;
+  }
+}
+
+function s2PrevRecord() { if (s2.recordIndex > 0) s2LoadRecord(s2.recordIndex - 1); }
+function s2NextRecord() { s2LoadRecord(s2.recordIndex + 1); }
+function s2JumpRecord(idx) { if (idx >= 0) s2LoadRecord(idx); }
+
+// ── Right Panel: Field Mapper ──
+
+function _marcSubSort(s) {
+  if (!s) return '\xff';
+  const c = s.replace('$','');
+  return (c >= '0' && c <= '9') ? '\x00' + c : '\x01' + c.toLowerCase();
+}
+
+async function s2LoadMaps() {
+  const p = state.currentProject;
+  try {
+    const maps = await api('GET', `/projects/${p.id}/maps`);
+    s2.maps = (maps || []).sort((a, b) =>
+      (a.source_tag || '').localeCompare(b.source_tag || '')
+      || _marcSubSort(a.source_sub).localeCompare(_marcSubSort(b.source_sub))
+    );
+    s2RenderMaps();
+  } catch (e) { console.error(e); }
+}
+
+function s2RenderMaps() {
+  const right = document.getElementById('s2-right');
+  if (!right) return;
+
+  if (!s2.maps.length) {
+    right.innerHTML = `<div class="text-dim" style="font-size:12px;text-align:center;padding:20px">No maps yet. Click + Add or run AI Suggest.</div>`;
+    return;
+  }
+
+  // Detect duplicate source and target field keys
+  const srcCount = {}, tgtCount = {};
+  s2.maps.forEach(m => {
+    const sk = m.source_tag + (m.source_sub || '');
+    const tk = m.target_tag + (m.target_sub || '');
+    srcCount[sk] = (srcCount[sk] || 0) + 1;
+    tgtCount[tk] = (tgtCount[tk] || 0) + 1;
+  });
+
+  right.innerHTML = `
+    <div style="margin-bottom:8px;display:flex;gap:6px">
+      <button class="btn btn-ghost btn-sm" onclick="approveAll()" style="font-size:10px">✓ Approve All</button>
+    </div>
+    ${s2.maps.map(m => {
+      const sk = m.source_tag + (m.source_sub || '');
+      const tk = m.target_tag + (m.target_sub || '');
+      const dupSrc = srcCount[sk] > 1;
+      const dupTgt = tgtCount[tk] > 1;
+      const origin = m.source_label.startsWith('template')
+        ? '<span class="badge badge-cerulean" style="font-size:9px">tmpl</span>'
+        : m.ai_suggested
+        ? '<span class="badge badge-purple" style="font-size:9px">AI</span>'
+        : '<span class="badge badge-dim" style="font-size:9px">man</span>';
+      return `<div class="s2-map-item ${m.approved ? 'approved' : 'pending'}" style="cursor:pointer" data-map-id="${esc(m.id)}" onclick="openEditMapModal('${esc(m.id)}')">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <span class="mono text-cerulean ${dupSrc ? 's2-map-dup-src' : ''}" ${dupSrc ? 'title="Multiple maps read from this source field"' : ''}>${esc(m.source_tag)}${esc(m.source_sub||'')}</span>
+          <span class="text-dim" style="font-size:10px">→</span>
+          <span class="mono ${dupTgt ? 's2-map-dup-tgt' : ''}" ${dupTgt ? 'title="Multiple maps write to this target field"' : ''}>${esc(m.target_tag)}${esc(m.target_sub||'')}</span>
+          ${origin}
+          <span class="badge ${m.approved ? 'badge-green' : 'badge-amber'}" style="font-size:9px">${m.approved ? '✓' : '?'}</span>
+        </div>
+        <div style="display:flex;gap:4px;align-items:center;justify-content:space-between">
+          <span class="text-dim" style="font-size:10px">${esc(m.transform_type)}${m.preset_key ? ':' + esc(m.preset_key) : ''}${m.delete_source ? ' ⊘src' : ''}${m.ai_confidence != null ? ' · ' + Math.round(m.ai_confidence*100) + '%' : ''}</span>
+          <div style="display:flex;gap:4px">
+            ${!m.approved ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-map-id="${esc(m.id)}" onclick="event.stopPropagation();approveMap(this.dataset.mapId,this)">✓</button>` : ''}
+            <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-map-id="${esc(m.id)}" onclick="event.stopPropagation();deleteMap(this.dataset.mapId,this)">✕</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+async function s2LoadKohaFields() {
+  try {
+    const res = await fetch('/api/v1/reference/koha-fields');
+    if (res.ok) s2.kohaFields = await res.json();
+  } catch (e) { console.log('Koha fields not loaded:', e); }
+}
+
+// ── Shared map functions (updated to refresh s2 panel) ──
 
 async function loadMaps(filter = '') {
   const p = state.currentProject;
-  const wrap = document.getElementById('map-table-wrap');
-  if (!wrap) return;
   try {
     let url = `/projects/${p.id}/maps`;
     if (filter) url += `?status=${filter}`;
     const maps = await api('GET', url);
-
-    if (!maps.length) {
-      wrap.innerHTML = `<div class="empty-state" style="padding:32px">
-        <div class="empty-title">No maps yet</div>
-        <div class="empty-body">Add maps manually, load a template, or run AI Suggestions.</div>
-      </div>`;
-      return;
-    }
-
-    wrap.innerHTML = `<table class="data-table">
-      <thead><tr>
-        <th>Source</th><th>→</th><th>Target</th><th>Transform</th><th>Origin</th><th>Confidence</th><th>Status</th><th>Actions</th>
-      </tr></thead>
-      <tbody id="map-rows">
-        ${maps.map(m => mapRow(m)).join('')}
-      </tbody>
-    </table>`;
+    s2.maps = maps || [];
+    s2RenderMaps();
   } catch (e) { console.error(e); }
 }
 
-function mapRow(m) {
-  const origin = m.source_label.startsWith('template')
-    ? `<span class="badge badge-cerulean">template</span>`
-    : m.ai_suggested
-    ? `<span class="badge badge-purple">AI</span>`
-    : `<span class="badge badge-dim">manual</span>`;
-
-  const conf = m.ai_confidence != null
-    ? `<span class="${m.ai_confidence >= 0.7 ? 'text-green' : m.ai_confidence >= 0.4 ? 'text-amber' : 'text-red'} mono">${Math.round(m.ai_confidence * 100)}%</span>`
-    : `<span class="text-dim">—</span>`;
-
-  const rowClass = m.approved ? 'map-row-approved' : m.ai_suggested ? 'map-row-ai' : '';
-
-  return `<tr class="${rowClass}" id="map-${esc(m.id)}">
-    <td class="mono text-cerulean">${esc(m.source_tag)}${m.source_sub ? esc(m.source_sub) : ''}</td>
-    <td class="text-dim">→</td>
-    <td class="mono">${esc(m.target_tag)}${m.target_sub ? esc(m.target_sub) : ''}</td>
-    <td><span class="badge badge-dim">${esc(m.transform_type)}</span></td>
-    <td>${origin}</td>
-    <td>${conf}</td>
-    <td>${m.approved ? '<span class="badge badge-green">approved</span>' : '<span class="badge badge-amber">pending</span>'}</td>
-    <td style="display:flex;gap:4px">
-      ${!m.approved ? `<button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="approveMap(this.dataset.mapId,this)">✓</button>` : ''}
-      <button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="deleteMap(this.dataset.mapId,this)">✕</button>
-    </td>
-  </tr>`;
-}
-
-function filterMaps(text, status = '') {
-  loadMaps(status);
-}
+function filterMaps(text, status = '') { loadMaps(status); }
 
 async function approveMap(mapId, btn) {
   const p = state.currentProject;
@@ -1357,7 +1974,7 @@ async function approveMap(mapId, btn) {
   try {
     await api('POST', `/projects/${p.id}/maps/${mapId}/approve`);
     toast('Map approved', 'success');
-    loadMaps();
+    s2LoadMaps();
   } catch (e) {
     console.error('approveMap failed:', e);
     if (btn) btn.disabled = false;
@@ -1370,7 +1987,7 @@ async function deleteMap(mapId, btn) {
   try {
     await api('DELETE', `/projects/${p.id}/maps/${mapId}`);
     toast('Map deleted', 'success');
-    loadMaps();
+    s2LoadMaps();
   } catch (e) {
     console.error('deleteMap failed:', e);
     if (btn) btn.disabled = false;
@@ -1382,70 +1999,117 @@ async function approveAll() {
   try {
     const res = await api('POST', `/projects/${p.id}/maps/approve-all`, { min_confidence: 0.70 });
     toast(`Approved ${res.approved_count} maps`, 'success');
-    loadMaps();
+    s2LoadMaps();
   } catch (e) {
     console.error('approveAll failed:', e);
   }
 }
 
-function openNewMapModal() {
+async function openNewMapModal() {
+  // Build datalist options from tag frequency
+  const srcTagOpts = s2.tagData?.tags
+    ? Object.keys(s2.tagData.tags).sort().map(t => `<option value="${esc(t)}">${esc(t)} (${s2.tagData.tags[t].toLocaleString()})</option>`).join('')
+    : '';
+  // Build datalist options from Koha reference
+  const tgtTagOpts = s2.kohaFields?.fields
+    ? s2.kohaFields.fields.map(f => `<option value="${esc(f.tag)}">${esc(f.tag)} — ${esc(f.label)}</option>`).join('')
+    : '';
+
   openModal(`
     <div class="modal-title">Add Field Map</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="form-group">
         <label class="form-label">Source Tag *</label>
-        <input class="form-input" id="nm-src-tag" placeholder="852">
+        <input class="form-input" id="nm-src-tag" list="dl-src-tags" placeholder="e.g. 852" oninput="s2UpdateSourceSubs()">
+        <datalist id="dl-src-tags">${srcTagOpts}</datalist>
       </div>
       <div class="form-group">
         <label class="form-label">Source Subfield</label>
-        <input class="form-input" id="nm-src-sub" placeholder="\$h">
+        <input class="form-input" id="nm-src-sub" list="dl-src-subs" placeholder="e.g. $h">
+        <datalist id="dl-src-subs"></datalist>
       </div>
       <div class="form-group">
         <label class="form-label">Target Tag *</label>
-        <input class="form-input" id="nm-tgt-tag" placeholder="952">
+        <input class="form-input" id="nm-tgt-tag" list="dl-tgt-tags" placeholder="e.g. 952" oninput="s2UpdateTargetSubs()">
+        <datalist id="dl-tgt-tags">${tgtTagOpts}</datalist>
       </div>
       <div class="form-group">
         <label class="form-label">Target Subfield</label>
-        <input class="form-input" id="nm-tgt-sub" placeholder="\$o">
+        <input class="form-input" id="nm-tgt-sub" list="dl-tgt-subs" placeholder="e.g. $o">
+        <datalist id="dl-tgt-subs"></datalist>
       </div>
     </div>
     <div class="form-group">
-      <label class="form-label">Transform Type</label>
-      <select class="form-select" id="nm-transform">
-        <option value="copy">copy — direct copy</option>
-        <option value="regex">regex — pattern substitution</option>
-        <option value="lookup">lookup — value table</option>
-        <option value="const">const — constant value</option>
-        <option value="fn">fn — Python lambda</option>
+      <label class="form-label">Transform <button class="transform-info-btn" type="button" onclick="toggleTransformInfo()" title="Show description">i</button></label>
+      <select class="form-select" id="nm-transform" onchange="s2OnTransformTypeChange()">
+        <option value="copy">Loading…</option>
       </select>
+      <div class="transform-info-panel" id="nm-transform-info"></div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="nm-fn-group" style="display:none">
       <label class="form-label">Expression / Value</label>
-      <input class="form-input" id="nm-fn" placeholder="Leave blank for copy">
+      <input class="form-input" id="nm-fn" placeholder="Enter value">
     </div>
     <div class="form-group">
       <label class="form-label">Notes</label>
       <input class="form-input" id="nm-notes" placeholder="Optional">
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <input type="checkbox" id="nm-approve">
-      <label for="nm-approve" style="font-size:12px;color:var(--text-secondary)">Mark as approved immediately</label>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nm-delete-source">
+        <label for="nm-delete-source" style="font-size:12px;color:var(--text-secondary)">Move (delete source field after copy)</label>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nm-approve">
+        <label for="nm-approve" style="font-size:12px;color:var(--text-secondary)">Mark as approved immediately</label>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitNewMap()">Add Map</button>
     </div>`);
+
+  // Async-load presets and populate unified dropdown
+  const presets = await s2LoadAndCachePresets();
+  const sel = document.getElementById('nm-transform');
+  if (sel) sel.innerHTML = buildUnifiedTransformOptions(presets, 'copy');
+}
+
+function s2UpdateSourceSubs() {
+  const tag = document.getElementById('nm-src-tag')?.value;
+  const dl = document.getElementById('dl-src-subs');
+  if (!dl) return;
+  const subs = s2.subfieldData?.[tag] || {};
+  dl.innerHTML = Object.keys(subs).sort().map(c =>
+    `<option value="$${esc(c)}">$${esc(c)} (${subs[c].toLocaleString()})</option>`
+  ).join('');
+}
+
+function s2UpdateTargetSubs() {
+  const tag = document.getElementById('nm-tgt-tag')?.value;
+  const dl = document.getElementById('dl-tgt-subs');
+  if (!dl || !tag || !s2.kohaFields) { if (dl) dl.innerHTML = ''; return; }
+  const field = s2.kohaFields.fields.find(f => f.tag === tag);
+  if (!field || !field.subfields?.length) {
+    dl.innerHTML = '';
+    return;
+  }
+  dl.innerHTML = field.subfields.map(s => `<option value="$${esc(s.code)}">$${esc(s.code)} — ${esc(s.label)}</option>`).join('');
 }
 
 async function submitNewMap() {
   const p = state.currentProject;
+  const unified = document.getElementById('nm-transform').value;
+  const parsed = parseUnifiedTransformValue(unified);
   const body = {
-    source_tag: document.getElementById('nm-src-tag').value.trim(),
+    source_tag: (document.getElementById('nm-src-tag').value || '').trim(),
     source_sub: document.getElementById('nm-src-sub').value.trim() || null,
     target_tag: document.getElementById('nm-tgt-tag').value.trim(),
     target_sub: document.getElementById('nm-tgt-sub').value.trim() || null,
-    transform_type: document.getElementById('nm-transform').value,
-    transform_fn: document.getElementById('nm-fn').value.trim() || null,
+    transform_type: parsed.transform_type,
+    transform_fn: parsed.needsExpression ? (document.getElementById('nm-fn').value.trim() || null) : null,
+    preset_key: parsed.preset_key,
+    delete_source: document.getElementById('nm-delete-source').checked,
     notes: document.getElementById('nm-notes').value.trim() || null,
     approved: document.getElementById('nm-approve').checked,
   };
@@ -1454,7 +2118,218 @@ async function submitNewMap() {
     await api('POST', `/projects/${p.id}/maps`, body);
     closeModal();
     toast('Map added', 'success');
-    loadMaps();
+    s2LoadMaps();
+  } catch (e) { console.error(e); }
+}
+
+// ── Unified transform dropdown utilities ──
+
+async function s2LoadAndCachePresets() {
+  if (s2.presetCache) return s2.presetCache;
+  try {
+    s2.presetCache = await api('GET', '/reference/transform-presets');
+  } catch (e) { console.error('Failed to load presets:', e); s2.presetCache = []; }
+  return s2.presetCache;
+}
+
+const TRANSFORM_DESCRIPTIONS = {
+  'copy': 'Direct copy — copies the source field value to the target field without any modification.',
+  'custom:regex': 'Regex substitution — enter a pattern like s/old/new/ to transform the value using a regular expression.',
+  'custom:const': 'Constant value — ignores the source field and always writes the value you specify.',
+  'custom:fn': 'Python expression — a Python lambda applied to the value, e.g. value.split(",")[0].',
+  'custom:lookup': 'Lookup table — maps source values to target values using a JSON lookup table, e.g. {"a":"1","b":"2"}.',
+};
+
+function buildUnifiedTransformOptions(presets, selectedValue) {
+  let html = `<option value="copy" ${selectedValue === 'copy' ? 'selected' : ''}>Copy (direct)</option>`;
+  // Group presets by category
+  const catOrder = ['date', 'case', 'text', 'clean', 'extract'];
+  const catLabels = { date: 'Date', case: 'Case', text: 'Text', clean: 'Clean', extract: 'Extract' };
+  const grouped = {};
+  (presets || []).forEach(p => {
+    if (p.key === 'const_value') return; // redundant with Custom constant value
+    if (!grouped[p.category]) grouped[p.category] = [];
+    grouped[p.category].push(p);
+  });
+  catOrder.forEach(cat => {
+    const items = grouped[cat];
+    if (!items || !items.length) return;
+    html += `<optgroup label="${esc(catLabels[cat] || cat)}">`;
+    items.forEach(p => {
+      const val = `preset:${p.key}`;
+      html += `<option value="${esc(val)}" ${selectedValue === val ? 'selected' : ''}>${esc(p.label)}</option>`;
+    });
+    html += '</optgroup>';
+  });
+  // Custom section
+  html += '<optgroup label="Custom">';
+  html += `<option value="custom:regex" ${selectedValue === 'custom:regex' ? 'selected' : ''}>Custom regex</option>`;
+  html += `<option value="custom:const" ${selectedValue === 'custom:const' ? 'selected' : ''}>Custom constant value</option>`;
+  html += `<option value="custom:fn" ${selectedValue === 'custom:fn' ? 'selected' : ''}>Custom expression</option>`;
+  html += `<option value="custom:lookup" ${selectedValue === 'custom:lookup' ? 'selected' : ''}>Custom lookup</option>`;
+  html += '</optgroup>';
+  return html;
+}
+
+function parseUnifiedTransformValue(val) {
+  if (!val || val === 'copy') return { transform_type: 'copy', preset_key: null, needsExpression: false };
+  if (val.startsWith('preset:')) return { transform_type: 'preset', preset_key: val.slice(7), needsExpression: false };
+  if (val === 'custom:regex') return { transform_type: 'regex', preset_key: null, needsExpression: true };
+  if (val === 'custom:const') return { transform_type: 'const', preset_key: null, needsExpression: true };
+  if (val === 'custom:fn') return { transform_type: 'fn', preset_key: null, needsExpression: true };
+  if (val === 'custom:lookup') return { transform_type: 'lookup', preset_key: null, needsExpression: true };
+  return { transform_type: val, preset_key: null, needsExpression: false };
+}
+
+function encodeUnifiedTransformValue(transformType, presetKey) {
+  if (transformType === 'preset' && presetKey) return `preset:${presetKey}`;
+  if (transformType === 'copy') return 'copy';
+  if (transformType === 'regex') return 'custom:regex';
+  if (transformType === 'const') return 'custom:const';
+  if (transformType === 'fn') return 'custom:fn';
+  if (transformType === 'lookup') return 'custom:lookup';
+  return 'copy';
+}
+
+function getTransformDescription(unifiedValue) {
+  if (TRANSFORM_DESCRIPTIONS[unifiedValue]) return TRANSFORM_DESCRIPTIONS[unifiedValue];
+  if (unifiedValue && unifiedValue.startsWith('preset:') && s2.presetCache) {
+    const key = unifiedValue.slice(7);
+    const p = s2.presetCache.find(x => x.key === key);
+    if (p) return `${p.label} — ${p.description}`;
+  }
+  return '';
+}
+
+function toggleTransformInfo() {
+  const panel = document.getElementById('nm-transform-info');
+  if (!panel) return;
+  const isVisible = panel.classList.toggle('visible');
+  if (isVisible) {
+    const sel = document.getElementById('nm-transform');
+    panel.textContent = getTransformDescription(sel?.value) || 'Select a transform to see its description.';
+  }
+}
+
+function s2OnTransformTypeChange() {
+  const sel = document.getElementById('nm-transform');
+  const fnGroup = document.getElementById('nm-fn-group');
+  if (!sel) return;
+  const parsed = parseUnifiedTransformValue(sel.value);
+  if (fnGroup) fnGroup.style.display = parsed.needsExpression ? '' : 'none';
+  // Update info panel if visible
+  const panel = document.getElementById('nm-transform-info');
+  if (panel && panel.classList.contains('visible')) {
+    panel.textContent = getTransformDescription(sel.value) || 'Select a transform to see its description.';
+  }
+}
+
+async function openEditMapModal(mapId) {
+  const m = s2.maps.find(x => x.id === mapId);
+  if (!m) return;
+
+  const srcTagOpts = s2.tagData?.tags
+    ? Object.keys(s2.tagData.tags).sort().map(t => `<option value="${esc(t)}">${esc(t)} (${s2.tagData.tags[t].toLocaleString()})</option>`).join('')
+    : '';
+  const tgtTagOpts = s2.kohaFields?.fields
+    ? s2.kohaFields.fields.map(f => `<option value="${esc(f.tag)}">${esc(f.tag)} — ${esc(f.label)}</option>`).join('')
+    : '';
+
+  const encodedVal = encodeUnifiedTransformValue(m.transform_type, m.preset_key);
+  const parsed = parseUnifiedTransformValue(encodedVal);
+
+  openModal(`
+    <div class="modal-title">Edit Field Map</div>
+    ${m.ai_suggested ? `<div style="margin-bottom:12px;padding:8px;background:rgba(139,92,246,0.1);border-radius:6px;font-size:11px;color:var(--text-secondary)">
+      <strong>AI suggested</strong> (${m.ai_confidence != null ? Math.round(m.ai_confidence*100) + '% confidence' : 'no confidence'})${m.ai_reasoning ? '<br>' + esc(m.ai_reasoning) : ''}
+    </div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Source Tag *</label>
+        <input class="form-input" id="nm-src-tag" list="dl-src-tags" value="${esc(m.source_tag)}" oninput="s2UpdateSourceSubs()">
+        <datalist id="dl-src-tags">${srcTagOpts}</datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Source Subfield</label>
+        <input class="form-input" id="nm-src-sub" list="dl-src-subs" value="${esc(m.source_sub||'')}">
+        <datalist id="dl-src-subs"></datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target Tag *</label>
+        <input class="form-input" id="nm-tgt-tag" list="dl-tgt-tags" value="${esc(m.target_tag)}" oninput="s2UpdateTargetSubs()">
+        <datalist id="dl-tgt-tags">${tgtTagOpts}</datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target Subfield</label>
+        <input class="form-input" id="nm-tgt-sub" list="dl-tgt-subs" value="${esc(m.target_sub||'')}">
+        <datalist id="dl-tgt-subs"></datalist>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Transform <button class="transform-info-btn" type="button" onclick="toggleTransformInfo()" title="Show description">i</button></label>
+      <select class="form-select" id="nm-transform" onchange="s2OnTransformTypeChange()">
+        <option value="copy">Loading…</option>
+      </select>
+      <div class="transform-info-panel" id="nm-transform-info"></div>
+    </div>
+    <div class="form-group" id="nm-fn-group" style="display:${parsed.needsExpression ? '' : 'none'}">
+      <label class="form-label">Expression / Value</label>
+      <input class="form-input" id="nm-fn" value="${esc(m.transform_fn||'')}" placeholder="Enter value">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notes</label>
+      <input class="form-input" id="nm-notes" value="${esc(m.notes||'')}" placeholder="Optional">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nm-delete-source" ${m.delete_source ? 'checked' : ''}>
+        <label for="nm-delete-source" style="font-size:12px;color:var(--text-secondary)">Move (delete source field after copy)</label>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nm-approve" ${m.approved ? 'checked' : ''}>
+        <label for="nm-approve" style="font-size:12px;color:var(--text-secondary)">Approved</label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-ghost" style="color:var(--red)" onclick="closeModal();deleteMap('${esc(m.id)}')">Delete</button>
+      <button class="btn btn-primary" onclick="submitEditMap('${esc(m.id)}')">Save</button>
+    </div>`);
+
+  // Async-load presets and populate unified dropdown with correct selection
+  const presets = await s2LoadAndCachePresets();
+  const sel = document.getElementById('nm-transform');
+  if (sel) {
+    sel.innerHTML = buildUnifiedTransformOptions(presets, encodedVal);
+  }
+
+  // Populate subfield datalists
+  s2UpdateSourceSubs();
+  s2UpdateTargetSubs();
+}
+
+async function submitEditMap(mapId) {
+  const p = state.currentProject;
+  const unified = document.getElementById('nm-transform').value;
+  const parsed = parseUnifiedTransformValue(unified);
+  const body = {
+    source_tag: (document.getElementById('nm-src-tag').value || '').trim(),
+    source_sub: document.getElementById('nm-src-sub').value.trim() || null,
+    target_tag: document.getElementById('nm-tgt-tag').value.trim(),
+    target_sub: document.getElementById('nm-tgt-sub').value.trim() || null,
+    transform_type: parsed.transform_type,
+    transform_fn: parsed.needsExpression ? (document.getElementById('nm-fn').value.trim() || null) : null,
+    preset_key: parsed.preset_key,
+    delete_source: document.getElementById('nm-delete-source').checked,
+    notes: document.getElementById('nm-notes').value.trim() || null,
+    approved: document.getElementById('nm-approve').checked,
+  };
+  if (!body.source_tag || !body.target_tag) { toast('Source and target tags are required', 'warn'); return; }
+  try {
+    await api('PATCH', `/projects/${p.id}/maps/${mapId}`, body);
+    closeModal();
+    toast('Map updated', 'success');
+    s2LoadMaps();
   } catch (e) { console.error(e); }
 }
 
@@ -1541,110 +2416,57 @@ async function submitLoadTemplate() {
     });
     closeModal();
     toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped, ${res.maps_conflicted} replaced`, 'success');
-    loadMaps();
+    s2LoadMaps();
   } catch (e) { console.error(e); }
-}
-
-async function renderAISuggestionsTab() {
-  const p = state.currentProject;
-  const content = document.getElementById('map-tab-content');
-  content.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
-      <button class="btn btn-primary" onclick="runAISuggest()">✦ Run AI Analysis</button>
-      <span class="text-secondary" style="font-size:12px">Sends tag frequency + ${50} anonymised sample records to Claude</span>
-    </div>
-    <div id="ai-suggestions-wrap">
-      <div class="empty-state">
-        <div class="empty-icon">✦</div>
-        <div class="empty-title">No AI suggestions loaded</div>
-        <div class="empty-body">Click "Run AI Analysis" to get suggestions based on your uploaded MARC data.</div>
-      </div>
-    </div>`;
-
-  // Load pending AI maps if any
-  try {
-    const maps = await api('GET', `/projects/${p.id}/maps?status=pending`);
-    if (maps.length) renderAISuggestionRows(maps);
-  } catch (e) { console.error(e); }
-}
-
-function renderAISuggestionRows(maps) {
-  const wrap = document.getElementById('ai-suggestions-wrap');
-  if (!wrap) return;
-  wrap.innerHTML = `
-    <div class="alert alert-info">${maps.length} suggestions pending review. Accept individually or use Approve All in the editor.</div>
-    <table class="data-table">
-      <thead><tr><th>Source</th><th>→</th><th>Target</th><th>Transform</th><th>Confidence</th><th>Reasoning</th><th>Actions</th></tr></thead>
-      <tbody>
-        ${maps.map(m => `<tr>
-          <td class="mono text-cerulean">${esc(m.source_tag)}${esc(m.source_sub || '')}</td>
-          <td class="text-dim">→</td>
-          <td class="mono">${esc(m.target_tag)}${esc(m.target_sub || '')}</td>
-          <td><span class="badge badge-dim">${esc(m.transform_type)}</span></td>
-          <td><span class="${m.ai_confidence >= 0.7 ? 'text-green' : m.ai_confidence >= 0.4 ? 'text-amber' : 'text-red'} mono">${Math.round((m.ai_confidence||0)*100)}%</span></td>
-          <td style="max-width:260px;font-size:11px;color:var(--text-secondary)">${esc(m.ai_reasoning || '—')}</td>
-          <td style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-map-id="${esc(m.id)}" onclick="approveMap(this.dataset.mapId,this)">✓ Accept</button>
-            <button class="btn btn-danger btn-sm" data-map-id="${esc(m.id)}" onclick="deleteMap(this.dataset.mapId,this)">✕</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
 }
 
 async function runAISuggest() {
   const p = state.currentProject;
+  const progEl = document.getElementById('ai-suggest-progress');
+  const btnEl = document.getElementById('btn-ai-suggest');
   try {
+    // Snapshot current map count to detect new AI maps
+    const before = await api('GET', `/projects/${p.id}/maps`);
+    const beforeCount = (before || []).length;
+
     const res = await api('POST', `/projects/${p.id}/maps/ai-suggest`);
-    toast(`AI analysis started (task ${res.task_id.slice(0,8)}…)`, 'info');
-  } catch (e) { console.error(e); }
-}
+    if (btnEl) btnEl.style.display = 'none';
+    if (progEl) { progEl.style.display = ''; progEl.innerHTML = renderProgressBar({ label: 'AI analyzing…' }); }
 
-async function renderTemplatesTab() {
-  const content = document.getElementById('map-tab-content');
-  content.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-      <select class="form-select" style="width:160px" id="tmpl-scope-filter" onchange="loadTemplateList()">
-        <option value="">All scopes</option>
-        <option value="global">Global</option>
-        <option value="project">Project</option>
-      </select>
-      <button class="btn btn-ghost btn-sm" onclick="loadTemplateList()">↻ Refresh</button>
-    </div>
-    <div id="template-list"><div class="spinner"></div></div>`;
-  loadTemplateList();
-}
-
-async function loadTemplateList() {
-  const scope = document.getElementById('tmpl-scope-filter')?.value || '';
-  const wrap = document.getElementById('template-list');
-  if (!wrap) return;
-  try {
-    let url = '/templates';
-    if (scope) url += `?scope=${scope}`;
-    const templates = await api('GET', url);
-    if (!templates.length) {
-      wrap.innerHTML = `<div class="empty-state" style="padding:32px"><div class="empty-title">No templates found</div></div>`;
-      return;
-    }
-    wrap.innerHTML = `<table class="data-table">
-      <thead><tr><th>Name</th><th>Version</th><th>Scope</th><th>ILS</th><th>Maps</th><th>Uses</th><th>Actions</th></tr></thead>
-      <tbody>
-        ${templates.map(t => `<tr>
-          <td class="mono">${esc(t.name)}</td>
-          <td class="text-dim mono">v${esc(t.version)}</td>
-          <td>${t.scope === 'global' ? '<span class="badge badge-purple">global</span>' : '<span class="badge badge-cerulean">project</span>'}</td>
-          <td class="text-secondary">${esc(t.source_ils || '—')}</td>
-          <td class="mono">${t.maps ? t.maps.length : '—'}</td>
-          <td class="mono text-dim">${esc(String(t.use_count))}</td>
-          <td style="display:flex;gap:4px">
-            <button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="loadThisTemplate(this.dataset.tmplId)">Load</button>
-            ${t.scope === 'project' ? `<button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
-  } catch (e) { console.error(e); }
+    // Poll for new maps every 3s, up to 2 minutes
+    let attempts = 0;
+    const maxAttempts = 40;
+    const pollAI = async () => {
+      attempts++;
+      if (progEl) {
+        const pct = Math.min(95, (attempts / maxAttempts) * 100);
+        progEl.innerHTML = renderProgressBar({ percent: pct, label: 'AI analyzing…', detail: `${attempts * 3}s elapsed` });
+      }
+      try {
+        const current = await api('GET', `/projects/${p.id}/maps`);
+        if ((current || []).length > beforeCount) {
+          const newCount = (current || []).length - beforeCount;
+          if (progEl) { progEl.innerHTML = renderProgressBar({ percent: 100, label: `${newCount} suggestion${newCount === 1 ? '' : 's'} added`, status: 'complete' }); }
+          toast(`${newCount} AI suggestion${newCount === 1 ? '' : 's'} ready for review`, 'success');
+          s2.maps = current || [];
+          s2RenderMaps();
+          setTimeout(() => { if (progEl) progEl.style.display = 'none'; if (btnEl) btnEl.style.display = ''; }, 3000);
+          return;
+        }
+      } catch (e) { /* ignore poll errors */ }
+      if (attempts < maxAttempts) {
+        setTimeout(pollAI, 3000);
+      } else {
+        if (progEl) { progEl.innerHTML = renderProgressBar({ percent: 100, label: 'Timed out — check manually', status: 'error' }); }
+        setTimeout(() => { if (progEl) progEl.style.display = 'none'; if (btnEl) btnEl.style.display = ''; }, 3000);
+      }
+    };
+    setTimeout(pollAI, 3000);
+  } catch (e) {
+    console.error(e);
+    if (progEl) { progEl.innerHTML = renderProgressBar({ percent: 100, label: 'AI suggest failed', status: 'error' }); }
+    setTimeout(() => { if (progEl) progEl.style.display = 'none'; if (btnEl) btnEl.style.display = ''; }, 3000);
+  }
 }
 
 async function loadThisTemplate(templateId) {
@@ -1653,6 +2475,7 @@ async function loadThisTemplate(templateId) {
   try {
     const res = await api('POST', `/projects/${p.id}/maps/load-template`, { template_id: templateId, mode: 'merge' });
     toast(`Loaded: ${res.maps_added} added, ${res.maps_skipped} skipped`, 'success');
+    s2LoadMaps();
   } catch (e) { console.error(e); }
 }
 
@@ -1660,52 +2483,7 @@ async function promoteTemplate(templateId) {
   try {
     await api('POST', `/templates/${templateId}/promote`);
     toast('Template promoted to global', 'success');
-    loadTemplateList();
   } catch (e) { console.error(e); }
-}
-
-function renderRecordViewerTab() {
-  const content = document.getElementById('map-tab-content');
-  content.innerHTML = `
-    <div class="alert alert-info">Record Viewer — multi-pane MARC viewer coming in next iteration.</div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">Quick Record Fetch</span></div>
-      <div style="display:flex;gap:8px;align-items:flex-end">
-        <div class="form-group" style="margin:0;flex:1">
-          <label class="form-label">File ID</label>
-          <input class="form-input" id="rv-file-id" placeholder="file UUID">
-        </div>
-        <div class="form-group" style="margin:0;width:100px">
-          <label class="form-label">Record #</label>
-          <input class="form-input" id="rv-idx" type="number" value="0">
-        </div>
-        <button class="btn btn-primary" onclick="fetchRecord()">Fetch</button>
-      </div>
-      <div id="rv-result" style="margin-top:16px"></div>
-    </div>`;
-}
-
-async function fetchRecord() {
-  const p = state.currentProject;
-  const fileId = document.getElementById('rv-file-id').value.trim();
-  const idx = parseInt(document.getElementById('rv-idx').value) || 0;
-  if (!fileId) { toast('Enter a file ID', 'warn'); return; }
-  try {
-    const record = await api('GET', `/projects/${p.id}/files/${fileId}/records/${idx}`);
-    const wrap = document.getElementById('rv-result');
-    wrap.innerHTML = `
-      <div class="mono" style="font-size:11px;background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius);padding:12px;max-height:400px;overflow-y:auto">
-        <div class="text-dim">Leader: ${esc(record.leader)}</div>
-        <div class="text-secondary" style="margin-bottom:8px">${esc(record.title)}</div>
-        ${record.fields.map(f => {
-          if (f.data !== undefined) return `<div><span class="text-cerulean">${esc(f.tag)}</span>  ${esc(f.data)}</div>`;
-          return `<div><span class="text-cerulean">${esc(f.tag)}</span> ${esc(f.ind1)}${esc(f.ind2)} ${f.subfields.map(s => `<span class="text-dim">$${esc(s.code)}</span> ${esc(s.value)}`).join(' ')}</div>`;
-        }).join('')}
-      </div>`;
-  } catch (e) {
-    console.error('fetchRecord failed:', e);
-    document.getElementById('rv-result').innerHTML = `<div class="alert alert-error">Failed to load record: ${esc(e.message)}</div>`;
-  }
 }
 
 // ── Stage stubs ───────────────────────────────────────────────────────
@@ -1801,6 +2579,87 @@ async function loadLog() {
         <span class="text-dim">· ${data.total} total</span>`;
     }
   } catch (e) { console.error(e); }
+}
+
+// ── Project Settings ──────────────────────────────────────────────────
+function renderProjectSettings(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Project Settings</div>
+        <div class="page-subtitle">${esc(p.code)}</div>
+      </div>
+    </div>
+    <div class="card" style="max-width:560px">
+      <div class="form-group">
+        <label class="form-label">Library Name</label>
+        <input class="form-input" id="ps-name" value="${esc(p.library_name || '')}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Source ILS</label>
+        <input class="form-input" id="ps-source-ils" value="${esc(p.source_ils || '')}" placeholder="e.g. Symphony, Polaris, Millennium" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Koha URL</label>
+        <input class="form-input" id="ps-koha-url" value="${esc(p.koha_url || '')}" placeholder="https://koha.library.org" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Koha API Token</label>
+        <input class="form-input" id="ps-koha-token" type="password" placeholder="${p.koha_url ? '(token saved — enter new to replace)' : 'Enter API token'}" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-primary" onclick="saveProjectSettings()">Save Changes</button>
+        <button class="btn btn-ghost" onclick="navigate('stage1')">Cancel</button>
+      </div>
+      <div id="ps-status" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card" style="max-width:560px;margin-top:24px">
+      <div class="card-header"><span class="card-title">Project Info</span></div>
+      <table style="font-size:13px;width:100%">
+        <tr><td class="text-secondary" style="width:160px">Project ID</td><td class="mono">${esc(p.id)}</td></tr>
+        <tr><td class="text-secondary">Current Stage</td><td>${p.current_stage}</td></tr>
+        <tr><td class="text-secondary">Koha Version</td><td>${esc(p.koha_version || '—')}</td></tr>
+        <tr><td class="text-secondary">Search Engine</td><td>${esc(p.search_engine || '—')}</td></tr>
+        <tr><td class="text-secondary">Bibs Ingested</td><td>${(p.bib_count_ingested || 0).toLocaleString()}</td></tr>
+        <tr><td class="text-secondary">Bibs Post-Dedup</td><td>${(p.bib_count_post_dedup || 0).toLocaleString()}</td></tr>
+        <tr><td class="text-secondary">Bibs Pushed</td><td>${(p.bib_count_pushed || 0).toLocaleString()}</td></tr>
+        <tr><td class="text-secondary">Created</td><td>${new Date(p.created_at).toLocaleString()}</td></tr>
+        <tr><td class="text-secondary">Updated</td><td>${new Date(p.updated_at).toLocaleString()}</td></tr>
+      </table>
+    </div>`;
+}
+
+async function saveProjectSettings() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('ps-status');
+  const body = {};
+
+  const name = document.getElementById('ps-name').value.trim();
+  const sourceIls = document.getElementById('ps-source-ils').value.trim();
+  const kohaUrl = document.getElementById('ps-koha-url').value.trim();
+  const kohaToken = document.getElementById('ps-koha-token').value.trim();
+
+  if (name && name !== p.library_name) body.library_name = name;
+  if (sourceIls !== (p.source_ils || '')) body.source_ils = sourceIls || null;
+  if (kohaUrl !== (p.koha_url || '')) body.koha_url = kohaUrl || null;
+  if (kohaToken) body.koha_token = kohaToken;
+
+  if (!Object.keys(body).length) {
+    statusEl.innerHTML = '<span class="text-secondary" style="font-size:12px">No changes to save.</span>';
+    return;
+  }
+
+  try {
+    const updated = await api('PATCH', `/projects/${p.id}`, body);
+    state.currentProject = updated;
+    toast('Project settings saved', 'success');
+    renderProjectSettings(document.getElementById('view'));
+  } catch (e) {
+    console.error(e);
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed to save.</span>';
+  }
 }
 
 // ── Templates page ────────────────────────────────────────────────────
@@ -2077,8 +2936,8 @@ window.renderStage3 = async function(el) {
     ${pipelineBar(p)}
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchS3Tab('transform', this)">Transform</button>
-      <button class="tab-btn" onclick="switchS3Tab('merge', this)">Merge</button>
-      <button class="tab-btn" onclick="switchS3Tab('manifest', this)">Manifest</button>
+      <button class="tab-btn" onclick="switchS3Tab('merge', this)">Merge (Optional)</button>
+      <button class="tab-btn" onclick="switchS3Tab('manifest', this)">Results</button>
     </div>
     <div id="s3-tab"></div>`;
   renderS3Transform();
@@ -2101,19 +2960,95 @@ function renderS3Transform() {
       <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
         Applies all approved maps to all indexed files.
       </p>
-      <button class="btn btn-primary" onclick="runTransform()">▶ Start Transform</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="runTransform()" id="btn-transform-start">▶ Start Transform</button>
+        <button class="btn btn-amber" onclick="pauseTransform()" id="btn-transform-pause" style="display:none">⏸ Pause</button>
+        <button class="btn btn-primary" onclick="resumeTransform()" id="btn-transform-resume" style="display:none">▶ Resume</button>
+        <button class="btn" onclick="clearTransformResults()" id="btn-transform-clear" style="margin-left:auto" title="Delete transformed files and manifests">🗑 Clear Previous Results</button>
+      </div>
       <div id="transform-status" style="margin-top:12px"></div>
     </div>`;
 }
 
 async function runTransform() {
   const p = state.currentProject;
+  const statusEl = document.getElementById('transform-status');
   try {
-    const r = await window.api('POST', `/projects/${p.id}/transform/start`);
+    // Validate maps before starting
+    statusEl.innerHTML = '<span class="text-secondary" style="font-size:12px">Validating maps…</span>';
+    const v = await window.api('GET', `/projects/${p.id}/maps/validate`);
+    if (v && !v.valid) {
+      let html = `<div class="alert alert-warn" style="margin-top:8px">
+        <strong>${v.issues.length} map issue(s) found</strong> — these maps will be skipped during transform:
+        <ul style="margin:6px 0 0 16px;font-size:12px">`;
+      v.issues.forEach(i => {
+        html += `<li><span class="mono">${esc(i.source)} → ${esc(i.target)}</span>: ${esc(i.reason)}</li>`;
+      });
+      html += `</ul>`;
+      if (v.valid_count > 0) {
+        html += `<div style="margin-top:8px"><strong>${v.valid_count}</strong> valid map(s) will still run.
+          <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="runTransformConfirmed()">Continue anyway</button></div>`;
+      } else {
+        html += `<div style="margin-top:8px;color:var(--red)">No valid maps to run. Fix the issues above first.</div>`;
+      }
+      html += `</div>`;
+      statusEl.innerHTML = html;
+      return;
+    }
+    runTransformConfirmed();
+  } catch (e) { console.error(e); }
+}
+
+async function runTransformConfirmed() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('transform-status');
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/transform/start`, {});
     if (!r) return;
-    document.getElementById('transform-status').innerHTML =
-      `<span class="badge badge-amber">Running</span> <span class="mono text-dim">task: ${r.task_id.slice(0,8)}…</span>`;
-    pollTaskStatus(p.id, r.task_id, 'transform-status', 'transform', 'transform');
+    document.getElementById('btn-transform-start').style.display = 'none';
+    document.getElementById('btn-transform-pause').style.display = '';
+    document.getElementById('btn-transform-resume').style.display = 'none';
+    statusEl.innerHTML = renderProgressBar({ label: 'Transform starting…' });
+    pollTaskStatus(p.id, r.task_id, 'transform-status', 'transform', 'transform', () => {
+      document.getElementById('btn-transform-start').style.display = '';
+      document.getElementById('btn-transform-pause').style.display = 'none';
+      document.getElementById('btn-transform-resume').style.display = 'none';
+      // Auto-switch to Results tab
+      switchS3Tab('manifest', document.querySelector('.tab-btn:last-child'));
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function pauseTransform() {
+  const p = state.currentProject;
+  await window.api('POST', `/projects/${p.id}/transform/pause`);
+  document.getElementById('btn-transform-pause').style.display = 'none';
+  document.getElementById('btn-transform-resume').style.display = '';
+  document.getElementById('transform-status').innerHTML =
+    `<span class="badge badge-blue">Paused</span>`;
+}
+
+async function resumeTransform() {
+  const p = state.currentProject;
+  await window.api('POST', `/projects/${p.id}/transform/resume`);
+  document.getElementById('btn-transform-resume').style.display = 'none';
+  document.getElementById('btn-transform-pause').style.display = '';
+  document.getElementById('transform-status').innerHTML =
+    `<span class="badge badge-amber">Resuming…</span>`;
+}
+
+async function clearTransformResults() {
+  if (!confirm('Delete all transformed files and previous results? You will need to re-run the transform.')) return;
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/transform/clear`);
+    if (r) {
+      toast(`Cleared ${r.deleted_files} file(s) and ${r.manifests_deleted} manifest(s)`, 'success');
+      // Re-fetch project to update stage status
+      const proj = await window.api('GET', `/projects/${p.id}`);
+      if (proj) state.currentProject = proj;
+      renderS3Transform();
+    }
   } catch (e) { console.error(e); }
 }
 
@@ -2158,8 +3093,7 @@ async function runMerge() {
       items_csv_key_column: document.getElementById('merge-bib-key').value.trim() || 'biblionumber',
     });
     if (!r) return;
-    document.getElementById('merge-status').innerHTML =
-      `<span class="badge badge-amber">Running</span> <span class="mono text-dim">${ids.length} files, task: ${r.task_id.slice(0,8)}…</span>`;
+    document.getElementById('merge-status').innerHTML = renderProgressBar({ label: `Merging ${ids.length} files…` });
     pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge', 'transform');
   } catch (e) { console.error(e); }
 }
@@ -2171,34 +3105,181 @@ async function renderS3Manifest() {
   try {
     const manifests = await window.api('GET', `/projects/${p.id}/transform/manifest`);
     if (!manifests || !manifests.length) {
-      wrap.innerHTML = `<div class="alert alert-warn">No manifest yet — run Merge first.</div>`;
+      wrap.innerHTML = `<div class="alert alert-warn">No results yet — run Transform first.</div>`;
       return;
     }
     const m = manifests[0]; // most recent
+
+    // If transform is still running, show progress and poll manifest status (not Celery)
+    if (m.status === 'running') {
+      wrap.innerHTML = `
+        <div class="card">
+          <div class="card-header"><span class="card-title">Transform In Progress</span></div>
+          <div id="s3-results-progress">${renderProgressBar({ label: 'Transform running…' })}</div>
+          <p class="text-secondary" style="font-size:12px;margin-top:8px">You can navigate away — the transform will continue in the background. Come back to see results.</p>
+        </div>`;
+      // Poll manifest status only (pollTaskStatus handles Celery + toast)
+      const pollManifest = async () => {
+        try {
+          const latest = await window.api('GET', `/projects/${p.id}/transform/manifest`);
+          if (latest && latest.length && latest[0].status !== 'running') {
+            renderS3Manifest(); // re-render with final results
+            return;
+          }
+        } catch { /* ignore */ }
+        setTimeout(pollManifest, 3000);
+      };
+      setTimeout(pollManifest, 3000);
+      return;
+    }
+
+    const statusBadge = m.status==='complete'?'badge-green':m.status==='error'?'badge-red':'badge-amber';
+
+    // Fetch Celery task result for map stats
+    let mapStatsHtml = '';
+    if (m.status === 'complete' && m.celery_task_id) {
+      try {
+        const sr = await window.api('GET', `/projects/${p.id}/transform/status?task_id=${m.celery_task_id}`);
+        if (sr?.result?.map_stats?.length) {
+          const stats = sr.result.map_stats;
+          let rows = stats.map(s => {
+            const errCls = s.errors > 0 ? ' style="color:var(--red)"' : '';
+            const skipCls = s.skipped > 0 ? ' style="color:var(--amber)"' : '';
+            return `<tr>
+              <td class="mono" style="font-size:12px">${esc(s.map)}</td>
+              <td style="text-align:right">${s.applied.toLocaleString()}</td>
+              <td style="text-align:right"${skipCls}>${s.skipped.toLocaleString()}</td>
+              <td style="text-align:right"${errCls}>${s.errors.toLocaleString()}</td>
+            </tr>`;
+          }).join('');
+          mapStatsHtml = `
+            <div class="card" style="margin-top:16px">
+              <div class="card-header"><span class="card-title">Map Application Stats</span></div>
+              <table class="table" style="font-size:13px">
+                <thead><tr><th>Map</th><th style="text-align:right">Applied</th><th style="text-align:right">Skipped (no source)</th><th style="text-align:right">Errors</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>`;
+        }
+      } catch { /* ignore — stats are supplementary */ }
+    }
+
     wrap.innerHTML = `
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">Total Records</div><div class="stat-value">${(m.total_records||0).toLocaleString()}</div></div>
-        <div class="stat-card"><div class="stat-label">Items Joined</div><div class="stat-value">${(m.items_joined||0).toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Skipped</div><div class="stat-value">${(m.records_skipped||0).toLocaleString()}</div></div>
         <div class="stat-card"><div class="stat-label">Files Processed</div><div class="stat-value">${m.files_processed||0}</div></div>
+        <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value"><span class="badge ${statusBadge}">${esc(m.status)}</span></div></div>
       </div>
-      <div class="card">
+      ${m.error_message ? `<div class="alert alert-error">${esc(m.error_message)}</div>` : ''}
+      ${m.duplicate_001s?.length ? `<div class="alert alert-warn">${m.duplicate_001s.length} duplicate 001 values detected — review in Stage 4</div>` : ''}
+      ${mapStatsHtml}
+
+      <div class="card" style="margin-top:16px">
         <div class="card-header">
-          <span class="card-title">Latest ${esc(m.task_type)} Run</span>
-          <span class="badge ${m.status==='complete'?'badge-green':m.status==='error'?'badge-red':'badge-amber'}">${esc(m.status)}</span>
+          <span class="card-title">Review Transformed Records</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-sm" onclick="s3PreviewNav(-1)">← Prev</button>
+            <span id="s3-preview-index" class="mono" style="font-size:12px">0 / ${m.total_records||0}</span>
+            <button class="btn btn-sm" onclick="s3PreviewNav(1)">Next →</button>
+          </div>
         </div>
-        <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary)">
-          <span>Type: ${esc(m.task_type)}</span>
-          <span>·</span>
-          <span>Output: ${esc(m.output_path || '—')}</span>
-          <span>·</span>
-          <span>Started: ${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}</span>
-        </div>
-        ${m.error_message ? `<div class="alert alert-error" style="margin-top:12px">${esc(m.error_message)}</div>` : ''}
-        ${m.duplicate_001s?.length ? `<div class="alert alert-warn" style="margin-top:12px">${m.duplicate_001s.length} duplicate 001 values detected — review in Stage 4</div>` : ''}
-      </div>`;
+        <div id="s3-preview" style="margin-top:8px"><div class="spinner"></div></div>
+      </div>
+
+      ${m.status === 'complete' ? `
+      <div style="margin-top:16px;display:flex;gap:12px">
+        <button class="btn btn-green" onclick="s3AcceptTransform()">Accept Transform Results</button>
+        <button class="btn btn-red" onclick="s3RejectTransform()">Reject &amp; Re-run</button>
+      </div>` : ''}`;
+
+    window._s3PreviewIdx = 0;
+    window._s3TotalRecords = m.total_records || 0;
+    if (m.status === 'complete') s3LoadPreview(0);
   } catch {
-    wrap.innerHTML = `<div class="alert alert-warn">No manifest yet — run Merge first.</div>`;
+    wrap.innerHTML = `<div class="alert alert-warn">No results yet — run Transform first.</div>`;
   }
+}
+
+function s3PreviewNav(dir) {
+  const next = (window._s3PreviewIdx || 0) + dir;
+  if (next < 0 || next >= (window._s3TotalRecords || 1)) return;
+  window._s3PreviewIdx = next;
+  s3LoadPreview(next);
+}
+
+async function s3LoadPreview(idx) {
+  const p = state.currentProject;
+  const el = document.getElementById('s3-preview');
+  const idxEl = document.getElementById('s3-preview-index');
+  if (!el) return;
+  el.innerHTML = `<div class="spinner"></div>`;
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/transform/preview?record_index=${idx}`);
+    if (!r) { el.innerHTML = `<div class="text-secondary">Could not load preview.</div>`; return; }
+    if (idxEl) idxEl.textContent = `${idx + 1} / ${r.total_records}`;
+
+    const orig = r.original;
+    const trans = r.transformed;
+
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+          <h4 style="margin:0 0 8px;font-size:13px;color:var(--text-secondary)">Original</h4>
+          <div style="background:var(--bg-secondary);border-radius:6px;padding:12px;max-height:400px;overflow:auto;font-size:12px;font-family:var(--font-mono)">
+            ${orig ? s3RenderFields(orig.fields) : '<span class="text-dim">Not available</span>'}
+          </div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 8px;font-size:13px;color:var(--accent)">Transformed</h4>
+          <div style="background:var(--bg-secondary);border-radius:6px;padding:12px;max-height:400px;overflow:auto;font-size:12px;font-family:var(--font-mono)">
+            ${trans ? s3RenderFields(trans.fields, orig ? orig.fields : null) : '<span class="text-dim">Not available</span>'}
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">
+        Title: <strong>${esc(trans?.title || orig?.title || '—')}</strong>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="text-secondary">Preview not available.</div>`;
+  }
+  // Keep the preview card in view after content swap
+  const card = el.closest('.card');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function s3RenderFields(fields, compareFields) {
+  if (!fields || !fields.length) return '<span class="text-dim">No fields</span>';
+  // Build a set of original field strings for diff highlighting
+  const origSet = new Set();
+  if (compareFields) {
+    compareFields.forEach(f => origSet.add(JSON.stringify(f)));
+  }
+
+  return fields.map(f => {
+    const isNew = compareFields && !origSet.has(JSON.stringify(f));
+    const highlight = isNew ? 'style="background:rgba(34,197,94,0.12);border-radius:3px;padding:1px 3px"' : '';
+    if (f.data !== undefined) {
+      return `<div ${highlight}><span style="color:var(--accent)">${esc(f.tag)}</span> ${esc(f.data)}</div>`;
+    }
+    const subs = (f.subfields||[]).map(s => `<span style="color:var(--text-secondary)">$${esc(s.code)}</span> ${esc(s.value)}`).join(' ');
+    return `<div ${highlight}><span style="color:var(--accent)">${esc(f.tag)}</span> ${esc(f.ind1||' ')}${esc(f.ind2||' ')} ${subs}</div>`;
+  }).join('');
+}
+
+async function s3AcceptTransform() {
+  toast('Transform results accepted — proceed to Stage 4', 'success');
+  // Stage is already marked complete, just navigate forward
+  navigate('stage4');
+}
+
+async function s3RejectTransform() {
+  if (!confirm('Reject transform results? You can re-run with different maps.')) return;
+  // Reset stage 3 completion so they can re-run
+  const p = state.currentProject;
+  await window.api('PATCH', `/projects/${p.id}`, { stage_3_complete: false, current_stage: 3 });
+  toast('Transform rejected — adjust your maps and re-run', 'info');
+  navigate('stage2');
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2469,7 +3550,7 @@ function switchS5Tab(tab, btn) {
   ({ bibs: renderS5Bibs, patrons: renderS5Patrons, holds: renderS5Holds, reindex: renderS5Reindex, manifests: renderS5Manifests })[tab]();
 }
 
-function renderS5Bibs() {
+async function renderS5Bibs() {
   const p = state.currentProject;
   document.getElementById('s5-tab').innerHTML = `
     <div class="alert alert-warn">
@@ -2491,13 +3572,117 @@ function renderS5Bibs() {
         <button class="btn btn-primary" onclick="runPushBibs()">▶ Push Bibs</button>
         <div id="bibs-status" style="margin-top:12px"></div>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><span class="card-title">Push-Ready Files</span></div>
+      <div id="s5-files"><div class="spinner"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px;display:none" id="s5-preview-card">
+      <div class="card-header">
+        <span class="card-title">Record Preview</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm" onclick="s5PreviewNav(-1)">← Prev</button>
+          <span id="s5-preview-index" class="mono" style="font-size:12px">—</span>
+          <button class="btn btn-sm" onclick="s5PreviewNav(1)">Next →</button>
+        </div>
+      </div>
+      <div id="s5-preview" style="margin-top:8px"></div>
     </div>`;
+  s5LoadFiles();
+}
+
+function _fmtBytes(b) {
+  if (b == null) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+async function s5LoadFiles() {
+  const p = state.currentProject;
+  const el = document.getElementById('s5-files');
+  if (!el) return;
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/push/files`);
+    if (!r || !r.files || !r.files.length) {
+      el.innerHTML = '<span class="text-dim" style="font-size:12px">No push-ready files found. Complete Transform/Merge first.</span>';
+      return;
+    }
+    const sourceLabels = { dedup: 'Deduped', merge: 'Merged', transform: 'Transformed' };
+    el.innerHTML = `<table class="data-table" style="font-size:12px;width:100%">
+      <thead><tr><th>File</th><th>Source</th><th>Records</th><th>Size</th><th></th></tr></thead>
+      <tbody>${r.files.map(f => `<tr>
+        <td class="mono">${esc(f.filename)}</td>
+        <td><span class="badge badge-dim">${sourceLabels[f.source] || f.source}</span></td>
+        <td>${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
+        <td>${_fmtBytes(f.size)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s5PreviewFile('${esc(f.filename)}', ${f.record_count || 0})">Preview</button>
+          <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
+        </td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:12px">Failed to load files.</span>';
+    console.error(e);
+  }
+}
+
+window._s5PreviewFile = null;
+window._s5PreviewIdx = 0;
+window._s5PreviewTotal = 0;
+
+function s5PreviewFile(filename, totalRecords) {
+  window._s5PreviewFile = filename;
+  window._s5PreviewIdx = 0;
+  window._s5PreviewTotal = totalRecords;
+  const card = document.getElementById('s5-preview-card');
+  if (card) card.style.display = '';
+  s5LoadPreview(0);
+}
+
+function s5PreviewNav(dir) {
+  const next = window._s5PreviewIdx + dir;
+  if (next < 0 || next >= window._s5PreviewTotal) return;
+  window._s5PreviewIdx = next;
+  s5LoadPreview(next);
+}
+
+async function s5LoadPreview(idx) {
+  const p = state.currentProject;
+  const el = document.getElementById('s5-preview');
+  const idxEl = document.getElementById('s5-preview-index');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/push/files/preview?filename=${encodeURIComponent(window._s5PreviewFile)}&record_index=${idx}`);
+    if (!r || !r.record) { el.innerHTML = '<span class="text-dim">Could not load record.</span>'; return; }
+    window._s5PreviewTotal = r.total_records;
+    if (idxEl) idxEl.textContent = `${idx + 1} / ${r.total_records}`;
+    const rec = r.record;
+    el.innerHTML = `
+      <div style="margin-bottom:6px;font-size:12px;color:var(--text-secondary)">
+        <span class="mono">${esc(window._s5PreviewFile)}</span> — Title: <strong>${esc(rec.title || '—')}</strong>
+      </div>
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:450px;overflow:auto;font-size:12px;font-family:var(--mono)">
+        ${rec.fields.map(f => {
+          if (f.data !== undefined) {
+            return `<div><span style="color:var(--cerulean)">${esc(f.tag)}</span> ${esc(f.data)}</div>`;
+          }
+          const subs = f.subfields.map(s => `<span style="color:var(--amber)">$${esc(s.code)}</span>${esc(s.value)}`).join(' ');
+          return `<div><span style="color:var(--cerulean)">${esc(f.tag)}</span> ${esc(f.ind1||' ')}${esc(f.ind2||' ')} ${subs}</div>`;
+        }).join('')}
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim">Preview not available.</span>';
+  }
+  const card = document.getElementById('s5-preview-card');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function runPreflight() {
   const p = state.currentProject;
   try {
-    const r = await window.api('POST', `/projects/${p.id}/push/preflight`);
+    const r = await window.api('POST', `/projects/${p.id}/push/preflight`, {});
     if (!r) return;
     toast('Preflight check started', 'info');
     pollTaskStatus(p.id, r.task_id, 'preflight-status', 'preflight', 'push');
@@ -2519,8 +3704,7 @@ async function runPushBibs() {
     if (!r) return;
     const taskId = r.task_ids?.bulkmarc;
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
-    document.getElementById('bibs-status').innerHTML =
-      `<span class="badge badge-amber">Running</span> <span class="mono text-dim">task: ${taskId.slice(0,8)}… ${dryRun ? '(dry run)' : ''}</span>`;
+    document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `Push ${dryRun ? '(dry run)' : ''} running…` });
     pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
   } catch (e) { console.error(e); }
 }
@@ -2796,13 +3980,99 @@ async function teardownSandbox() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Progress bar helper
+// ══════════════════════════════════════════════════════════════════
+function renderProgressBar(opts = {}) {
+  const { percent, label, status, detail } = opts;
+  const pct = percent != null ? Math.min(100, Math.max(0, percent)) : null;
+  const fillClass = status === 'complete' ? 'complete' : status === 'error' ? 'error' : status === 'paused' ? 'paused' : (pct == null ? 'indeterminate' : '');
+  const fillWidth = pct != null ? pct : 100;
+  const labelText = label || (pct != null ? `${Math.round(pct)}%` : 'Processing…');
+  return `
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill ${fillClass}" style="width:${fillWidth}%"></div>
+      <div class="progress-bar-text">${esc(labelText)}</div>
+    </div>
+    ${detail ? `<div style="font-size:11px;color:var(--text-secondary);font-family:var(--font-mono);margin-top:2px">${esc(detail)}</div>` : ''}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Global background task tracker
+// ══════════════════════════════════════════════════════════════════
+window._bgTasks = {}; // { key: { projectId, taskId, label, stageType, onComplete, status } }
+
+function _showGlobalBar(key, label, progressHtml, detail, actions) {
+  const bar = document.getElementById('global-task-bar');
+  if (!bar) return;
+  bar.classList.add('visible');
+  document.getElementById('gtb-label').textContent = label;
+  document.getElementById('gtb-progress').innerHTML = progressHtml;
+  document.getElementById('gtb-detail').textContent = detail || '';
+  document.getElementById('gtb-actions').innerHTML = actions || '';
+}
+
+function _hideGlobalBar() {
+  const bar = document.getElementById('global-task-bar');
+  if (bar) bar.classList.remove('visible');
+}
+
+function _parseProgress(r, label) {
+  const s = r.state || r.status;
+  const prog = r.progress || {};
+  const res = r.result || {};
+  let pct = null, detail = '', statusType = null, barLabel = `${label}…`;
+
+  if (s === 'SUCCESS') {
+    pct = 100; statusType = 'complete';
+    barLabel = `${label} complete`;
+    detail = [
+      res.files_processed ? `${res.files_processed} files` : '',
+      res.total_records ? `${res.total_records.toLocaleString()} records` : '',
+      res.records_skipped ? `${res.records_skipped} skipped` : '',
+    ].filter(Boolean).join(' · ') || 'Done';
+  } else if (s === 'FAILURE') {
+    pct = 100; statusType = 'error';
+    barLabel = `${label} failed`;
+    detail = r.error || 'Unknown error';
+  } else if (s === 'PAUSED') {
+    statusType = 'paused';
+    barLabel = `${label} paused`;
+    detail = prog.records_done ? `${prog.records_done.toLocaleString()} records` : '';
+  } else {
+    if (prog.records_done != null) {
+      detail = `${prog.records_done.toLocaleString()} records`;
+      if (prog.files_done != null && prog.files_total) {
+        detail += ` · file ${prog.files_done + 1}/${prog.files_total}`;
+        pct = (prog.files_done / prog.files_total) * 100;
+      }
+      if (prog.current_file) detail += ` · ${prog.current_file}`;
+    } else if (prog.records_scanned != null) {
+      detail = `${prog.records_scanned.toLocaleString()} scanned`;
+    } else if (prog.records_written != null) {
+      detail = `${prog.records_written.toLocaleString()} written`;
+    } else if (prog.step) {
+      detail = prog.step;
+    }
+  }
+  return { pct, detail, statusType, barLabel, state: s };
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Generic task poller (stage-aware status endpoints)
 // ══════════════════════════════════════════════════════════════════
 function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onComplete) {
-  const el = document.getElementById(statusElId);
-  if (!el) return;
+  const taskKey = `${stageType}-${projectId}`;
 
-  // Use correct status endpoint per stage
+  // Cancel any existing poll for the same task key
+  if (window._bgTasks[taskKey]?._cancel) window._bgTasks[taskKey]._cancel();
+
+  let cancelled = false;
+  // Register as background task
+  window._bgTasks[taskKey] = {
+    projectId, taskId, label, stageType, onComplete, status: 'running',
+    _cancel: () => { cancelled = true; },
+  };
+
   const statusEndpoints = {
     transform: `/projects/${projectId}/transform/status?task_id=${taskId}`,
     dedup:     `/projects/${projectId}/dedup/status?task_id=${taskId}`,
@@ -2812,31 +4082,42 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
   const statusUrl = statusEndpoints[stageType] || statusEndpoints.transform;
 
   const poll = async () => {
+    if (cancelled) return;
+    let finished = false;
     try {
       const r = await window.api('GET', statusUrl);
-      if (!r) return;
-      const s = r.state || r.status;
-      if (s === 'SUCCESS') {
-        const resultStr = r.result ? JSON.stringify(r.result).slice(0, 120) : '';
-        el.innerHTML = `<span class="badge badge-green">Complete</span> <span class="text-dim mono" style="font-size:11px">${esc(resultStr)}</span>`;
-        toast(`${label} complete`, 'success');
-        if (onComplete) onComplete();
-      } else if (s === 'FAILURE') {
-        el.innerHTML = `<span class="badge badge-red">Failed</span> <span class="text-red" style="font-size:12px">${esc(r.error || 'error')}</span>`;
-        toast(`${label} failed`, 'error');
-      } else {
-        const prog = r.progress;
-        let progText = '';
-        if (prog) {
-          if (prog.records_done) progText = ` — ${prog.records_done.toLocaleString()} records`;
-          else if (prog.records_scanned) progText = ` — ${prog.records_scanned.toLocaleString()} scanned`;
-          else if (prog.records_written) progText = ` — ${prog.records_written.toLocaleString()} written`;
-          else if (prog.step) progText = ` — ${prog.step}`;
-        }
-        el.innerHTML = `<span class="badge badge-amber">Running</span><span class="text-dim mono" style="margin-left:8px">${esc(s)}${progText}</span>`;
-        setTimeout(poll, 2000);
+      if (!r || cancelled) return;
+      const p = _parseProgress(r, label);
+
+      // Update inline element if it still exists on page
+      const el = document.getElementById(statusElId);
+      if (el) {
+        el.innerHTML = renderProgressBar({ percent: p.pct, label: p.barLabel, status: p.statusType, detail: p.detail });
       }
-    } catch { setTimeout(poll, 3000); }
+
+      // Always update global bar
+      _showGlobalBar(taskKey, label,
+        `<div class="progress-bar-wrap" style="height:16px"><div class="progress-bar-fill ${p.statusType || (p.pct == null ? 'indeterminate' : '')}" style="width:${p.pct != null ? p.pct : 100}%"></div></div>`,
+        p.detail
+      );
+
+      if (p.state === 'SUCCESS') {
+        finished = true;
+        toast(`${label} complete`, 'success');
+        window._bgTasks[taskKey].status = 'complete';
+        setTimeout(_hideGlobalBar, 5000);
+        delete window._bgTasks[taskKey];
+        try { if (onComplete) onComplete(); } catch(e) { console.warn('onComplete error:', e); }
+      } else if (p.state === 'FAILURE') {
+        finished = true;
+        toast(`${label} failed`, 'error');
+        window._bgTasks[taskKey].status = 'error';
+        setTimeout(_hideGlobalBar, 8000);
+        delete window._bgTasks[taskKey];
+        try { if (onComplete) onComplete(); } catch(e) { console.warn('onComplete error:', e); }
+      }
+    } catch (e) { console.warn('poll error:', e); }
+    if (!finished && !cancelled) setTimeout(poll, 2000);
   };
   poll();
 }
@@ -2867,6 +4148,7 @@ window.navigate = function(view, params = {}) {
     stage5:        window.renderStage5,
     stage6:        window.renderStage6,
     'project-log': renderProjectLog,
+    'project-settings': renderProjectSettings,
     templates:     renderTemplates,
     suggestions:   renderSuggestions,
   };

@@ -1,0 +1,502 @@
+{
+  "fields": [
+    {"tag": "001", "label": "Control Number", "subfields": []},
+    {"tag": "003", "label": "Control Number Identifier", "subfields": []},
+    {"tag": "005", "label": "Date and Time of Latest Transaction", "subfields": []},
+    {"tag": "006", "label": "Fixed-Length Data Elements (Additional)", "subfields": []},
+    {"tag": "007", "label": "Physical Description Fixed Field", "subfields": []},
+    {"tag": "008", "label": "Fixed-Length Data Elements", "subfields": []},
+    {"tag": "010", "label": "Library of Congress Control Number", "subfields": [
+      {"code": "a", "label": "LC control number"},
+      {"code": "z", "label": "Canceled/invalid LC control number"}
+    ]},
+    {"tag": "015", "label": "National Bibliography Number", "subfields": [
+      {"code": "a", "label": "National bibliography number"},
+      {"code": "2", "label": "Source"}
+    ]},
+    {"tag": "020", "label": "ISBN", "subfields": [
+      {"code": "a", "label": "ISBN"},
+      {"code": "c", "label": "Terms of availability"},
+      {"code": "z", "label": "Canceled/invalid ISBN"}
+    ]},
+    {"tag": "022", "label": "ISSN", "subfields": [
+      {"code": "a", "label": "ISSN"},
+      {"code": "y", "label": "Incorrect ISSN"},
+      {"code": "z", "label": "Canceled ISSN"}
+    ]},
+    {"tag": "024", "label": "Other Standard Identifier", "subfields": [
+      {"code": "a", "label": "Standard number or code"},
+      {"code": "2", "label": "Source of number or code"}
+    ]},
+    {"tag": "028", "label": "Publisher or Distributor Number", "subfields": [
+      {"code": "a", "label": "Publisher or distributor number"},
+      {"code": "b", "label": "Source"}
+    ]},
+    {"tag": "035", "label": "System Control Number", "subfields": [
+      {"code": "a", "label": "System control number"},
+      {"code": "z", "label": "Canceled/invalid control number"}
+    ]},
+    {"tag": "040", "label": "Cataloging Source", "subfields": [
+      {"code": "a", "label": "Original cataloging agency"},
+      {"code": "b", "label": "Language of cataloging"},
+      {"code": "c", "label": "Transcribing agency"},
+      {"code": "d", "label": "Modifying agency"},
+      {"code": "e", "label": "Description conventions"}
+    ]},
+    {"tag": "041", "label": "Language Code", "subfields": [
+      {"code": "a", "label": "Language code of text"},
+      {"code": "b", "label": "Language code of summary"},
+      {"code": "h", "label": "Language code of original"}
+    ]},
+    {"tag": "042", "label": "Authentication Code", "subfields": [
+      {"code": "a", "label": "Authentication code"}
+    ]},
+    {"tag": "043", "label": "Geographic Area Code", "subfields": [
+      {"code": "a", "label": "Geographic area code"}
+    ]},
+    {"tag": "050", "label": "Library of Congress Call Number", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"}
+    ]},
+    {"tag": "060", "label": "National Library of Medicine Call Number", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"}
+    ]},
+    {"tag": "070", "label": "National Agricultural Library Call Number", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"}
+    ]},
+    {"tag": "080", "label": "Universal Decimal Classification Number", "subfields": [
+      {"code": "a", "label": "UDC number"},
+      {"code": "b", "label": "Item number"}
+    ]},
+    {"tag": "082", "label": "Dewey Decimal Classification Number", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"},
+      {"code": "2", "label": "Edition number"}
+    ]},
+    {"tag": "084", "label": "Other Classification Number", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"},
+      {"code": "2", "label": "Source of number"}
+    ]},
+    {"tag": "090", "label": "Local Call Number (Koha)", "subfields": [
+      {"code": "a", "label": "Classification number"},
+      {"code": "b", "label": "Item number"}
+    ]},
+    {"tag": "100", "label": "Main Entry — Personal Name", "subfields": [
+      {"code": "a", "label": "Personal name"},
+      {"code": "b", "label": "Numeration"},
+      {"code": "c", "label": "Titles and other words"},
+      {"code": "d", "label": "Dates associated with a name"},
+      {"code": "e", "label": "Relator term"},
+      {"code": "q", "label": "Fuller form of name"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "4", "label": "Relationship"}
+    ]},
+    {"tag": "110", "label": "Main Entry — Corporate Name", "subfields": [
+      {"code": "a", "label": "Corporate name"},
+      {"code": "b", "label": "Subordinate unit"},
+      {"code": "e", "label": "Relator term"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "4", "label": "Relationship"}
+    ]},
+    {"tag": "111", "label": "Main Entry — Meeting Name", "subfields": [
+      {"code": "a", "label": "Meeting name"},
+      {"code": "c", "label": "Location of meeting"},
+      {"code": "d", "label": "Date of meeting"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "0", "label": "Authority record control number"}
+    ]},
+    {"tag": "130", "label": "Main Entry — Uniform Title", "subfields": [
+      {"code": "a", "label": "Uniform title"},
+      {"code": "d", "label": "Date of treaty signing"},
+      {"code": "f", "label": "Date of a work"},
+      {"code": "l", "label": "Language of a work"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"}
+    ]},
+    {"tag": "210", "label": "Abbreviated Title", "subfields": [
+      {"code": "a", "label": "Abbreviated title"},
+      {"code": "b", "label": "Qualifying information"}
+    ]},
+    {"tag": "222", "label": "Key Title", "subfields": [
+      {"code": "a", "label": "Key title"},
+      {"code": "b", "label": "Qualifying information"}
+    ]},
+    {"tag": "240", "label": "Uniform Title", "subfields": [
+      {"code": "a", "label": "Uniform title"},
+      {"code": "f", "label": "Date of a work"},
+      {"code": "l", "label": "Language of a work"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"}
+    ]},
+    {"tag": "245", "label": "Title Statement", "subfields": [
+      {"code": "a", "label": "Title"},
+      {"code": "b", "label": "Remainder of title"},
+      {"code": "c", "label": "Statement of responsibility"},
+      {"code": "h", "label": "Medium"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"}
+    ]},
+    {"tag": "246", "label": "Varying Form of Title", "subfields": [
+      {"code": "a", "label": "Title proper/short title"},
+      {"code": "b", "label": "Remainder of title"},
+      {"code": "i", "label": "Display text"}
+    ]},
+    {"tag": "250", "label": "Edition Statement", "subfields": [
+      {"code": "a", "label": "Edition statement"},
+      {"code": "b", "label": "Remainder of edition statement"}
+    ]},
+    {"tag": "260", "label": "Publication, Distribution (Imprint)", "subfields": [
+      {"code": "a", "label": "Place of publication"},
+      {"code": "b", "label": "Name of publisher"},
+      {"code": "c", "label": "Date of publication"}
+    ]},
+    {"tag": "264", "label": "Production, Publication, Distribution", "subfields": [
+      {"code": "a", "label": "Place"},
+      {"code": "b", "label": "Name"},
+      {"code": "c", "label": "Date"}
+    ]},
+    {"tag": "300", "label": "Physical Description", "subfields": [
+      {"code": "a", "label": "Extent"},
+      {"code": "b", "label": "Other physical details"},
+      {"code": "c", "label": "Dimensions"},
+      {"code": "e", "label": "Accompanying material"}
+    ]},
+    {"tag": "306", "label": "Playing Time", "subfields": [
+      {"code": "a", "label": "Playing time"}
+    ]},
+    {"tag": "310", "label": "Current Publication Frequency", "subfields": [
+      {"code": "a", "label": "Current publication frequency"},
+      {"code": "b", "label": "Date of current publication frequency"}
+    ]},
+    {"tag": "336", "label": "Content Type", "subfields": [
+      {"code": "a", "label": "Content type term"},
+      {"code": "b", "label": "Content type code"},
+      {"code": "2", "label": "Source"}
+    ]},
+    {"tag": "337", "label": "Media Type", "subfields": [
+      {"code": "a", "label": "Media type term"},
+      {"code": "b", "label": "Media type code"},
+      {"code": "2", "label": "Source"}
+    ]},
+    {"tag": "338", "label": "Carrier Type", "subfields": [
+      {"code": "a", "label": "Carrier type term"},
+      {"code": "b", "label": "Carrier type code"},
+      {"code": "2", "label": "Source"}
+    ]},
+    {"tag": "340", "label": "Physical Medium", "subfields": [
+      {"code": "a", "label": "Material base and configuration"},
+      {"code": "b", "label": "Dimensions"}
+    ]},
+    {"tag": "362", "label": "Dates of Publication and/or Volume Designation", "subfields": [
+      {"code": "a", "label": "Dates of publication/volume designation"}
+    ]},
+    {"tag": "440", "label": "Series Statement/Added Entry — Title (obsolete)", "subfields": [
+      {"code": "a", "label": "Title"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"},
+      {"code": "v", "label": "Volume/sequential designation"}
+    ]},
+    {"tag": "490", "label": "Series Statement", "subfields": [
+      {"code": "a", "label": "Series statement"},
+      {"code": "v", "label": "Volume/sequential designation"},
+      {"code": "x", "label": "ISSN"}
+    ]},
+    {"tag": "500", "label": "General Note", "subfields": [
+      {"code": "a", "label": "General note"}
+    ]},
+    {"tag": "501", "label": "With Note", "subfields": [
+      {"code": "a", "label": "With note"}
+    ]},
+    {"tag": "502", "label": "Dissertation Note", "subfields": [
+      {"code": "a", "label": "Dissertation note"},
+      {"code": "b", "label": "Degree type"},
+      {"code": "c", "label": "Granting institution"},
+      {"code": "d", "label": "Year degree granted"}
+    ]},
+    {"tag": "504", "label": "Bibliography Note", "subfields": [
+      {"code": "a", "label": "Bibliography, etc. note"}
+    ]},
+    {"tag": "505", "label": "Formatted Contents Note", "subfields": [
+      {"code": "a", "label": "Formatted contents note"},
+      {"code": "g", "label": "Miscellaneous information"},
+      {"code": "r", "label": "Statement of responsibility"},
+      {"code": "t", "label": "Title"}
+    ]},
+    {"tag": "506", "label": "Restrictions on Access Note", "subfields": [
+      {"code": "a", "label": "Terms governing access"}
+    ]},
+    {"tag": "508", "label": "Creation/Production Credits Note", "subfields": [
+      {"code": "a", "label": "Creation/production credits note"}
+    ]},
+    {"tag": "510", "label": "Citation/References Note", "subfields": [
+      {"code": "a", "label": "Name of source"},
+      {"code": "c", "label": "Location within source"}
+    ]},
+    {"tag": "511", "label": "Participant or Performer Note", "subfields": [
+      {"code": "a", "label": "Participant or performer note"}
+    ]},
+    {"tag": "515", "label": "Numbering Peculiarities Note", "subfields": [
+      {"code": "a", "label": "Numbering peculiarities note"}
+    ]},
+    {"tag": "520", "label": "Summary", "subfields": [
+      {"code": "a", "label": "Summary, etc."},
+      {"code": "b", "label": "Expansion of summary note"}
+    ]},
+    {"tag": "521", "label": "Target Audience Note", "subfields": [
+      {"code": "a", "label": "Target audience note"},
+      {"code": "b", "label": "Source"}
+    ]},
+    {"tag": "526", "label": "Study Program Information Note", "subfields": [
+      {"code": "a", "label": "Program name"},
+      {"code": "b", "label": "Interest level"},
+      {"code": "c", "label": "Reading level"},
+      {"code": "d", "label": "Title point value"}
+    ]},
+    {"tag": "530", "label": "Additional Physical Form Available Note", "subfields": [
+      {"code": "a", "label": "Additional physical form available note"}
+    ]},
+    {"tag": "533", "label": "Reproduction Note", "subfields": [
+      {"code": "a", "label": "Type of reproduction"},
+      {"code": "b", "label": "Place of reproduction"},
+      {"code": "c", "label": "Agency responsible for reproduction"},
+      {"code": "d", "label": "Date of reproduction"}
+    ]},
+    {"tag": "534", "label": "Original Version Note", "subfields": [
+      {"code": "a", "label": "Main entry of original"},
+      {"code": "t", "label": "Title statement of original"}
+    ]},
+    {"tag": "538", "label": "System Details Note", "subfields": [
+      {"code": "a", "label": "System details note"}
+    ]},
+    {"tag": "540", "label": "Terms Governing Use and Reproduction Note", "subfields": [
+      {"code": "a", "label": "Terms governing use and reproduction"}
+    ]},
+    {"tag": "541", "label": "Immediate Source of Acquisition Note", "subfields": [
+      {"code": "a", "label": "Source of acquisition"},
+      {"code": "c", "label": "Method of acquisition"},
+      {"code": "d", "label": "Date of acquisition"}
+    ]},
+    {"tag": "546", "label": "Language Note", "subfields": [
+      {"code": "a", "label": "Language note"}
+    ]},
+    {"tag": "550", "label": "Issuing Body Note", "subfields": [
+      {"code": "a", "label": "Issuing body note"}
+    ]},
+    {"tag": "583", "label": "Action Note", "subfields": [
+      {"code": "a", "label": "Action"},
+      {"code": "c", "label": "Time/date of action"},
+      {"code": "l", "label": "Status"}
+    ]},
+    {"tag": "586", "label": "Awards Note", "subfields": [
+      {"code": "a", "label": "Awards note"}
+    ]},
+    {"tag": "590", "label": "Local Note (Koha)", "subfields": [
+      {"code": "a", "label": "Local note"}
+    ]},
+    {"tag": "600", "label": "Subject Added Entry — Personal Name", "subfields": [
+      {"code": "a", "label": "Personal name"},
+      {"code": "d", "label": "Dates associated with a name"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "y", "label": "Chronological subdivision"},
+      {"code": "z", "label": "Geographic subdivision"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "2", "label": "Source of heading"}
+    ]},
+    {"tag": "610", "label": "Subject Added Entry — Corporate Name", "subfields": [
+      {"code": "a", "label": "Corporate name or jurisdiction name"},
+      {"code": "b", "label": "Subordinate unit"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "y", "label": "Chronological subdivision"},
+      {"code": "z", "label": "Geographic subdivision"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "2", "label": "Source of heading"}
+    ]},
+    {"tag": "611", "label": "Subject Added Entry — Meeting Name", "subfields": [
+      {"code": "a", "label": "Meeting name"},
+      {"code": "c", "label": "Location of meeting"},
+      {"code": "d", "label": "Date of meeting"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "0", "label": "Authority record control number"}
+    ]},
+    {"tag": "630", "label": "Subject Added Entry — Uniform Title", "subfields": [
+      {"code": "a", "label": "Uniform title"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "0", "label": "Authority record control number"}
+    ]},
+    {"tag": "648", "label": "Subject Added Entry — Chronological Term", "subfields": [
+      {"code": "a", "label": "Chronological term"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "2", "label": "Source of heading"}
+    ]},
+    {"tag": "650", "label": "Subject Added Entry — Topical Term", "subfields": [
+      {"code": "a", "label": "Topical term"},
+      {"code": "b", "label": "Topical term following geographic name"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "y", "label": "Chronological subdivision"},
+      {"code": "z", "label": "Geographic subdivision"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "2", "label": "Source of heading"}
+    ]},
+    {"tag": "651", "label": "Subject Added Entry — Geographic Name", "subfields": [
+      {"code": "a", "label": "Geographic name"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "y", "label": "Chronological subdivision"},
+      {"code": "z", "label": "Geographic subdivision"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "2", "label": "Source of heading"}
+    ]},
+    {"tag": "653", "label": "Index Term — Uncontrolled", "subfields": [
+      {"code": "a", "label": "Uncontrolled term"}
+    ]},
+    {"tag": "655", "label": "Index Term — Genre/Form", "subfields": [
+      {"code": "a", "label": "Genre/form data or focus term"},
+      {"code": "v", "label": "Form subdivision"},
+      {"code": "x", "label": "General subdivision"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "2", "label": "Source of term"}
+    ]},
+    {"tag": "690", "label": "Local Subject Added Entry (Koha)", "subfields": [
+      {"code": "a", "label": "Local subject heading"}
+    ]},
+    {"tag": "700", "label": "Added Entry — Personal Name", "subfields": [
+      {"code": "a", "label": "Personal name"},
+      {"code": "b", "label": "Numeration"},
+      {"code": "c", "label": "Titles and other words"},
+      {"code": "d", "label": "Dates associated with a name"},
+      {"code": "e", "label": "Relator term"},
+      {"code": "q", "label": "Fuller form of name"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "4", "label": "Relationship"}
+    ]},
+    {"tag": "710", "label": "Added Entry — Corporate Name", "subfields": [
+      {"code": "a", "label": "Corporate name"},
+      {"code": "b", "label": "Subordinate unit"},
+      {"code": "e", "label": "Relator term"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "0", "label": "Authority record control number"},
+      {"code": "4", "label": "Relationship"}
+    ]},
+    {"tag": "711", "label": "Added Entry — Meeting Name", "subfields": [
+      {"code": "a", "label": "Meeting name"},
+      {"code": "c", "label": "Location of meeting"},
+      {"code": "d", "label": "Date of meeting"},
+      {"code": "0", "label": "Authority record control number"}
+    ]},
+    {"tag": "730", "label": "Added Entry — Uniform Title", "subfields": [
+      {"code": "a", "label": "Uniform title"},
+      {"code": "l", "label": "Language of a work"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"}
+    ]},
+    {"tag": "740", "label": "Added Entry — Uncontrolled Related/Analytical Title", "subfields": [
+      {"code": "a", "label": "Uncontrolled related/analytical title"},
+      {"code": "n", "label": "Number of part"},
+      {"code": "p", "label": "Name of part"}
+    ]},
+    {"tag": "776", "label": "Additional Physical Form Entry", "subfields": [
+      {"code": "a", "label": "Main entry heading"},
+      {"code": "t", "label": "Title"},
+      {"code": "w", "label": "Record control number"}
+    ]},
+    {"tag": "780", "label": "Preceding Entry", "subfields": [
+      {"code": "a", "label": "Main entry heading"},
+      {"code": "t", "label": "Title"},
+      {"code": "w", "label": "Record control number"},
+      {"code": "x", "label": "ISSN"}
+    ]},
+    {"tag": "785", "label": "Succeeding Entry", "subfields": [
+      {"code": "a", "label": "Main entry heading"},
+      {"code": "t", "label": "Title"},
+      {"code": "w", "label": "Record control number"},
+      {"code": "x", "label": "ISSN"}
+    ]},
+    {"tag": "800", "label": "Series Added Entry — Personal Name", "subfields": [
+      {"code": "a", "label": "Personal name"},
+      {"code": "d", "label": "Dates associated with a name"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "v", "label": "Volume/sequential designation"}
+    ]},
+    {"tag": "810", "label": "Series Added Entry — Corporate Name", "subfields": [
+      {"code": "a", "label": "Corporate name"},
+      {"code": "t", "label": "Title of a work"},
+      {"code": "v", "label": "Volume/sequential designation"}
+    ]},
+    {"tag": "830", "label": "Series Added Entry — Uniform Title", "subfields": [
+      {"code": "a", "label": "Uniform title"},
+      {"code": "v", "label": "Volume/sequential designation"},
+      {"code": "x", "label": "ISSN"}
+    ]},
+    {"tag": "856", "label": "Electronic Location and Access", "subfields": [
+      {"code": "u", "label": "URI"},
+      {"code": "y", "label": "Link text"},
+      {"code": "z", "label": "Public note"},
+      {"code": "3", "label": "Materials specified"}
+    ]},
+    {"tag": "880", "label": "Alternate Graphic Representation", "subfields": [
+      {"code": "6", "label": "Linkage"},
+      {"code": "a", "label": "Content (same as linked field)"}
+    ]},
+    {"tag": "900", "label": "Local Field 900", "subfields": [
+      {"code": "a", "label": "Local data"}
+    ]},
+    {"tag": "942", "label": "Koha Item Type (record-level)", "subfields": [
+      {"code": "c", "label": "Koha item type"},
+      {"code": "e", "label": "Edition"},
+      {"code": "h", "label": "Classification part"},
+      {"code": "k", "label": "Call number prefix"},
+      {"code": "m", "label": "Call number suffix"},
+      {"code": "n", "label": "Suppress in OPAC"},
+      {"code": "s", "label": "Serial record flag"},
+      {"code": "0", "label": "Koha issues (total)"},
+      {"code": "2", "label": "Source of classification"}
+    ]},
+    {"tag": "945", "label": "Local Item Field (III)", "subfields": [
+      {"code": "a", "label": "Item data"}
+    ]},
+    {"tag": "949", "label": "Local Item Field (Polaris)", "subfields": [
+      {"code": "a", "label": "Call number"},
+      {"code": "t", "label": "Item type"}
+    ]},
+    {"tag": "952", "label": "Koha Holdings (Item)", "subfields": [
+      {"code": "a", "label": "Home branch (branchcode)"},
+      {"code": "b", "label": "Current branch (branchcode)"},
+      {"code": "c", "label": "Shelving location"},
+      {"code": "d", "label": "Date acquired"},
+      {"code": "e", "label": "Source of acquisition"},
+      {"code": "g", "label": "Purchase price"},
+      {"code": "h", "label": "Serial enumeration/chronology"},
+      {"code": "o", "label": "Full call number"},
+      {"code": "p", "label": "Barcode"},
+      {"code": "t", "label": "Copy number"},
+      {"code": "v", "label": "Replacement price"},
+      {"code": "w", "label": "Price effective from"},
+      {"code": "y", "label": "Koha item type"},
+      {"code": "z", "label": "Public note"},
+      {"code": "x", "label": "Non-public note"},
+      {"code": "0", "label": "Withdrawn status"},
+      {"code": "1", "label": "Lost status"},
+      {"code": "2", "label": "Source of classification"},
+      {"code": "4", "label": "Damaged status"},
+      {"code": "7", "label": "Not for loan"},
+      {"code": "8", "label": "Collection code"},
+      {"code": "9", "label": "Koha itemnumber (internal)"}
+    ]},
+    {"tag": "999", "label": "Local System Field", "subfields": [
+      {"code": "c", "label": "Koha biblionumber"},
+      {"code": "d", "label": "Koha biblioitemnumber"}
+    ]}
+  ]
+}

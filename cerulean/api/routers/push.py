@@ -8,14 +8,20 @@ POST  /projects/{id}/push/start       — dispatch selected push tasks
 GET   /projects/{id}/push/status      — poll Celery task status
 GET   /projects/{id}/push/manifests   — list push manifests
 GET   /projects/{id}/push/log         — alias for manifests (by started_at desc)
+GET   /projects/{id}/push/files       — list push-ready MARC files
+GET   /projects/{id}/push/files/download — download a push-ready file
+GET   /projects/{id}/push/files/preview  — preview records from a push-ready file
 """
 
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
+import pymarc
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,16 +97,23 @@ async def start_push(
     body: PushStartRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Dispatch selected push tasks. Precondition: merged file exists."""
+    """Dispatch selected push tasks. Precondition: MARC output files exist."""
     project = await _require_project(project_id, db)
 
-    # Check that merged file exists
+    # Check that transformed or merged files exist
     project_dir = Path(settings.data_root) / project_id
-    has_merged = (project_dir / "merged_deduped.mrc").is_file() or (project_dir / "merged.mrc").is_file()
-    if not has_merged and body.push_bibs:
+    has_output = (
+        (project_dir / "merged_deduped.mrc").is_file()
+        or (project_dir / "merged.mrc").is_file()
+        or (
+            (project_dir / "transformed").is_dir()
+            and any((project_dir / "transformed").glob("*_transformed.mrc"))
+        )
+    )
+    if not has_output and body.push_bibs:
         raise HTTPException(409, detail={
-            "error": "NO_MERGED_FILE",
-            "message": "No merged MARC file found. Complete merge (Stage 3) first.",
+            "error": "NO_OUTPUT_FILES",
+            "message": "No transformed or merged MARC files found. Complete Stage 3 first.",
         })
 
     task_ids: dict[str, str] = {}
@@ -231,6 +244,157 @@ async def push_log(
         .order_by(PushManifest.started_at.desc())
     )
     return result.scalars().all()
+
+
+# ── File review endpoints ────────────────────────────────────────────────
+
+
+def _list_push_files(project_id: str) -> list[dict]:
+    """Return push-ready MARC files in priority order with metadata."""
+    project_dir = Path(settings.data_root) / project_id
+    files: list[dict] = []
+
+    # Priority order: deduped > merged > transformed
+    for candidate in [
+        project_dir / "merged_deduped.mrc",
+        project_dir / "merged.mrc",
+    ]:
+        if candidate.is_file():
+            stat = candidate.stat()
+            files.append({
+                "filename": candidate.name,
+                "path": str(candidate),
+                "size": stat.st_size,
+                "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+                "source": "dedup" if "deduped" in candidate.name else "merge",
+            })
+
+    transformed_dir = project_dir / "transformed"
+    if transformed_dir.is_dir():
+        for tf in sorted(transformed_dir.glob("*_transformed.mrc")):
+            stat = tf.stat()
+            files.append({
+                "filename": tf.name,
+                "path": str(tf),
+                "size": stat.st_size,
+                "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+                "source": "transform",
+            })
+
+    return files
+
+
+@router.get("/{project_id}/push/files")
+async def list_push_files(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """List MARC files available for push, with sizes and record counts."""
+    await _require_project(project_id, db)
+    files = _list_push_files(project_id)
+
+    # Quick record count per file
+    for f in files:
+        try:
+            count = 0
+            with open(f["path"], "rb") as fh:
+                reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True,
+                                            utf8_handling="replace")
+                for rec in reader:
+                    if rec is not None:
+                        count += 1
+            f["record_count"] = count
+        except Exception:
+            f["record_count"] = None
+
+    # Don't expose internal paths to the frontend
+    for f in files:
+        del f["path"]
+
+    return {"files": files}
+
+
+@router.get("/{project_id}/push/files/download")
+async def download_push_file(
+    project_id: str,
+    filename: str = Query(..., description="Filename to download"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a push-ready MARC file."""
+    await _require_project(project_id, db)
+
+    # Resolve safely — only allow known filenames
+    files = _list_push_files(project_id)
+    match = next((f for f in files if f["filename"] == filename), None)
+    if not match or not os.path.isfile(match["path"]):
+        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": f"File '{filename}' not found."})
+
+    return FileResponse(
+        match["path"],
+        media_type="application/marc",
+        filename=filename,
+    )
+
+
+@router.get("/{project_id}/push/files/preview")
+async def preview_push_file(
+    project_id: str,
+    filename: str = Query(..., description="Filename to preview"),
+    record_index: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview a record from a push-ready MARC file."""
+    await _require_project(project_id, db)
+
+    files = _list_push_files(project_id)
+    match = next((f for f in files if f["filename"] == filename), None)
+    if not match or not os.path.isfile(match["path"]):
+        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": f"File '{filename}' not found."})
+
+    total = 0
+    record_data = None
+    try:
+        with open(match["path"], "rb") as fh:
+            reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True,
+                                        utf8_handling="replace")
+            valid_idx = 0
+            for rec in reader:
+                if rec is None:
+                    continue
+                if valid_idx == record_index:
+                    fields = []
+                    for field in rec.fields:
+                        if field.is_control_field():
+                            fields.append({"tag": field.tag, "data": field.data})
+                        else:
+                            subs = [{"code": sf.code, "value": sf.value}
+                                    for sf in field.subfields]
+                            fields.append({"tag": field.tag,
+                                           "ind1": field.indicator1,
+                                           "ind2": field.indicator2,
+                                           "subfields": subs})
+                    record_data = {
+                        "index": record_index,
+                        "title": rec.title or "",
+                        "fields": fields,
+                    }
+                valid_idx += 1
+    except Exception as exc:
+        raise HTTPException(500, detail={"error": "READ_ERROR", "message": str(exc)})
+
+    total = valid_idx
+    if not record_data:
+        raise HTTPException(404, detail={
+            "error": "RECORD_NOT_FOUND",
+            "message": f"No record at index {record_index} (file has {total} records).",
+        })
+
+    return {
+        "filename": filename,
+        "record_index": record_index,
+        "total_records": total,
+        "record": record_data,
+    }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

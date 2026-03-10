@@ -43,15 +43,27 @@ SOURCE FIELDS TO MAP TO KOHA 952:
 - Barcodes (often 876$p, 949$i, 945$i, item-level fields)
 - Item types (often 998$b, 949$t, 007 leader)
 
+AVAILABLE TRANSFORM PRESETS:
+You may suggest transform_type="preset" with one of these preset_key values:
+- Date: date_mdy_to_dmy, date_dmy_to_iso, date_ymd_to_iso, date_marc_to_iso
+- Case: case_upper, case_lower, case_title, case_sentence
+- Text: text_trim, text_normalize_spaces, text_strip_punctuation
+- Clean: clean_isbn (remove hyphens/qualifiers), clean_lccn, clean_html
+- Extract: extract_year, extract_isbn13
+Use presets when appropriate (e.g., clean_isbn for 020$a, date_marc_to_iso for date fields in 008).
+
 RULES:
 1. Only suggest mappings you are confident about. A confident wrong mapping is worse than no mapping.
 2. For each suggestion provide: source_tag, source_sub (or null), target_tag, target_sub (or null),
-   transform_type (copy|regex|lookup|const|fn), transform_fn (expression or null),
+   transform_type (copy|regex|lookup|const|fn|preset), transform_fn (expression or null),
+   preset_key (preset key string or null), delete_source (boolean),
    confidence (0.0–1.0), reasoning (1–2 sentences).
-3. Do not suggest mappings for standard bibliographic fields (1xx, 2xx, 3xx, 4xx, 5xx, 6xx, 7xx, 8xx)
+3. Set delete_source=true when the source tag is ILS-specific (e.g. 945, 949, 999, 907) and
+   won't be needed in Koha after mapping. Keep delete_source=false for standard fields.
+4. Do not suggest mappings for standard bibliographic fields (1xx, 2xx, 3xx, 4xx, 5xx, 6xx, 7xx, 8xx)
    that already carry across unchanged — only flag these if they need transformation.
-4. Focus on local/item fields and fields that need renaming or transformation for Koha.
-5. No PII is present in the sample. Do not mention patron data.
+5. Focus on local/item fields and fields that need renaming or transformation for Koha.
+6. No PII is present in the sample. Do not mention patron data.
 
 Return ONLY a JSON array of suggestion objects. No preamble, no markdown fences."""
 
@@ -153,6 +165,8 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
                     target_sub=s.get("target_sub"),
                     transform_type=s.get("transform_type", "copy"),
                     transform_fn=s.get("transform_fn"),
+                    preset_key=s.get("preset_key"),
+                    delete_source=bool(s.get("delete_source", False)),
                     ai_suggested=True,
                     ai_confidence=float(s.get("confidence", 0.5)),
                     ai_reasoning=s.get("reasoning"),

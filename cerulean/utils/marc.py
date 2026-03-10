@@ -9,6 +9,59 @@ from typing import Generator
 import pymarc
 
 
+def is_valid_marc(path: str) -> tuple[bool, str]:
+    """Check if a file contains valid MARC data.
+
+    Reads the first few bytes / records to determine if the file
+    is valid ISO2709 or MRK format.
+
+    Returns:
+        (is_valid, format_or_error_message)
+    """
+    import os
+
+    if not os.path.isfile(path):
+        return False, "File not found"
+
+    file_size = os.path.getsize(path)
+    if file_size == 0:
+        return False, "File is empty"
+
+    # Check binary ISO2709: first 5 bytes should be ASCII digits (record length)
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(24)
+            if len(header) >= 5 and header[:5].isdigit():
+                # Looks like ISO2709 leader — try to parse first record
+                fh.seek(0)
+                reader = pymarc.MARCReader(
+                    fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
+                )
+                try:
+                    record = next(reader, None)
+                    if record and record.fields:
+                        return True, "iso2709"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Check MRK text format: first non-blank line starts with = + 3-digit tag
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("=") and len(stripped) >= 4 and stripped[1:4].isdigit():
+                    return True, "mrk"
+                break  # first non-blank line didn't match
+    except Exception:
+        pass
+
+    return False, "File does not appear to contain MARC data"
+
+
 def iter_marc(
     path: str, fmt: str = "iso2709"
 ) -> Generator[pymarc.Record, None, None]:

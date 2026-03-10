@@ -32,8 +32,14 @@ def _encrypt_token(token: str | None) -> str | None:
 
 
 @router.get("", response_model=list[ProjectOut])
-async def list_projects(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+async def list_projects(
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Project).order_by(Project.created_at.desc())
+    if not include_archived:
+        stmt = stmt.where(Project.archived == False)  # noqa: E712
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 
@@ -78,6 +84,8 @@ async def update_project(project_id: str, body: ProjectUpdate, db: AsyncSession 
         project.koha_token_enc = _encrypt_token(body.koha_token)
     if body.source_ils is not None:
         project.source_ils = body.source_ils
+    if body.archived is not None:
+        project.archived = body.archived
 
     await db.flush()
     await db.refresh(project)

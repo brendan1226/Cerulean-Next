@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import time
 
 logger = logging.getLogger(__name__)
 from collections import Counter
@@ -21,6 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pymarc
+import redis
 from pymarc import Subfield
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
@@ -33,8 +35,51 @@ from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001, wr
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
 _engine = create_engine(_sync_url, pool_pre_ping=True)
+_redis = redis.from_url(settings.redis_url)
+
+
+def _check_paused(project_id: str, self=None) -> None:
+    """Block while the project's pause flag is set in Redis."""
+    key = f"cerulean:pause:{project_id}"
+    while _redis.exists(key):
+        if self:
+            self.update_state(state="PAUSED", meta={"paused": True})
+        time.sleep(1)
 
 _PROGRESS_INTERVAL = 500
+
+_VALID_TRANSFORM_TYPES = {"copy", "regex", "lookup", "const", "fn", "preset"}
+
+
+def _validate_map(m: dict) -> tuple[bool, str]:
+    """Validate a single field map dict. Returns (is_valid, reason)."""
+    src = m.get("source_tag") or ""
+    tgt = m.get("target_tag") or ""
+    ttype = m.get("transform_type") or ""
+    tfn = m.get("transform_fn") or ""
+    pkey = m.get("preset_key") or ""
+
+    if not src or not src.strip().isdigit() or len(src.strip()) != 3:
+        return False, f"Invalid source tag '{src}'"
+    if not tgt or not tgt.strip().isdigit() or len(tgt.strip()) != 3:
+        return False, f"Invalid target tag '{tgt}'"
+    if ttype not in _VALID_TRANSFORM_TYPES:
+        return False, f"Unknown transform type '{ttype}'"
+    if ttype in ("regex", "fn") and not tfn.strip():
+        return False, f"Transform type '{ttype}' requires an expression"
+    if ttype == "const" and not tfn.strip():
+        return False, f"Constant transform requires a value"
+    if ttype == "lookup":
+        if not tfn.strip():
+            return False, "Lookup transform requires a JSON table"
+        try:
+            import json as _json
+            _json.loads(tfn)
+        except (ValueError, TypeError):
+            return False, "Lookup transform_fn is not valid JSON"
+    if ttype == "preset" and not pkey.strip():
+        return False, "Preset transform requires a preset_key"
+    return True, ""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -61,7 +106,7 @@ def transform_pipeline_task(
     Returns:
         dict with files_processed, total_records, records_skipped.
     """
-    from cerulean.models import FieldMap, MARCFile, TransformManifest
+    from cerulean.models import FieldMap, MARCFile, Project, TransformManifest
 
     log = AuditLogger(project_id=project_id, stage=3, tag="[transform]")
     log.info("Transform pipeline starting")
@@ -81,7 +126,7 @@ def transform_pipeline_task(
                 _update_manifest_error(db, manifest_id, "No approved field maps")
                 return {"error": "no_approved_maps"}
 
-            maps_data = [
+            all_maps_data = [
                 {
                     "source_tag": m.source_tag,
                     "source_sub": m.source_sub,
@@ -89,9 +134,28 @@ def transform_pipeline_task(
                     "target_sub": m.target_sub,
                     "transform_type": m.transform_type,
                     "transform_fn": m.transform_fn,
+                    "preset_key": m.preset_key,
+                    "delete_source": m.delete_source,
                 }
                 for m in field_maps
             ]
+
+            # Validate maps — skip invalid ones and log warnings
+            maps_data = []
+            skipped_maps = []
+            for md in all_maps_data:
+                valid, reason = _validate_map(md)
+                if valid:
+                    maps_data.append(md)
+                else:
+                    label = f"{md.get('source_tag','?')}{md.get('source_sub','')}->{md.get('target_tag','?')}{md.get('target_sub','')}"
+                    log.warn(f"Skipping invalid map {label}: {reason}")
+                    skipped_maps.append({"map": label, "reason": reason})
+
+            if not maps_data:
+                log.error("No valid approved field maps after validation")
+                _update_manifest_error(db, manifest_id, "No valid approved field maps")
+                return {"error": "no_valid_maps", "skipped_maps": skipped_maps}
 
             # 2. Load MARC files
             files_q = select(MARCFile).where(
@@ -114,28 +178,46 @@ def transform_pipeline_task(
                 for f in marc_files
             ]
 
-        log.info(f"Processing {len(files_data)} file(s) with {len(maps_data)} map(s)")
+        if skipped_maps:
+            log.warn(f"Skipped {len(skipped_maps)} invalid map(s) during validation")
+        log.info(f"Processing {len(files_data)} file(s) with {len(maps_data)} valid map(s)")
 
-        # 3. Output directory
+        # Log each map being applied so user can audit
+        for md in maps_data:
+            src = f"{md['source_tag']}{md['source_sub'] or ''}"
+            tgt = f"{md['target_tag']}{md['target_sub'] or ''}"
+            log.info(f"  Map: {src} → {tgt} ({md['transform_type']})")
+
+        # 3. Output directory — clean up old transformed files first
         project_dir = Path(settings.data_root) / project_id / "transformed"
         if not dry_run:
             project_dir.mkdir(parents=True, exist_ok=True)
+            for old_file in project_dir.glob("*_transformed.mrc"):
+                old_file.unlink()
+                log.info(f"Removed stale file: {old_file.name}")
 
         # 4. Transform each file
         total_records = 0
         records_skipped = 0
         files_processed = 0
+        aggregate_stats: dict[str, dict[str, int]] = {}
 
         for file_info in files_data:
-            file_records, file_skipped = _transform_file(
+            file_records, file_skipped, file_stats = _transform_file(
                 self, log, file_info, maps_data, project_dir, dry_run,
-                total_records, files_processed, len(files_data),
+                total_records, files_processed, len(files_data), project_id,
             )
             total_records += file_records
             records_skipped += file_skipped
             files_processed += 1
+            # Merge per-file stats into aggregate
+            for label, counts in file_stats.items():
+                agg = aggregate_stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                agg["applied"] += counts["applied"]
+                agg["skipped"] += counts["skipped"]
+                agg["errors"] += counts["errors"]
 
-        # 5. Update manifest
+        # 5. Update manifest + mark stage 3 complete
         with Session(_engine) as db:
             db.execute(
                 update(TransformManifest)
@@ -149,17 +231,30 @@ def transform_pipeline_task(
                     completed_at=datetime.utcnow(),
                 )
             )
+            project = db.get(Project, project_id)
+            if project and not project.stage_3_complete:
+                project.stage_3_complete = True
+                project.current_stage = max(project.current_stage or 0, 4)
+                project.bib_count_ingested = total_records
             db.commit()
+
+        # Build summary of maps with issues for quick visibility
+        map_stats_list = [
+            {"map": label, **counts}
+            for label, counts in aggregate_stats.items()
+        ]
 
         log.complete(
             f"Transform complete — {files_processed} file(s), "
-            f"{total_records:,} records ({records_skipped} skipped)"
+            f"{total_records:,} records ({records_skipped} skipped), "
+            f"{len(maps_data)} maps applied"
         )
         return {
             "files_processed": files_processed,
             "total_records": total_records,
             "records_skipped": records_skipped,
             "dry_run": dry_run,
+            "map_stats": map_stats_list,
         }
 
     except Exception as exc:
@@ -275,6 +370,7 @@ def merge_pipeline_task(
                                 _add_952_from_csv(record, item_row)
                                 items_joined += 1
 
+                    _sort_record(record)
                     out_fh.write(record.as_marc())
 
                     if total_records % _PROGRESS_INTERVAL == 0:
@@ -358,10 +454,11 @@ def _transform_file(
     global_record_offset: int,
     files_done: int,
     files_total: int,
-) -> tuple[int, int]:
+    project_id: str = "",
+) -> tuple[int, int, dict]:
     """Transform a single MARC file by applying all field maps.
 
-    Returns (total_records, records_skipped).
+    Returns (total_records, records_skipped, stats_dict).
     """
     storage_path = file_info["storage_path"]
     filename = file_info["filename"]
@@ -370,69 +467,146 @@ def _transform_file(
 
     records_in_file = 0
     skipped = 0
-    output_records: list[pymarc.Record] = []
+    stats: dict[str, dict[str, int]] = {}  # per-map applied/skipped/errors
 
-    for record in _iter_marc(storage_path, fmt):
-        records_in_file += 1
-        try:
-            _apply_maps_to_record(record, maps_data)
-            output_records.append(record)
-        except Exception as exc:
-            record_001 = _get_001(record)
-            log.warn(
-                f"Skipped record {records_in_file} (001={record_001}): {exc}",
-                record_001=record_001,
-            )
-            output_records.append(record)  # keep original
-            skipped += 1
+    # Stream records to disk to avoid OOM on large files
+    stem = Path(filename).stem
+    out_path = output_dir / f"{stem}_transformed.mrc"
+    out_fh = None
+    if not dry_run:
+        out_fh = open(str(out_path), "wb")
 
-        total_so_far = global_record_offset + records_in_file
-        if records_in_file % _PROGRESS_INTERVAL == 0:
-            self.update_state(
-                state="PROGRESS",
-                meta={
-                    "files_done": files_done,
-                    "files_total": files_total,
-                    "current_file": filename,
-                    "records_done": total_so_far,
-                },
-            )
+    # What source tags do maps expect?
+    expected_tags = sorted(set(m["source_tag"] for m in maps_data))
 
-    if not dry_run and output_records:
-        stem = Path(filename).stem
-        out_path = output_dir / f"{stem}_transformed.mrc"
-        _write_marc(output_records, str(out_path))
-        log.info(f"Wrote {len(output_records):,} records to {out_path.name}")
+    try:
+        for record in _iter_marc(storage_path, fmt):
+            if record is None:
+                skipped += 1
+                continue
+            _check_paused(project_id, self)
+            records_in_file += 1
 
-    return records_in_file, skipped
+            # First-record diagnostic: log which source tags actually exist
+            if records_in_file == 1:
+                actual_tags = sorted(set(f.tag for f in record.fields))
+                missing = sorted(set(expected_tags) - set(actual_tags))
+                log.info(f"Record 1 tags present: {', '.join(actual_tags)}")
+                if missing:
+                    log.warn(f"Maps expect these tags but record 1 lacks them: {', '.join(missing)}")
+            try:
+                _apply_maps_to_record(record, maps_data, stats)
+                _sort_record(record)
+                if out_fh:
+                    out_fh.write(record.as_marc())
+            except Exception as exc:
+                record_001 = _get_001(record)
+                log.warn(
+                    f"Skipped record {records_in_file} (001={record_001}): {exc}",
+                    record_001=record_001,
+                )
+                skipped += 1
+
+            total_so_far = global_record_offset + records_in_file
+            if records_in_file % _PROGRESS_INTERVAL == 0:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "files_done": files_done,
+                        "files_total": files_total,
+                        "current_file": filename,
+                        "records_done": total_so_far,
+                    },
+                )
+    finally:
+        if out_fh:
+            out_fh.close()
+
+    if not dry_run and records_in_file > 0:
+        log.info(f"Wrote {records_in_file:,} records to {out_path.name}")
+
+    # Log per-map stats to audit log so user can see in Project Log
+    if stats:
+        for map_label, counts in stats.items():
+            a, s, e = counts["applied"], counts["skipped"], counts["errors"]
+            level = "warn" if e > 0 else "info"
+            msg = f"Map {map_label}: applied={a}, skipped(no source)={s}, errors={e}"
+            getattr(log, level)(msg)
+
+    return records_in_file, skipped, stats
 
 
-def _apply_maps_to_record(record: pymarc.Record, maps_data: list[dict]) -> pymarc.Record:
-    """Apply all field maps to a MARC record (mutates in place)."""
+def _apply_maps_to_record(
+    record: pymarc.Record,
+    maps_data: list[dict],
+    stats: dict | None = None,
+) -> pymarc.Record:
+    """Apply all field maps to a MARC record (mutates in place).
+
+    Each map is applied independently — a failure in one map does not
+    prevent subsequent maps from running.  Source field deletions
+    (delete_source) are deferred until ALL maps have finished reading,
+    so later maps can still access shared source tags.
+
+    If *stats* dict is provided, it tracks per-map hit/skip/error counts.
+    """
+    deferred_deletes: set[str] = set()  # source tags to remove after all maps run
+
     for m in maps_data:
-        source_tag = m["source_tag"]
-        source_sub = m["source_sub"]
-        target_tag = m["target_tag"]
-        target_sub = m["target_sub"]
-        transform_type = m["transform_type"]
-        transform_fn = m["transform_fn"]
+        map_label = f"{m.get('source_tag','?')}{m.get('source_sub','')}->{m.get('target_tag','?')}{m.get('target_sub','')}"
+        try:
+            source_tag = m["source_tag"]
+            source_sub = m["source_sub"]
+            target_tag = m["target_tag"]
+            target_sub = m["target_sub"]
+            transform_type = m["transform_type"]
+            transform_fn = m["transform_fn"]
 
-        source_values = _extract_values(record, source_tag, source_sub)
+            source_values = _extract_values(record, source_tag, source_sub)
 
-        if not source_values and transform_type != "const":
-            continue
+            if not source_values and transform_type != "const":
+                if stats is not None:
+                    stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
+                    stats[map_label]["skipped"] += 1
+                continue
 
-        if transform_type == "const":
-            transformed_values = [transform_fn or ""]
-        else:
-            transformed_values = []
-            for val in source_values:
-                result = _apply_transform(val, transform_type, transform_fn)
-                if result is not None:
-                    transformed_values.append(result)
+            if transform_type == "const":
+                transformed_values = [transform_fn or ""]
+            elif transform_type == "preset":
+                from cerulean.core.transform_presets import apply_preset
+                transformed_values = []
+                for val in source_values:
+                    result = apply_preset(m.get("preset_key", ""), val)
+                    if result is not None:
+                        transformed_values.append(result)
+            else:
+                transformed_values = []
+                for val in source_values:
+                    result = _apply_transform(val, transform_type, transform_fn)
+                    if result is not None:
+                        transformed_values.append(result)
 
-        for val in transformed_values:
-            _set_value(record, target_tag, target_sub, val)
+            for val in transformed_values:
+                _set_value(record, target_tag, target_sub, val)
+
+            if stats is not None:
+                stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
+                stats[map_label]["applied"] += 1
+
+            # Defer delete_source until after all maps have read
+            if m.get("delete_source") and source_tag != target_tag:
+                deferred_deletes.add(source_tag)
+
+        except Exception as exc:
+            logger.warning("Map %s failed on record, skipping map: %s", map_label, exc)
+            if stats is not None:
+                stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
+                stats[map_label]["errors"] += 1
+
+    # Now remove source fields that were marked for deletion
+    for tag in deferred_deletes:
+        for field in record.get_fields(tag):
+            record.remove_field(field)
 
     return record
 
@@ -471,6 +645,10 @@ def _apply_transform(value: str, transform_type: str, transform_fn: str | None) 
         return transform_fn or ""
     elif transform_type == "fn":
         return _apply_fn(value, transform_fn)
+    elif transform_type == "preset":
+        # Handled in _apply_maps_to_record, but fallback here
+        from cerulean.core.transform_presets import apply_preset
+        return apply_preset(transform_fn or "", value)
     else:
         return value
 
@@ -537,6 +715,23 @@ def _apply_fn(value: str, expression: str | None) -> str:
     except Exception:
         logger.debug("Expression eval failed: %r on value %r", expression, value, exc_info=True)
         return value
+
+
+def _subfield_sort_key(code: str) -> tuple[int, str]:
+    """Sort key for MARC subfield codes: 0-9 first, then a-z."""
+    if not code:
+        return (2, "")
+    if code.isdigit():
+        return (0, code)
+    return (1, code.lower())
+
+
+def _sort_record(record: pymarc.Record) -> None:
+    """Sort a MARC record's fields by tag and subfields within each field by 0-9, a-z."""
+    record.fields.sort(key=lambda f: f.tag)
+    for field in record.fields:
+        if not field.is_control_field() and field.subfields:
+            field.subfields.sort(key=lambda sf: _subfield_sort_key(sf.code))
 
 
 def _set_value(record: pymarc.Record, tag: str, sub: str | None, value: str) -> None:

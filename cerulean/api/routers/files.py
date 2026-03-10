@@ -1,10 +1,11 @@
 """
 cerulean/api/routers/files.py
 ─────────────────────────────────────────────────────────────────────────────
-POST /projects/{id}/files                       — upload MARC/CSV file
-GET  /projects/{id}/files                       — list files for project
-GET  /projects/{id}/files/{fid}/records/{n}     — fetch record N (0-indexed)
-GET  /projects/{id}/files/{fid}/tags            — tag frequency histogram
+POST   /projects/{id}/files                       — upload MARC/CSV file
+GET    /projects/{id}/files                       — list files for project
+DELETE /projects/{id}/files/{fid}                 — delete a file
+GET    /projects/{id}/files/{fid}/records/{n}     — fetch record N (0-indexed)
+GET    /projects/{id}/files/{fid}/tags            — tag frequency histogram
 """
 
 import logging
@@ -15,8 +16,8 @@ from pathlib import Path
 import pymarc
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.core.config import get_settings
@@ -36,9 +37,16 @@ MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 async def upload_file(
     project_id: str,
     file: UploadFile,
+    mode: str = Query("auto", description="Duplicate handling: auto|replace|add"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a MARC or CSV file. Spawns ingest_marc_task immediately."""
+    """Upload a MARC or CSV file. Spawns ingest_marc_task immediately.
+
+    mode:
+        auto    — if a file with the same name exists, return 409 DUPLICATE_FILENAME
+        replace — delete existing file with same name, upload new one
+        add     — upload as new file even if same name exists
+    """
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
@@ -49,6 +57,36 @@ async def upload_file(
             "error": "INVALID_FILE_TYPE",
             "message": f"File type '{suffix}' not supported. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         })
+
+    filename = file.filename or f"upload{suffix}"
+
+    # Check for duplicate filename
+    result = await db.execute(
+        select(MARCFile).where(
+            MARCFile.project_id == project_id,
+            MARCFile.filename == filename,
+        )
+    )
+    existing = result.scalars().all()
+
+    if existing and mode == "auto":
+        raise HTTPException(409, detail={
+            "error": "DUPLICATE_FILENAME",
+            "message": f"A file named '{filename}' already exists in this project.",
+            "existing_file_id": existing[0].id,
+            "existing_status": existing[0].status,
+            "existing_record_count": existing[0].record_count,
+        })
+
+    if existing and mode == "replace":
+        for old_file in existing:
+            # Remove file from disk
+            if old_file.storage_path and os.path.isfile(old_file.storage_path):
+                os.remove(old_file.storage_path)
+            await db.execute(
+                delete(MARCFile).where(MARCFile.id == old_file.id)
+            )
+        await db.flush()
 
     # Save to data lake
     project_dir = Path(settings.data_root) / project_id / "raw"
@@ -72,7 +110,7 @@ async def upload_file(
     marc_file = MARCFile(
         id=file_id,
         project_id=project_id,
-        filename=file.filename or f"upload{suffix}",
+        filename=filename,
         file_format=file_format,
         storage_path=storage_path,
         file_size_bytes=len(content),
@@ -87,11 +125,14 @@ async def upload_file(
         queue="ingest",
     )
 
+    replaced = len(existing) if existing and mode == "replace" else 0
+    msg = f"File uploaded (replaced {replaced} existing). Indexing started." if replaced else "File uploaded. Indexing started."
+
     return MARCFileUploadResponse(
         file_id=file_id,
         filename=marc_file.filename,
         task_id=task.id,
-        message="File uploaded. Indexing started.",
+        message=msg,
     )
 
 
@@ -107,6 +148,29 @@ async def list_files(project_id: str, db: AsyncSession = Depends(get_db)):
         .order_by(MARCFile.sort_order, MARCFile.created_at)
     )
     return result.scalars().all()
+
+
+@router.delete("/{project_id}/files/{file_id}", status_code=204)
+async def delete_file(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a file and its data from disk."""
+    marc_file = await _get_marc_file(project_id, file_id, db)
+
+    # Remove file from disk
+    if marc_file.storage_path and os.path.isfile(marc_file.storage_path):
+        os.remove(marc_file.storage_path)
+
+    # Remove transformed output if it exists
+    stem = Path(marc_file.filename).stem
+    transformed_path = Path(settings.data_root) / project_id / "transformed" / f"{stem}_transformed.mrc"
+    if transformed_path.is_file():
+        os.remove(str(transformed_path))
+
+    await db.execute(delete(MARCFile).where(MARCFile.id == file_id))
+    await db.flush()
 
 
 @router.get("/{project_id}/files/{file_id}/records/{record_index}")
@@ -151,7 +215,36 @@ async def get_tag_frequency(
         file_id=file_id,
         record_count=marc_file.record_count or 0,
         tags=marc_file.tag_frequency,
+        subfield_frequency=marc_file.subfield_frequency,
     )
+
+
+@router.get("/{project_id}/search")
+async def search_project_records(
+    project_id: str,
+    q: str = "",
+    offset: int = 0,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+):
+    """Full-text search across indexed MARC records (requires Elasticsearch)."""
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
+
+    from cerulean.core.search import get_es_client, search_records
+
+    es = get_es_client()
+    if es is None:
+        raise HTTPException(501, detail={
+            "error": "ES_NOT_CONFIGURED",
+            "message": "Elasticsearch is not configured. Start with: docker compose --profile search up",
+        })
+
+    if not q:
+        raise HTTPException(400, detail={"error": "MISSING_QUERY", "message": "Query parameter 'q' is required."})
+
+    return search_records(es, project_id, q, offset=offset, limit=limit)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -195,7 +288,7 @@ def _record_to_dict(record: pymarc.Record, index: int) -> dict:
             })
 
     leader = record.leader if record.leader else ""
-    title = record.title() or ""
+    title = record.title or ""
     return {
         "index": index,
         "leader": leader,

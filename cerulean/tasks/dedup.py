@@ -26,6 +26,7 @@ from cerulean.core.config import get_settings
 from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.push import _find_marc_paths
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -97,33 +98,36 @@ def dedup_scan_task(self, project_id: str, rule_id: str) -> dict:
                 db.delete(c)
             db.commit()
 
-        # Read merged.mrc record by record, extract match keys
-        merged_path = Path(settings.data_root) / project_id / "merged.mrc"
-        if not merged_path.is_file():
-            log.error(f"merged.mrc not found at {merged_path}")
-            return {"error": "merged_mrc_not_found"}
+        # Read MARC output files (prefer deduped > merged > transformed)
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            log.error("No MARC output files found for dedup scan")
+            return {"error": "no_marc_files_found"}
+
+        log.info(f"Scanning {len(marc_paths)} file(s) for duplicates")
 
         # Group records by match key
         key_groups: dict[str, list[dict]] = defaultdict(list)
         record_index = 0
 
-        for record in _iter_marc(str(merged_path)):
-            match_key = _extract_match_key(record, fields_config)
+        for marc_path in marc_paths:
+            for record in _iter_marc(str(marc_path)):
+                match_key = _extract_match_key(record, fields_config)
 
-            if match_key:
-                key_groups[match_key].append({
-                    "record_index": record_index,
-                    "marc_001": _get_001(record),
-                    "field_count": len(record.fields),
-                    "item_count": len(record.get_fields("952")),
-                })
+                if match_key:
+                    key_groups[match_key].append({
+                        "record_index": record_index,
+                        "marc_001": _get_001(record),
+                        "field_count": len(record.fields),
+                        "item_count": len(record.get_fields("952")),
+                    })
 
-            record_index += 1
-            if record_index % _PROGRESS_INTERVAL == 0:
-                self.update_state(
-                    state="PROGRESS",
-                    meta={"records_scanned": record_index},
-                )
+                record_index += 1
+                if record_index % _PROGRESS_INTERVAL == 0:
+                    self.update_state(
+                        state="PROGRESS",
+                        meta={"records_scanned": record_index},
+                    )
 
         # Filter to groups with 2+ records (actual duplicates)
         clusters = {k: v for k, v in key_groups.items() if len(v) >= 2}
@@ -217,15 +221,16 @@ def dedup_apply_task(self, project_id: str, rule_id: str) -> dict:
                 for c in clusters
             ]
 
-        # Read all records from merged.mrc into a list (need random access)
-        merged_path = Path(settings.data_root) / project_id / "merged.mrc"
-        if not merged_path.is_file():
-            log.error(f"merged.mrc not found at {merged_path}")
-            return {"error": "merged_mrc_not_found"}
+        # Read all records from available MARC output files into a list (need random access)
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            log.error("No MARC output files found for dedup apply")
+            return {"error": "no_marc_files_found"}
 
         all_records: list[pymarc.Record] = []
-        for record in _iter_marc(str(merged_path)):
-            all_records.append(record)
+        for marc_path in marc_paths:
+            for record in _iter_marc(str(marc_path)):
+                all_records.append(record)
 
         log.info(f"Loaded {len(all_records):,} records, {len(clusters_data)} clusters to resolve")
 
