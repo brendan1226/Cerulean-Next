@@ -94,6 +94,32 @@ def get_001(record: pymarc.Record) -> str | None:
     return fields[0].data if fields else None
 
 
+def record_to_dict(record: pymarc.Record, index: int = 0) -> dict:
+    """Serialise a pymarc Record to a JSON-friendly dict.
+
+    Used by files, transform, and push routers for record previews.
+    """
+    fields = []
+    for field in record.fields:
+        if field.is_control_field():
+            fields.append({"tag": field.tag, "data": field.data})
+        else:
+            subs = [{"code": sf.code, "value": sf.value} for sf in field.subfields]
+            fields.append({
+                "tag": field.tag,
+                "ind1": field.indicator1,
+                "ind2": field.indicator2,
+                "subfields": subs,
+            })
+
+    return {
+        "index": index,
+        "leader": record.leader if record.leader else "",
+        "title": record.title or "",
+        "fields": fields,
+    }
+
+
 def write_marc(records: list[pymarc.Record], output_path: str) -> None:
     """Write a list of pymarc Records to an ISO2709 file."""
     with open(output_path, "wb") as fh:

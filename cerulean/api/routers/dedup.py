@@ -15,16 +15,14 @@ PATCH  /projects/{id}/dedup/clusters/{cid}  — resolve cluster
 GET    /projects/{id}/dedup/status          — poll Celery task status
 """
 
-import uuid
-from datetime import datetime
-
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import audit_log, require_project
 from cerulean.core.database import get_db
-from cerulean.models import AuditEvent, DedupCluster, DedupRule, Project
+from cerulean.models import DedupCluster, DedupRule, Project
 from cerulean.schemas.dedup import (
     ClusterPage,
     ClusterResolveRequest,
@@ -70,7 +68,7 @@ async def list_dedup_rules(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     result = await db.execute(
         select(DedupRule)
         .where(DedupRule.project_id == project_id)
@@ -85,7 +83,7 @@ async def create_dedup_rule(
     body: DedupRuleCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     fields = body.fields
     is_preset = False
@@ -119,7 +117,7 @@ async def update_dedup_rule(
     body: DedupRuleUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     rule = await db.get(DedupRule, rule_id)
     if not rule or rule.project_id != project_id:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Rule not found."})
@@ -143,7 +141,7 @@ async def delete_dedup_rule(
     rule_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     rule = await db.get(DedupRule, rule_id)
     if not rule or rule.project_id != project_id:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Rule not found."})
@@ -157,7 +155,7 @@ async def create_preset_rules(
     db: AsyncSession = Depends(get_db),
 ):
     """Create all 4 preset dedup rules if they don't already exist."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Check which presets already exist
     result = await db.execute(
@@ -198,7 +196,7 @@ async def scan_dedup(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch dedup scan task. Precondition: stage_3_complete."""
-    project = await _require_project(project_id, db)
+    project = await require_project(project_id, db)
 
     if not project.stage_3_complete:
         raise HTTPException(409, detail={
@@ -211,8 +209,8 @@ async def scan_dedup(
     if not rule or rule.project_id != project_id:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Rule not found."})
 
-    await _log(db, project_id, stage=4, level="info", tag="[dedup-scan]",
-               message=f"Dedup scan dispatched for rule '{rule.name}'")
+    await audit_log(db, project_id, stage=4, level="info", tag="[dedup-scan]",
+                    message=f"Dedup scan dispatched for rule '{rule.name}'")
     await db.flush()
 
     task = dedup_scan_task.apply_async(
@@ -233,7 +231,7 @@ async def apply_dedup(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch dedup apply task. Precondition: scan results exist."""
-    project = await _require_project(project_id, db)
+    project = await require_project(project_id, db)
 
     # Resolve rule_id
     rule_id = body.rule_id
@@ -263,8 +261,8 @@ async def apply_dedup(
             "message": "Run a dedup scan first before applying.",
         })
 
-    await _log(db, project_id, stage=4, level="info", tag="[dedup-apply]",
-               message=f"Dedup apply dispatched for rule '{rule.name}'")
+    await audit_log(db, project_id, stage=4, level="info", tag="[dedup-apply]",
+                    message=f"Dedup apply dispatched for rule '{rule.name}'")
     await db.flush()
 
     task = dedup_apply_task.apply_async(
@@ -290,7 +288,7 @@ async def list_dedup_clusters(
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Verify rule belongs to project
     rule = await db.get(DedupRule, rule_id)
@@ -321,7 +319,7 @@ async def resolve_cluster(
     body: ClusterResolveRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     cluster = await db.get(DedupCluster, cluster_id)
     if not cluster:
@@ -348,7 +346,7 @@ async def dedup_status(
     task_id: str | None = Query(None, description="Celery task_id to poll"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     if not task_id:
         return DedupStatusResponse(task_id=None, state="IDLE")
@@ -373,25 +371,6 @@ async def dedup_status(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
-
-
-async def _require_project(project_id: str, db: AsyncSession) -> Project:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
-    return project
-
-
-async def _log(db: AsyncSession, project_id: str, stage: int, level: str, tag: str, message: str) -> None:
-    event = AuditEvent(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        stage=stage,
-        level=level,
-        tag=tag,
-        message=message,
-    )
-    db.add(event)
 
 
 async def _deactivate_all_rules(project_id: str, db: AsyncSession) -> None:

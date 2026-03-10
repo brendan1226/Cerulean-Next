@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import audit_log, require_project
 from cerulean.core.database import get_db
-from cerulean.models import AuditEvent, FieldMap, Project
+from cerulean.models import FieldMap, Project
 from cerulean.schemas.maps import (
     AIMapSuggestResponse,
     ApproveAllRequest,
@@ -44,7 +45,7 @@ async def list_maps(
     status=pending   → approved=False, ai_suggested=True
     status=manual    → approved=False, ai_suggested=False
     """
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     q = select(FieldMap).where(FieldMap.project_id == project_id)
 
@@ -67,7 +68,7 @@ async def create_map(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a field map manually. source_label is always 'manual'."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     field_map = FieldMap(
         id=str(uuid.uuid4()),
@@ -87,8 +88,8 @@ async def create_map(
     )
     db.add(field_map)
 
-    await _log(db, project_id, stage=2, level="info", tag="[maps]",
-               message=f"Map created manually: {body.source_tag} → {body.target_tag}")
+    await audit_log(db, project_id, stage=2, level="info", tag="[maps]",
+                    message=f"Map created manually: {body.source_tag} → {body.target_tag}")
 
     await db.flush()
     await db.refresh(field_map)
@@ -125,8 +126,8 @@ async def update_map(
 
     action = "approved" if body.approved else "edited"
     label = " (was AI-suggested)" if was_ai else ""
-    await _log(db, project_id, stage=2, level="info", tag="[maps]",
-               message=f"Map {action}: {field_map.source_tag} → {field_map.target_tag}{label}")
+    await audit_log(db, project_id, stage=2, level="info", tag="[maps]",
+                    message=f"Map {action}: {field_map.source_tag} → {field_map.target_tag}{label}")
 
     await db.flush()
     await db.refresh(field_map)
@@ -142,8 +143,8 @@ async def delete_map(
     field_map = await _get_map(project_id, map_id, db)
     src = f"{field_map.source_tag} → {field_map.target_tag}"
     await db.execute(delete(FieldMap).where(FieldMap.id == map_id))
-    await _log(db, project_id, stage=2, level="info", tag="[maps]",
-               message=f"Map deleted: {src}")
+    await audit_log(db, project_id, stage=2, level="info", tag="[maps]",
+                    message=f"Map deleted: {src}")
 
 
 @router.post("/{project_id}/maps/ai-suggest", response_model=AIMapSuggestResponse)
@@ -156,7 +157,7 @@ async def ai_suggest_maps(
     Creates FieldMap rows with approved=False, ai_suggested=True.
     Does NOT approve any map — engineer must review.
     """
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Get files with tag frequency data
     from cerulean.models import MARCFile
@@ -172,8 +173,8 @@ async def ai_suggest_maps(
             "message": "No files with tag frequency data found. Complete Stage 1 ingest first.",
         })
 
-    await _log(db, project_id, stage=2, level="info", tag="[ai-map]",
-               message=f"AI mapping analysis requested across {len(files)} file(s)")
+    await audit_log(db, project_id, stage=2, level="info", tag="[ai-map]",
+                    message=f"AI mapping analysis requested across {len(files)} file(s)")
 
     task = ai_field_map_task.apply_async(
         args=[project_id, [f.id for f in files]],
@@ -197,7 +198,7 @@ async def validate_maps(
     """
     from cerulean.tasks.transform import _validate_map
 
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     result = await db.execute(
         select(FieldMap)
@@ -247,8 +248,8 @@ async def approve_map(
     field_map.approved = True
     field_map.updated_at = datetime.utcnow()
 
-    await _log(db, project_id, stage=2, level="info", tag="[maps]",
-               message=f"Map approved: {field_map.source_tag} → {field_map.target_tag}")
+    await audit_log(db, project_id, stage=2, level="info", tag="[maps]",
+                    message=f"Map approved: {field_map.source_tag} → {field_map.target_tag}")
 
     await db.flush()
     await db.refresh(field_map)
@@ -265,7 +266,7 @@ async def approve_all_maps(
     Batch-approve all unapproved maps with ai_confidence >= min_confidence.
     Also approves all manually-created unapproved maps (confidence is null).
     """
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     result = await db.execute(
         select(FieldMap).where(
@@ -283,19 +284,13 @@ async def approve_all_maps(
             m.updated_at = datetime.utcnow()
             approved_count += 1
 
-    await _log(db, project_id, stage=2, level="info", tag="[maps]",
-               message=f"Bulk approved {approved_count} maps (threshold: {body.min_confidence:.0%})")
+    await audit_log(db, project_id, stage=2, level="info", tag="[maps]",
+                    message=f"Bulk approved {approved_count} maps (threshold: {body.min_confidence:.0%})")
 
     return ApproveAllResponse(approved_count=approved_count)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
-
-async def _require_project(project_id: str, db: AsyncSession) -> Project:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
-    return project
 
 
 async def _get_map(project_id: str, map_id: str, db: AsyncSession) -> FieldMap:
@@ -303,15 +298,3 @@ async def _get_map(project_id: str, map_id: str, db: AsyncSession) -> FieldMap:
     if not field_map or field_map.project_id != project_id:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Map not found."})
     return field_map
-
-
-async def _log(db: AsyncSession, project_id: str, stage: int, level: str, tag: str, message: str) -> None:
-    event = AuditEvent(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        stage=stage,
-        level=level,
-        tag=tag,
-        message=message,
-    )
-    db.add(event)

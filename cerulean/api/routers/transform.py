@@ -9,19 +9,19 @@ GET  /projects/{id}/transform/manifest   — list transform/merge manifests
 
 import uuid
 from datetime import datetime
+from pathlib import Path
 
+import pymarc
 import redis
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import audit_log, require_project
 from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
-
-_settings = get_settings()
-_redis = redis.from_url(_settings.redis_url)
-from cerulean.models import AuditEvent, FieldMap, MARCFile, Project, TransformManifest
+from cerulean.models import FieldMap, MARCFile, TransformManifest
 from cerulean.schemas.transform import (
     MergeStartRequest,
     MergeStartResponse,
@@ -32,6 +32,10 @@ from cerulean.schemas.transform import (
 )
 from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.transform import merge_pipeline_task, transform_pipeline_task
+from cerulean.utils.marc import record_to_dict
+
+settings = get_settings()
+_redis = redis.from_url(settings.redis_url)
 
 router = APIRouter(prefix="/projects", tags=["transform"])
 
@@ -46,7 +50,7 @@ async def start_transform(
     db: AsyncSession = Depends(get_db),
 ):
     """Validate preconditions and dispatch transform_pipeline_task."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Must have at least one approved map
     result = await db.execute(
@@ -83,8 +87,8 @@ async def start_transform(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await _log(db, project_id, stage=3, level="info", tag="[transform]",
-               message="Transform pipeline dispatched")
+    await audit_log(db, project_id, stage=3, level="info", tag="[transform]",
+                    message="Transform pipeline dispatched")
     await db.flush()
 
     # Dispatch
@@ -109,7 +113,7 @@ async def start_merge(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch merge_pipeline_task."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     manifest_id = str(uuid.uuid4())
     manifest = TransformManifest(
@@ -121,8 +125,8 @@ async def start_merge(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await _log(db, project_id, stage=3, level="info", tag="[merge]",
-               message="Merge pipeline dispatched")
+    await audit_log(db, project_id, stage=3, level="info", tag="[merge]",
+                    message="Merge pipeline dispatched")
     await db.flush()
 
     task = merge_pipeline_task.apply_async(
@@ -151,7 +155,7 @@ async def transform_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Poll Celery task status. Falls back to most recent manifest if no task_id given."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     if not task_id:
         result = await db.execute(
@@ -200,7 +204,7 @@ async def list_manifests(
     db: AsyncSession = Depends(get_db),
 ):
     """List all transform/merge manifests for a project."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     q = select(TransformManifest).where(TransformManifest.project_id == project_id)
     if task_type:
@@ -218,10 +222,7 @@ async def preview_transformed(
     db: AsyncSession = Depends(get_db),
 ):
     """Preview a transformed record alongside the original for comparison."""
-    import pymarc
-    from pathlib import Path
-
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Find the latest successful transform manifest
     result = await db.execute(
@@ -237,7 +238,7 @@ async def preview_transformed(
         raise HTTPException(404, detail={"error": "NO_TRANSFORM", "message": "No completed transform found."})
 
     # Get the first transformed file
-    transformed_dir = Path(get_settings().data_root) / project_id / "transformed"
+    transformed_dir = Path(settings.data_root) / project_id / "transformed"
     transformed_files = sorted(transformed_dir.glob("*_transformed.mrc")) if transformed_dir.exists() else []
     if not transformed_files:
         raise HTTPException(404, detail={"error": "NO_FILES", "message": "No transformed files found."})
@@ -261,7 +262,7 @@ async def preview_transformed(
                     if rec is None:
                         continue
                     if count == valid_idx:
-                        return _record_to_preview(rec, valid_idx)
+                        return record_to_dict(rec, valid_idx)
                     count += 1
         except Exception:
             pass
@@ -283,7 +284,7 @@ async def preview_transformed(
                     if rec is None:
                         continue
                     if global_idx == record_index:
-                        transformed_record = _record_to_preview(rec, record_index)
+                        transformed_record = record_to_dict(rec, record_index)
                         # Read the corresponding original
                         if tf_idx < len(original_files):
                             original_record = read_record(original_files[tf_idx], local_valid)
@@ -306,31 +307,13 @@ async def preview_transformed(
     }
 
 
-def _record_to_preview(record, index):
-    """Serialize a pymarc Record to a compact preview dict."""
-    fields = []
-    for field in record.fields:
-        if field.is_control_field():
-            fields.append({"tag": field.tag, "data": field.data})
-        else:
-            subs = [{"code": sf.code, "value": sf.value} for sf in field.subfields]
-            fields.append({"tag": field.tag, "ind1": field.indicator1, "ind2": field.indicator2, "subfields": subs})
-    return {
-        "index": index,
-        "title": record.title or "",
-        "fields": fields,
-    }
-
-
 @router.post("/{project_id}/transform/clear")
 async def clear_transform_results(project_id: str, db: AsyncSession = Depends(get_db)):
     """Delete all transformed files and manifests so the user can start fresh."""
-    from pathlib import Path
-
-    project = await _require_project(project_id, db)
+    project = await require_project(project_id, db)
 
     # Delete transformed files on disk
-    project_dir = Path(get_settings().data_root) / project_id / "transformed"
+    project_dir = Path(settings.data_root) / project_id / "transformed"
     deleted_files = 0
     if project_dir.is_dir():
         for f in project_dir.glob("*_transformed.mrc"):
@@ -338,7 +321,7 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
             deleted_files += 1
 
     # Also delete merged.mrc if present
-    merged = Path(get_settings().data_root) / project_id / "merged.mrc"
+    merged = Path(settings.data_root) / project_id / "merged.mrc"
     if merged.is_file():
         merged.unlink()
         deleted_files += 1
@@ -354,8 +337,8 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
     if (project.current_stage or 0) > 3:
         project.current_stage = 3
 
-    await _log(db, project_id, stage=3, level="info", tag="[transform]",
-               message=f"Cleared previous results: {deleted_files} file(s), {manifests_deleted} manifest(s)")
+    await audit_log(db, project_id, stage=3, level="info", tag="[transform]",
+                    message=f"Cleared previous results: {deleted_files} file(s), {manifests_deleted} manifest(s)")
 
     return {
         "deleted_files": deleted_files,
@@ -366,7 +349,7 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
 @router.post("/{project_id}/transform/pause")
 async def pause_transform(project_id: str, db: AsyncSession = Depends(get_db)):
     """Set pause flag — running transform will pause at the next record."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     _redis.set(f"cerulean:pause:{project_id}", "1")
     return {"status": "paused"}
 
@@ -374,28 +357,6 @@ async def pause_transform(project_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{project_id}/transform/resume")
 async def resume_transform(project_id: str, db: AsyncSession = Depends(get_db)):
     """Clear pause flag — transform resumes processing."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     _redis.delete(f"cerulean:pause:{project_id}")
     return {"status": "resumed"}
-
-
-# ── Helpers ────────────────────────────────────────────────────────────
-
-
-async def _require_project(project_id: str, db: AsyncSession) -> Project:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
-    return project
-
-
-async def _log(db: AsyncSession, project_id: str, stage: int, level: str, tag: str, message: str) -> None:
-    event = AuditEvent(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        stage=stage,
-        level=level,
-        tag=tag,
-        message=message,
-    )
-    db.add(event)

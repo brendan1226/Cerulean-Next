@@ -14,8 +14,6 @@ import uuid
 from pathlib import Path
 
 import pymarc
-
-logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +23,9 @@ from cerulean.core.database import get_db
 from cerulean.models import MARCFile, Project
 from cerulean.schemas.projects import MARCFileOut, MARCFileUploadResponse, TagFrequencyOut
 from cerulean.tasks.ingest import ingest_marc_task
+from cerulean.utils.marc import record_to_dict
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/projects", tags=["files"])
 
@@ -193,7 +193,7 @@ async def get_record(
     if record is None:
         raise HTTPException(404, detail={"error": "RECORD_NOT_FOUND", "message": f"No record at index {record_index}."})
 
-    return _record_to_dict(record, record_index)
+    return record_to_dict(record, record_index)
 
 
 @router.get("/{project_id}/files/{file_id}/tags", response_model=TagFrequencyOut)
@@ -268,30 +268,3 @@ def _read_record_at_index(storage_path: str, index: int) -> pymarc.Record | None
         logger.warning("Error reading record at index %d from %s", index, storage_path, exc_info=True)
         return None
     return None
-
-
-def _record_to_dict(record: pymarc.Record, index: int) -> dict:
-    """Serialise a pymarc Record to a JSON-friendly dict."""
-    fields = []
-    for field in record.fields:
-        if field.is_control_field():
-            fields.append({"tag": field.tag, "data": field.data})
-        else:
-            subfields = []
-            for sf in field.subfields:
-                subfields.append({"code": sf.code, "value": sf.value})
-            fields.append({
-                "tag": field.tag,
-                "ind1": field.indicator1,
-                "ind2": field.indicator2,
-                "subfields": subfields,
-            })
-
-    leader = record.leader if record.leader else ""
-    title = record.title or ""
-    return {
-        "index": index,
-        "leader": leader,
-        "title": title,
-        "fields": fields,
-    }

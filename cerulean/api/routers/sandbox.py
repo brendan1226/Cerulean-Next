@@ -9,16 +9,14 @@ POST  /projects/{id}/sandbox/teardown    — teardown KTD sandbox
 GET   /projects/{id}/sandbox/instances   — list all instances
 """
 
-import uuid
-from datetime import datetime
-
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import audit_log, require_project
 from cerulean.core.database import get_db
-from cerulean.models import AuditEvent, Project, SandboxInstance
+from cerulean.models import SandboxInstance
 from cerulean.schemas.sandbox import (
     SandboxInstanceOut,
     SandboxProvisionRequest,
@@ -42,7 +40,7 @@ async def provision_sandbox(
     db: AsyncSession = Depends(get_db),
 ):
     """Provision a KTD sandbox. Precondition: no active sandbox."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Check no active sandbox
     result = await db.execute(
@@ -66,8 +64,8 @@ async def provision_sandbox(
         status="provisioning",
     )
     db.add(instance)
-    await _log(db, project_id, stage=6, level="info", tag="[sandbox]",
-               message="KTD sandbox provision dispatched")
+    await audit_log(db, project_id, stage=6, level="info", tag="[sandbox]",
+                    message="KTD sandbox provision dispatched")
     await db.flush()
     await db.refresh(instance)
 
@@ -91,7 +89,7 @@ async def sandbox_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Current sandbox status."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Find most recent active instance
     result = await db.execute(
@@ -132,7 +130,7 @@ async def teardown_sandbox(
     db: AsyncSession = Depends(get_db),
 ):
     """Teardown active KTD sandbox. Precondition: active sandbox exists."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Find active instance
     result = await db.execute(
@@ -150,8 +148,8 @@ async def teardown_sandbox(
             "message": "No active sandbox to teardown.",
         })
 
-    await _log(db, project_id, stage=6, level="info", tag="[sandbox]",
-               message="KTD sandbox teardown dispatched")
+    await audit_log(db, project_id, stage=6, level="info", tag="[sandbox]",
+                    message="KTD sandbox teardown dispatched")
     await db.flush()
 
     task = ktd_teardown_task.apply_async(
@@ -171,7 +169,7 @@ async def list_instances(
     db: AsyncSession = Depends(get_db),
 ):
     """List all sandbox instances for a project."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     result = await db.execute(
         select(SandboxInstance)
@@ -179,25 +177,3 @@ async def list_instances(
         .order_by(SandboxInstance.created_at.desc())
     )
     return result.scalars().all()
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-
-async def _require_project(project_id: str, db: AsyncSession) -> Project:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
-    return project
-
-
-async def _log(db: AsyncSession, project_id: str, stage: int, level: str, tag: str, message: str) -> None:
-    event = AuditEvent(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        stage=stage,
-        level=level,
-        tag=tag,
-        message=message,
-    )
-    db.add(event)

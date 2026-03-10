@@ -14,7 +14,6 @@ GET   /projects/{id}/push/files/preview  — preview records from a push-ready f
 """
 
 import os
-import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -25,9 +24,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import audit_log, require_project
 from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
-from cerulean.models import AuditEvent, Project, PushManifest
+from cerulean.models import PushManifest
 from cerulean.schemas.push import (
     PreflightRequest,
     PreflightResponse,
@@ -45,9 +45,10 @@ from cerulean.tasks.push import (
     push_patrons_task,
     push_preflight_task,
 )
+from cerulean.utils.marc import record_to_dict
 
-router = APIRouter(prefix="/projects", tags=["push"])
 settings = get_settings()
+router = APIRouter(prefix="/projects", tags=["push"])
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ async def preflight(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch preflight check. Precondition: koha_url must be set."""
-    project = await _require_project(project_id, db)
+    project = await require_project(project_id, db)
 
     if not project.koha_url:
         raise HTTPException(409, detail={
@@ -76,8 +77,8 @@ async def preflight(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await _log(db, project_id, stage=5, level="info", tag="[preflight]",
-               message="Preflight check dispatched")
+    await audit_log(db, project_id, stage=5, level="info", tag="[preflight]",
+                    message="Preflight check dispatched")
     await db.flush()
     await db.refresh(manifest)
 
@@ -98,7 +99,7 @@ async def start_push(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch selected push tasks. Precondition: MARC output files exist."""
-    project = await _require_project(project_id, db)
+    project = await require_project(project_id, db)
 
     # Check that transformed or merged files exist
     project_dir = Path(settings.data_root) / project_id
@@ -161,8 +162,8 @@ async def start_push(
         manifest.celery_task_id = task.id
         task_ids[task_type] = task.id
 
-    await _log(db, project_id, stage=5, level="info", tag="[push]",
-               message=f"Push started: {', '.join(task_ids.keys())} (dry_run={body.dry_run})")
+    await audit_log(db, project_id, stage=5, level="info", tag="[push]",
+                    message=f"Push started: {', '.join(task_ids.keys())} (dry_run={body.dry_run})")
     await db.flush()
 
     return PushStartResponse(
@@ -178,7 +179,7 @@ async def push_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Poll Celery task status."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     if not task_id:
         # Find most recent manifest
@@ -219,7 +220,7 @@ async def list_manifests(
     db: AsyncSession = Depends(get_db),
 ):
     """List all push manifests for a project."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     q = select(PushManifest).where(PushManifest.project_id == project_id)
     if task_type:
@@ -236,7 +237,7 @@ async def push_log(
     db: AsyncSession = Depends(get_db),
 ):
     """Alias — list manifests ordered by started_at desc."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     result = await db.execute(
         select(PushManifest)
@@ -290,7 +291,7 @@ async def list_push_files(
     db: AsyncSession = Depends(get_db),
 ):
     """List MARC files available for push, with sizes and record counts."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
     files = _list_push_files(project_id)
 
     # Quick record count per file
@@ -321,7 +322,7 @@ async def download_push_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Download a push-ready MARC file."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     # Resolve safely — only allow known filenames
     files = _list_push_files(project_id)
@@ -344,7 +345,7 @@ async def preview_push_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Preview a record from a push-ready MARC file."""
-    await _require_project(project_id, db)
+    await require_project(project_id, db)
 
     files = _list_push_files(project_id)
     match = next((f for f in files if f["filename"] == filename), None)
@@ -362,22 +363,7 @@ async def preview_push_file(
                 if rec is None:
                     continue
                 if valid_idx == record_index:
-                    fields = []
-                    for field in rec.fields:
-                        if field.is_control_field():
-                            fields.append({"tag": field.tag, "data": field.data})
-                        else:
-                            subs = [{"code": sf.code, "value": sf.value}
-                                    for sf in field.subfields]
-                            fields.append({"tag": field.tag,
-                                           "ind1": field.indicator1,
-                                           "ind2": field.indicator2,
-                                           "subfields": subs})
-                    record_data = {
-                        "index": record_index,
-                        "title": rec.title or "",
-                        "fields": fields,
-                    }
+                    record_data = record_to_dict(rec, record_index)
                 valid_idx += 1
     except Exception as exc:
         raise HTTPException(500, detail={"error": "READ_ERROR", "message": str(exc)})
@@ -395,25 +381,3 @@ async def preview_push_file(
         "total_records": total,
         "record": record_data,
     }
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-
-async def _require_project(project_id: str, db: AsyncSession) -> Project:
-    project = await db.get(Project, project_id)
-    if not project:
-        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
-    return project
-
-
-async def _log(db: AsyncSession, project_id: str, stage: int, level: str, tag: str, message: str) -> None:
-    event = AuditEvent(
-        id=str(uuid.uuid4()),
-        project_id=project_id,
-        stage=stage,
-        level=level,
-        tag=tag,
-        message=message,
-    )
-    db.add(event)
