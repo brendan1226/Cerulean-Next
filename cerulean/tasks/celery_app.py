@@ -9,6 +9,8 @@ Queues:
     analyze     — AI mapping, template operations
     transform   — merge pipeline, field map application
     dedup       — dedup scan and apply
+    reconcile   — item data reconciliation scan and apply
+    patrons     — patron data parse, AI map, scan, apply
     push        — Koha push (bulkmarcimport, patrons, holds, circ, ES reindex)
     sandbox     — KTD provisioning (future)
     default     — miscellaneous / low-priority
@@ -29,6 +31,8 @@ celery_app = Celery(
         "cerulean.tasks.analyze",
         "cerulean.tasks.transform",
         "cerulean.tasks.dedup",
+        "cerulean.tasks.reconcile",
+        "cerulean.tasks.patrons",
         "cerulean.tasks.push",
         "cerulean.tasks.sandbox",
     ],
@@ -41,6 +45,8 @@ celery_app.conf.update(
         "cerulean.tasks.analyze.*": {"queue": "analyze"},
         "cerulean.tasks.transform.*": {"queue": "transform"},
         "cerulean.tasks.dedup.*": {"queue": "dedup"},
+        "cerulean.tasks.reconcile.*": {"queue": "reconcile"},
+        "cerulean.tasks.patrons.*": {"queue": "patrons"},
         "cerulean.tasks.push.*": {"queue": "push"},
         "cerulean.tasks.sandbox.*": {"queue": "sandbox"},
     },

@@ -44,6 +44,8 @@ class ProjectOut(BaseModel):
     stage_4_complete: bool
     stage_5_complete: bool
     stage_6_complete: bool
+    stage_7_complete: bool
+    stage_8_complete: bool
     archived: bool
     bib_count_ingested: int | None
     bib_count_post_dedup: int | None

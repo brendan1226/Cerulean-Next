@@ -1,7 +1,7 @@
 """
 cerulean/api/routers/sandbox.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 6 — KTD Sandbox API endpoints.
+Stage 8 — KTD Sandbox API endpoints.
 
 POST  /projects/{id}/sandbox/provision   — provision KTD sandbox
 GET   /projects/{id}/sandbox/status      — current sandbox status
@@ -64,7 +64,7 @@ async def provision_sandbox(
         status="provisioning",
     )
     db.add(instance)
-    await audit_log(db, project_id, stage=6, level="info", tag="[sandbox]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[sandbox]",
                     message="KTD sandbox provision dispatched")
     await db.flush()
     await db.refresh(instance)
@@ -148,7 +148,7 @@ async def teardown_sandbox(
             "message": "No active sandbox to teardown.",
         })
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[sandbox]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[sandbox]",
                     message="KTD sandbox teardown dispatched")
     await db.flush()
 

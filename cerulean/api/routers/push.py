@@ -1,7 +1,7 @@
 """
 cerulean/api/routers/push.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 5 — Push to Koha API endpoints.
+Stage 7 — Push to Koha API endpoints.
 
 POST  /projects/{id}/push/preflight   — dispatch preflight check
 POST  /projects/{id}/push/start       — dispatch selected push tasks
@@ -77,7 +77,7 @@ async def preflight(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await audit_log(db, project_id, stage=5, level="info", tag="[preflight]",
+    await audit_log(db, project_id, stage=7, level="info", tag="[preflight]",
                     message="Preflight check dispatched")
     await db.flush()
     await db.refresh(manifest)
@@ -104,7 +104,8 @@ async def start_push(
     # Check that transformed or merged files exist
     project_dir = Path(settings.data_root) / project_id
     has_output = (
-        (project_dir / "merged_deduped.mrc").is_file()
+        (project_dir / "Biblios-mapped-items.mrc").is_file()
+        or (project_dir / "merged_deduped.mrc").is_file()
         or (project_dir / "merged.mrc").is_file()
         or (
             (project_dir / "transformed").is_dir()
@@ -162,7 +163,7 @@ async def start_push(
         manifest.celery_task_id = task.id
         task_ids[task_type] = task.id
 
-    await audit_log(db, project_id, stage=5, level="info", tag="[push]",
+    await audit_log(db, project_id, stage=7, level="info", tag="[push]",
                     message=f"Push started: {', '.join(task_ids.keys())} (dry_run={body.dry_run})")
     await db.flush()
 
@@ -251,35 +252,55 @@ async def push_log(
 
 
 def _list_push_files(project_id: str) -> list[dict]:
-    """Return push-ready MARC files in priority order with metadata."""
+    """Return push-ready files: best MARC file + controlled value CSVs."""
     project_dir = Path(settings.data_root) / project_id
     files: list[dict] = []
 
-    # Priority order: deduped > merged > transformed
-    for candidate in [
-        project_dir / "merged_deduped.mrc",
-        project_dir / "merged.mrc",
-    ]:
+    # Find the single best MARC file (highest priority wins)
+    source_labels = {
+        "Biblios-mapped-items.mrc": "Items",
+        "merged_deduped.mrc": "Deduped",
+        "merged.mrc": "Merged",
+    }
+    best_marc = None
+    for name in ["Biblios-mapped-items.mrc", "merged_deduped.mrc", "merged.mrc"]:
+        candidate = project_dir / name
         if candidate.is_file():
-            stat = candidate.stat()
-            files.append({
-                "filename": candidate.name,
-                "path": str(candidate),
-                "size": stat.st_size,
-                "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
-                "source": "dedup" if "deduped" in candidate.name else "merge",
-            })
+            best_marc = candidate
+            break
 
-    transformed_dir = project_dir / "transformed"
-    if transformed_dir.is_dir():
-        for tf in sorted(transformed_dir.glob("*_transformed.mrc")):
-            stat = tf.stat()
+    if not best_marc:
+        # Fall back to transformed files
+        transformed_dir = project_dir / "transformed"
+        if transformed_dir.is_dir():
+            transformed = sorted(transformed_dir.glob("*_transformed.mrc"))
+            if transformed:
+                best_marc = transformed[0]
+
+    if best_marc:
+        stat = best_marc.stat()
+        files.append({
+            "filename": best_marc.name,
+            "path": str(best_marc),
+            "size": stat.st_size,
+            "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
+            "source": source_labels.get(best_marc.name, "Transformed"),
+            "type": "marc",
+        })
+
+    # Include controlled value CSVs from items stage
+    items_dir = project_dir / "items"
+    if items_dir.is_dir():
+        for csv_path in sorted(items_dir.glob("items_*.csv")):
+            stat = csv_path.stat()
+            cat = csv_path.stem.replace("items_", "")
             files.append({
-                "filename": tf.name,
-                "path": str(tf),
+                "filename": csv_path.name,
+                "path": str(csv_path),
                 "size": stat.st_size,
                 "modified": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
-                "source": "transform",
+                "source": cat,
+                "type": "controlled_values",
             })
 
     return files

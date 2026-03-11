@@ -44,7 +44,7 @@ services:
     command: >
       celery -A cerulean.tasks.celery_app worker
       --loglevel=info
-      --queues=ingest,analyze,transform,dedup,push,sandbox,default
+      --queues=ingest,analyze,transform,dedup,reconcile,patrons,push,sandbox,default
       --concurrency=4
     volumes:
       - .:/app

@@ -25,9 +25,10 @@ def _encrypt_token(token: str | None) -> str | None:
     from cryptography.fernet import Fernet
     from cerulean.core.config import get_settings
     settings = get_settings()
-    if not settings.fernet_key:
+    key = settings.fernet_key.strip() if settings.fernet_key else ""
+    if not key or key.startswith("#"):
         return token  # dev fallback — no encryption
-    f = Fernet(settings.fernet_key.encode())
+    f = Fernet(key.encode())
     return f.encrypt(token.encode()).decode()
 
 

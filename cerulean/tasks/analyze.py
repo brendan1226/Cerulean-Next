@@ -151,11 +151,51 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
         log.info(f"Claude returned {len(suggestions)} suggestions")
 
         # 6. Write FieldMap rows — approved=False, ai_suggested=True
+        #    Skip if an approved map already exists for same source;
+        #    replace if an unapproved map exists for same source+target.
         written = 0
+        skipped = 0
+        replaced = 0
         with Session(_engine) as db:
+            existing = db.execute(
+                select(FieldMap).where(FieldMap.project_id == project_id)
+            ).scalars().all()
+            approved_keys = {
+                (m.source_tag, m.source_sub)
+                for m in existing if m.approved
+            }
+            unapproved_by_key = {
+                (m.source_tag, m.source_sub, m.target_tag, m.target_sub): m
+                for m in existing if not m.approved
+            }
+
             for s in suggestions:
                 if not _is_valid_suggestion(s):
                     continue
+
+                src_key = (s.get("source_tag", ""), s.get("source_sub"))
+                full_key = (
+                    s.get("source_tag", ""), s.get("source_sub"),
+                    s.get("target_tag", ""), s.get("target_sub"),
+                )
+
+                # Never override an approved map
+                if src_key in approved_keys:
+                    skipped += 1
+                    continue
+
+                # Replace existing unapproved map with same source+target
+                existing_map = unapproved_by_key.get(full_key)
+                if existing_map:
+                    existing_map.transform_type = s.get("transform_type", "copy")
+                    existing_map.transform_fn = s.get("transform_fn")
+                    existing_map.preset_key = s.get("preset_key")
+                    existing_map.delete_source = bool(s.get("delete_source", False))
+                    existing_map.ai_confidence = float(s.get("confidence", 0.5))
+                    existing_map.ai_reasoning = s.get("reasoning")
+                    replaced += 1
+                    continue
+
                 row = FieldMap(
                     id=str(uuid.uuid4()),
                     project_id=project_id,
@@ -178,8 +218,11 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
                 written += 1
             db.commit()
 
-        log.complete(f"AI analysis complete — {written} suggestions written. Engineer review required.")
-        return {"suggestions_written": written}
+        log.complete(
+            f"AI analysis complete — {written} new, {replaced} updated, "
+            f"{skipped} skipped (approved). Engineer review required."
+        )
+        return {"suggestions_written": written, "suggestions_replaced": replaced, "suggestions_skipped": skipped}
 
     except Exception as exc:
         log.error(f"AI field map task failed: {exc}")

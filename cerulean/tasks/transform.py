@@ -543,72 +543,143 @@ def _apply_maps_to_record(
 ) -> pymarc.Record:
     """Apply all field maps to a MARC record (mutates in place).
 
-    Each map is applied independently — a failure in one map does not
-    prevent subsequent maps from running.  Source field deletions
-    (delete_source) are deferred until ALL maps have finished reading,
-    so later maps can still access shared source tags.
+    Maps that share the same (source_tag, target_tag) are grouped and applied
+    field-instance-by-instance so repeating fields stay correlated.
+    For example, if three 999 fields each map subfields to 952, the result
+    is three 952 fields — one per source 999 instance.
+
+    Source field deletions (delete_source) are deferred until ALL maps have
+    finished reading, so later maps can still access shared source tags.
 
     If *stats* dict is provided, it tracks per-map hit/skip/error counts.
     """
-    deferred_deletes: set[str] = set()  # source tags to remove after all maps run
+    from collections import defaultdict
+
+    deferred_deletes: set[str] = set()
+
+    # ── Step 1: Group maps by (source_tag, target_tag) ──────────────
+    correlated: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    const_maps: list[dict] = []
 
     for m in maps_data:
-        map_label = f"{m.get('source_tag','?')}{m.get('source_sub','')}->{m.get('target_tag','?')}{m.get('target_sub','')}"
-        try:
-            source_tag = m["source_tag"]
-            source_sub = m["source_sub"]
-            target_tag = m["target_tag"]
-            target_sub = m["target_sub"]
-            transform_type = m["transform_type"]
-            transform_fn = m["transform_fn"]
+        if m["transform_type"] == "const":
+            const_maps.append(m)
+        else:
+            correlated[(m["source_tag"], m["target_tag"])].append(m)
 
-            source_values = _extract_values(record, source_tag, source_sub)
+    # ── Step 2: Process correlated groups ────────────────────────────
+    for (src_tag, tgt_tag), group in correlated.items():
+        source_fields = record.get_fields(src_tag)
 
-            if not source_values and transform_type != "const":
+        if not source_fields:
+            for m in group:
+                label = _map_label(m)
                 if stats is not None:
-                    stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
-                    stats[map_label]["skipped"] += 1
-                continue
+                    stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                    stats[label]["skipped"] += 1
+            continue
 
-            if transform_type == "const":
-                transformed_values = [transform_fn or ""]
-            elif transform_type == "preset":
-                from cerulean.core.transform_presets import apply_preset
-                transformed_values = []
-                for val in source_values:
-                    result = apply_preset(m.get("preset_key", ""), val)
-                    if result is not None:
-                        transformed_values.append(result)
-            else:
-                transformed_values = []
-                for val in source_values:
-                    result = _apply_transform(val, transform_type, transform_fn)
-                    if result is not None:
-                        transformed_values.append(result)
+        # For each source field instance, build one target field
+        for src_field in source_fields:
+            new_subs: list[Subfield] = []
+            labels_hit: list[str] = []
 
-            for val in transformed_values:
-                _set_value(record, target_tag, target_sub, val)
+            for m in group:
+                label = _map_label(m)
+                try:
+                    src_sub = m["source_sub"]
+                    tgt_sub = m["target_sub"]
+                    sub_code = src_sub.lstrip("$") if src_sub else None
+                    tgt_sub_code = tgt_sub.lstrip("$") if tgt_sub else "a"
 
+                    # Extract from THIS specific field instance
+                    if src_field.is_control_field():
+                        vals = [src_field.data] if src_field.data else []
+                    elif sub_code:
+                        vals = [v for v in src_field.get_subfields(sub_code) if v]
+                    else:
+                        val = src_field.value()
+                        vals = [val] if val else []
+
+                    if not vals:
+                        if stats is not None:
+                            stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                            stats[label]["skipped"] += 1
+                        continue
+
+                    # Transform values
+                    if m["transform_type"] == "preset":
+                        from cerulean.core.transform_presets import apply_preset
+                        transformed = [
+                            r for r in (apply_preset(m.get("preset_key", ""), v) for v in vals)
+                            if r is not None
+                        ]
+                    else:
+                        transformed = [
+                            r for r in (_apply_transform(v, m["transform_type"], m["transform_fn"]) for v in vals)
+                            if r is not None
+                        ]
+
+                    for tv in transformed:
+                        new_subs.append(Subfield(code=tgt_sub_code, value=tv))
+
+                    if transformed:
+                        labels_hit.append(label)
+
+                except Exception as exc:
+                    logger.warning("Map %s failed on field instance: %s", label, exc)
+                    if stats is not None:
+                        stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                        stats[label]["errors"] += 1
+
+            # Create the target field from collected subfields
+            if new_subs:
+                if tgt_tag < "010":
+                    # Control field — overwrite or create
+                    existing = record.get_fields(tgt_tag)
+                    if existing:
+                        existing[0].data = new_subs[0].value
+                    else:
+                        record.add_field(pymarc.Field(tag=tgt_tag, data=new_subs[0].value))
+                else:
+                    record.add_field(pymarc.Field(
+                        tag=tgt_tag, indicators=[" ", " "], subfields=new_subs,
+                    ))
+
+            for label in labels_hit:
+                if stats is not None:
+                    stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                    stats[label]["applied"] += 1
+
+        # Collect deferred deletes
+        for m in group:
+            if m.get("delete_source") and m["source_tag"] != m["target_tag"]:
+                deferred_deletes.add(m["source_tag"])
+
+    # ── Step 3: Process const maps (no source field) ─────────────────
+    for m in const_maps:
+        label = _map_label(m)
+        try:
+            _set_value(record, m["target_tag"], m["target_sub"], m["transform_fn"] or "")
             if stats is not None:
-                stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
-                stats[map_label]["applied"] += 1
-
-            # Defer delete_source until after all maps have read
-            if m.get("delete_source") and source_tag != target_tag:
-                deferred_deletes.add(source_tag)
-
+                stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                stats[label]["applied"] += 1
         except Exception as exc:
-            logger.warning("Map %s failed on record, skipping map: %s", map_label, exc)
+            logger.warning("Const map %s failed: %s", label, exc)
             if stats is not None:
-                stats.setdefault(map_label, {"applied": 0, "skipped": 0, "errors": 0})
-                stats[map_label]["errors"] += 1
+                stats.setdefault(label, {"applied": 0, "skipped": 0, "errors": 0})
+                stats[label]["errors"] += 1
 
-    # Now remove source fields that were marked for deletion
+    # ── Step 4: Deferred source field deletions ──────────────────────
     for tag in deferred_deletes:
         for field in record.get_fields(tag):
             record.remove_field(field)
 
     return record
+
+
+def _map_label(m: dict) -> str:
+    return f"{m.get('source_tag','?')}{m.get('source_sub','')}->{m.get('target_tag','?')}{m.get('target_sub','')}"
 
 
 def _extract_values(record: pymarc.Record, tag: str, sub: str | None) -> list[str]:

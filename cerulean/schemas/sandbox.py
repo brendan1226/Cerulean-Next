@@ -1,7 +1,7 @@
 """
 cerulean/schemas/sandbox.py
 ─────────────────────────────────────────────────────────────────────────────
-Pydantic v2 schemas for Stage 6 — KTD Sandbox API contracts.
+Pydantic v2 schemas for Stage 8 — KTD Sandbox API contracts.
 """
 
 from datetime import datetime

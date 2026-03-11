@@ -46,13 +46,15 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import projects, files, maps, templates, dedup, push, sandbox, log, suggestions, transform, reference  # noqa: E402
+from cerulean.api.routers import projects, files, maps, templates, dedup, reconcile, patrons, push, sandbox, log, suggestions, transform, reference  # noqa: E402
 
 app.include_router(projects.router,    prefix="/api/v1")
 app.include_router(files.router,       prefix="/api/v1")
 app.include_router(maps.router,        prefix="/api/v1")
 app.include_router(templates.router,   prefix="/api/v1")
 app.include_router(dedup.router,       prefix="/api/v1")
+app.include_router(reconcile.router,   prefix="/api/v1")
+app.include_router(patrons.router,     prefix="/api/v1")
 app.include_router(push.router,        prefix="/api/v1")
 app.include_router(sandbox.router,     prefix="/api/v1")
 app.include_router(log.router,         prefix="/api/v1")

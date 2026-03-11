@@ -12,6 +12,12 @@ Models:
     TransformManifest — tracks transform/merge pipeline runs
     DedupRule      — deduplication rule configuration
     DedupCluster   — detected duplicate group (written by dedup scan)
+    ReconciliationRule — item data reconciliation rule (Stage 5)
+    ReconciliationScanResult — extracted item values per vocab category
+    PatronFile     — uploaded patron data file (Stage 6)
+    PatronColumnMap — patron column→Koha header mapping (Stage 6)
+    PatronValueRule — patron controlled list reconciliation rule (Stage 6)
+    PatronScanResult — extracted patron categorical values (Stage 6)
     PushManifest   — tracks a push-to-Koha pipeline run
     SandboxInstance — KTD sandbox container lifecycle
     AuditEvent     — append-only project event log
@@ -70,7 +76,7 @@ class Project(Base):
     koha_version: Mapped[str | None] = mapped_column(String(20))
     search_engine: Mapped[str | None] = mapped_column(String(20))  # "es8" | "zebra"
 
-    # Pipeline stage tracking (1–6, null = not started)
+    # Pipeline stage tracking (1–8, null = not started)
     current_stage: Mapped[int] = mapped_column(Integer, default=1)
     stage_1_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     stage_2_complete: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -78,6 +84,18 @@ class Project(Base):
     stage_4_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     stage_5_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     stage_6_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_7_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_8_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Stage 5 — Reconciliation
+    reconcile_source_file: Mapped[str | None] = mapped_column(String(500))
+    reconcile_scan_task_id: Mapped[str | None] = mapped_column(String(200))
+    reconcile_apply_task_id: Mapped[str | None] = mapped_column(String(200))
+
+    # Stage 6 — Patron Data Transformation
+    patron_scan_task_id: Mapped[str | None] = mapped_column(String(200))
+    patron_apply_task_id: Mapped[str | None] = mapped_column(String(200))
+    patron_ai_task_id: Mapped[str | None] = mapped_column(String(200))
 
     # Record counts (updated after each stage)
     bib_count_ingested: Mapped[int | None] = mapped_column(Integer)
@@ -96,6 +114,12 @@ class Project(Base):
     files: Mapped[list["MARCFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     maps: Mapped[list["FieldMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     dedup_rules: Mapped[list["DedupRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    reconciliation_rules: Mapped[list["ReconciliationRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    reconciliation_scan_results: Mapped[list["ReconciliationScanResult"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    patron_files: Mapped[list["PatronFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    patron_column_maps: Mapped[list["PatronColumnMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    patron_value_rules: Mapped[list["PatronValueRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    patron_scan_results: Mapped[list["PatronScanResult"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     transform_manifests: Mapped[list["TransformManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     push_manifests: Mapped[list["PushManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -331,6 +355,209 @@ class DedupCluster(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# RECONCILIATION RULE
+# ══════════════════════════════════════════════════════════════════════════
+
+class ReconciliationRule(Base):
+    """Item data reconciliation rule for a project (Stage 5).
+
+    Maps source item-level MARC 952 subfield values to Koha controlled
+    vocabulary lists. Supports rename, merge, split, and delete operations.
+    """
+
+    __tablename__ = "reconciliation_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    vocab_category: Mapped[str] = mapped_column(String(50), nullable=False)
+    marc_tag: Mapped[str] = mapped_column(String(10), nullable=False)
+    marc_subfield: Mapped[str] = mapped_column(String(5), nullable=False)
+
+    # "rename" | "merge" | "split" | "delete"
+    operation: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Source values this rule matches — list of strings
+    source_values: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+    # Target value for rename/merge operations
+    target_value: Mapped[str | None] = mapped_column(String(200))
+
+    # For split operations: list of condition objects
+    # [{field_check: {tag, sub, value}, target_value}, ..., {default: true, target_value}]
+    split_conditions: Mapped[list | None] = mapped_column(JSONB)
+
+    # For delete: "subfield" (remove just the subfield) or "field" (remove entire 952)
+    delete_mode: Mapped[str | None] = mapped_column(String(20))
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="reconciliation_rules")
+
+
+class ReconciliationScanResult(Base):
+    """Extracted item-level value from a reconciliation scan.
+
+    One row per (project, vocab_category, source_value) with count of
+    records containing that value.
+    """
+
+    __tablename__ = "reconciliation_scan_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    vocab_category: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_value: Mapped[str] = mapped_column(String(500), nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="reconciliation_scan_results")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PATRON FILE
+# ══════════════════════════════════════════════════════════════════════════
+
+class PatronFile(Base):
+    """An uploaded patron data file belonging to a project (Stage 6)."""
+
+    __tablename__ = "patron_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_format: Mapped[str | None] = mapped_column(String(20))  # csv|tsv|patron_marc|xlsx|xls|xml|fixed
+    detected_format: Mapped[str | None] = mapped_column(String(20))
+    parse_settings: Mapped[dict | None] = mapped_column(JSONB)
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    column_headers: Mapped[list | None] = mapped_column(JSONB)
+
+    # "uploaded" | "parsing" | "parsed" | "error"
+    status: Mapped[str] = mapped_column(String(20), default="uploaded")
+
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="patron_files")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PATRON COLUMN MAP
+# ══════════════════════════════════════════════════════════════════════════
+
+class PatronColumnMap(Base):
+    """
+    Legacy patron column → Koha borrower header mapping (Stage 6).
+
+    Mirrors the FieldMap pattern for tabular patron data.
+    """
+
+    __tablename__ = "patron_column_maps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    source_column: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_header: Mapped[str | None] = mapped_column(String(200))
+    ignored: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Transform
+    transform_type: Mapped[str | None] = mapped_column(String(20))  # copy|date_*|case_*|const|regex
+    transform_config: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Controlled list flag
+    is_controlled_list: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Approval
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # AI origin
+    ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_confidence: Mapped[float | None] = mapped_column(Float)
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)
+    source_label: Mapped[str] = mapped_column(String(50), default="manual")
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="patron_column_maps")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PATRON VALUE RULE
+# ══════════════════════════════════════════════════════════════════════════
+
+class PatronValueRule(Base):
+    """Patron controlled list reconciliation rule (Stage 6).
+
+    Maps source patron categorical values (categorycode, branchcode, title,
+    lost) to Koha controlled vocabulary. Supports rename, merge, split, and
+    delete operations.
+    """
+
+    __tablename__ = "patron_value_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    koha_header: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # "rename" | "merge" | "split" | "delete"
+    operation: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Source values this rule matches — list of strings
+    source_values: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+    # Target value for rename/merge operations
+    target_value: Mapped[str | None] = mapped_column(String(200))
+
+    # For split operations: list of condition objects
+    split_conditions: Mapped[list | None] = mapped_column(JSONB)
+
+    # For delete: "exclude_row" (remove entire patron) or "blank_field" (clear the field)
+    delete_mode: Mapped[str | None] = mapped_column(String(20))
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="patron_value_rules")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PATRON SCAN RESULT
+# ══════════════════════════════════════════════════════════════════════════
+
+class PatronScanResult(Base):
+    """Extracted patron categorical value from a scan (Stage 6).
+
+    One row per (project, koha_header, source_value) with count of
+    patron records containing that value.
+    """
+
+    __tablename__ = "patron_scan_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    koha_header: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_value: Mapped[str] = mapped_column(String(500), nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="patron_scan_results")
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # PUSH MANIFEST
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -410,7 +637,7 @@ class AuditEvent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
 
-    stage: Mapped[int | None] = mapped_column(Integer)   # 1–6; null for cross-project events
+    stage: Mapped[int | None] = mapped_column(Integer)   # 1–8; null for cross-project events
     # "info" | "warn" | "error" | "complete"
     level: Mapped[str] = mapped_column(String(10), nullable=False)
     # Tag shown in the log UI — e.g. "[ingest]", "[ai-map]", "[push]"

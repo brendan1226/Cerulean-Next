@@ -987,12 +987,20 @@
           <span class="stage-badge" id="badge-s4">—</span>
         </div>
         <div class="nav-item" data-view="stage5" onclick="navigate('stage5')">
-          <span class="nav-icon">⑤</span> Push to Koha
+          <span class="nav-icon">⑤</span> Items
           <span class="stage-badge" id="badge-s5">—</span>
         </div>
         <div class="nav-item" data-view="stage6" onclick="navigate('stage6')">
-          <span class="nav-icon">⑥</span> KTD Sandbox
+          <span class="nav-icon">⑥</span> Patrons
           <span class="stage-badge" id="badge-s6">—</span>
+        </div>
+        <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
+          <span class="nav-icon">⑦</span> Push to Koha
+          <span class="stage-badge" id="badge-s7">—</span>
+        </div>
+        <div class="nav-item" data-view="stage8" onclick="navigate('stage8')">
+          <span class="nav-icon">⑧</span> KTD Sandbox
+          <span class="stage-badge" id="badge-s8">—</span>
         </div>
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
@@ -1094,6 +1102,9 @@ function navigate(view, params = {}) {
     stage3:       window.renderStage3,
     stage4:       window.renderStage4,
     stage5:       window.renderStage5,
+    stage6:       window.renderStage6,
+    stage7:       window.renderStage7,
+    stage8:       window.renderStage8,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
@@ -1112,8 +1123,10 @@ function updateBreadcrumb(view) {
     stage2: 'Stage 2 — Analyze & Map',
     stage3: 'Stage 3 — Transform',
     stage4: 'Stage 4 — Validate & Dedup',
-    stage5: 'Stage 5 — Push to Koha',
-    stage6: 'Stage 6 — KTD Sandbox',
+    stage5: 'Stage 5 — Items',
+    stage6: 'Stage 6 — Patrons',
+    stage7: 'Stage 7 — Push to Koha',
+    stage8: 'Stage 8 — KTD Sandbox',
     'project-log': 'Project Log',
     'project-settings': 'Settings',
     templates: 'Templates',
@@ -1195,8 +1208,10 @@ function pipelineBar(project) {
     { n: 2, label: 'Map' },
     { n: 3, label: 'Transform' },
     { n: 4, label: 'Dedup' },
-    { n: 5, label: 'Push' },
-    { n: 6, label: 'Sandbox' },
+    { n: 5, label: 'Items' },
+    { n: 6, label: 'Patrons' },
+    { n: 7, label: 'Push' },
+    { n: 8, label: 'Sandbox' },
   ];
   return `<div class="pipeline-bar">
     ${stages.map((s, i) => {
@@ -1215,7 +1230,7 @@ function pipelineBar(project) {
 }
 
 function updateStageBadges(project) {
-  for (let i = 1; i <= 6; i++) {
+  for (let i = 1; i <= 8; i++) {
     const badge = document.getElementById(`badge-s${i}`);
     if (!badge) continue;
     const done = project[`stage_${i}_complete`];
@@ -1278,6 +1293,7 @@ async function renderDashboard(el) {
           <span class="badge ${p.current_stage === 5 && p.stage_5_complete ? 'badge-green' : 'badge-cerulean'}">
             Stage ${p.current_stage}
           </span>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openProjectSettings(${JSON.stringify(p).replace(/"/g, '&quot;')})">Edit</button>
           <button class="btn btn-ghost btn-sm" data-pid="${esc(p.id)}" data-archived="${p.archived}" onclick="event.stopPropagation();toggleArchive(this.dataset.pid, this.dataset.archived === 'true')">
             ${p.archived ? 'Restore' : 'Archive'}
           </button>
@@ -1302,6 +1318,12 @@ function openProject(project) {
   state.currentProject = project;
   updateStageBadges(project);
   navigate('stage1');
+}
+
+function openProjectSettings(project) {
+  state.currentProject = project;
+  updateStageBadges(project);
+  navigate('project-settings');
 }
 
 // ── New Project ───────────────────────────────────────────────────────
@@ -1652,8 +1674,9 @@ async function renderStage2(el) {
 async function s2LoadFiles() {
   const p = state.currentProject;
   try {
-    const files = await api('GET', `/projects/${p.id}/files`);
-    s2.files = files || [];
+    const allFiles = await api('GET', `/projects/${p.id}/files`);
+    const files = (allFiles || []).filter(f => f.filename && f.filename.toLowerCase().endsWith('.mrc'));
+    s2.files = files;
     const left = document.getElementById('s2-left');
     if (!left) return;
 
@@ -2641,7 +2664,7 @@ async function saveProjectSettings() {
   const kohaUrl = document.getElementById('ps-koha-url').value.trim();
   const kohaToken = document.getElementById('ps-koha-token').value.trim();
 
-  if (name && name !== p.library_name) body.library_name = name;
+  if (name !== (p.library_name || '')) body.library_name = name || null;
   if (sourceIls !== (p.source_ils || '')) body.source_ils = sourceIls || null;
   if (kohaUrl !== (p.koha_url || '')) body.koha_url = kohaUrl || null;
   if (kohaToken) body.koha_token = kohaToken;
@@ -2658,7 +2681,7 @@ async function saveProjectSettings() {
     renderProjectSettings(document.getElementById('view'));
   } catch (e) {
     console.error(e);
-    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed to save.</span>';
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed to save: ${e.message || e}</span>`;
   }
 }
 
@@ -3052,9 +3075,18 @@ async function clearTransformResults() {
   } catch (e) { console.error(e); }
 }
 
-function renderS3Merge() {
+async function renderS3Merge() {
   const p = state.currentProject;
-  document.getElementById('s3-tab').innerHTML = `
+  const el = document.getElementById('s3-tab');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  let files = [];
+  try {
+    const allFiles = await window.api('GET', `/projects/${p.id}/files`);
+    files = (allFiles || []).filter(f => f.filename && f.filename.toLowerCase().endsWith('.mrc'));
+  } catch (e) { console.error(e); }
+
+  el.innerHTML = `
     <div class="alert alert-info">
       Merge combines all transformed files into a single merged.mrc.
       Optionally join an items CSV to embed 952 fields.
@@ -3062,8 +3094,16 @@ function renderS3Merge() {
     <div class="card" style="max-width:560px">
       <div class="card-header"><span class="card-title">Merge Files</span></div>
       <div class="form-group">
-        <label class="form-label">File IDs (one per line, in merge order — leave blank for all)</label>
-        <textarea class="form-textarea" id="merge-file-ids" placeholder="file-uuid-1&#10;file-uuid-2"></textarea>
+        <label class="form-label">Select files to merge</label>
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:200px;overflow:auto;background:var(--bg-secondary)">
+          ${files.length ? files.map(f => `
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer">
+              <input type="checkbox" class="merge-file-check" value="${esc(f.id)}" checked>
+              <span class="mono">${esc(f.filename)}</span>
+              <span class="text-dim" style="margin-left:auto;font-size:11px">${f.record_count != null ? f.record_count.toLocaleString() + ' records' : ''}</span>
+            </label>
+          `).join('') : '<span class="text-dim" style="font-size:12px">No MARC files found. Upload files in Stage 1.</span>'}
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Items CSV Path (optional)</label>
@@ -3073,19 +3113,15 @@ function renderS3Merge() {
         <label class="form-label">Items CSV key column (matches bib 001)</label>
         <input class="form-input" id="merge-bib-key" value="biblionumber">
       </div>
-      <button class="btn btn-primary" onclick="runMerge()">▶ Start Merge</button>
+      <button class="btn btn-primary" onclick="runMerge()" ${!files.length ? 'disabled' : ''}>▶ Start Merge</button>
       <div id="merge-status" style="margin-top:12px"></div>
     </div>`;
 }
 
 async function runMerge() {
   const p = state.currentProject;
-  let ids = document.getElementById('merge-file-ids').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-  if (!ids.length) {
-    const files = await window.api('GET', `/projects/${p.id}/files`);
-    if (!files) return;
-    ids = files.filter(f => f.status === 'indexed').map(f => f.id);
-  }
+  const ids = [...document.querySelectorAll('.merge-file-check:checked')].map(cb => cb.value);
+  if (!ids.length) { toast('Select at least one file to merge', 'warn'); return; }
   try {
     const r = await window.api('POST', `/projects/${p.id}/transform/merge`, {
       file_ids: ids,
@@ -3093,7 +3129,7 @@ async function runMerge() {
       items_csv_key_column: document.getElementById('merge-bib-key').value.trim() || 'biblionumber',
     });
     if (!r) return;
-    document.getElementById('merge-status').innerHTML = renderProgressBar({ label: `Merging ${ids.length} files…` });
+    document.getElementById('merge-status').innerHTML = renderProgressBar({ label: `Merging ${ids.length} file${ids.length === 1 ? '' : 's'}…` });
     pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge', 'transform');
   } catch (e) { console.error(e); }
 }
@@ -3521,38 +3557,1706 @@ async function resolveCluster(clusterId) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 5 — Push to Koha
+// Stage 5 — Items
 // ══════════════════════════════════════════════════════════════════
 window.renderStage5 = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 5 — Push to Koha</div>
+        <div class="page-title">Stage 5 — Items</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
     ${pipelineBar(p)}
     <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchS5Tab('bibs', this)">Bibs</button>
-      <button class="tab-btn" onclick="switchS5Tab('patrons', this)">Patrons</button>
-      <button class="tab-btn" onclick="switchS5Tab('holds', this)">Holds</button>
-      <button class="tab-btn" onclick="switchS5Tab('reindex', this)">ES Reindex</button>
-      <button class="tab-btn" onclick="switchS5Tab('manifests', this)">Manifests</button>
+      <button class="tab-btn active" onclick="switchRecTab('source', this)">Source</button>
+      <button class="tab-btn" onclick="switchRecTab('scan', this)">Scan</button>
+      <button class="tab-btn" onclick="switchRecTab('rules', this)">Rules</button>
+      <button class="tab-btn" onclick="switchRecTab('validate', this)">Validate</button>
+      <button class="tab-btn" onclick="switchRecTab('apply', this)">Apply</button>
+      <button class="tab-btn" onclick="switchRecTab('report', this)">Report</button>
     </div>
-    <div id="s5-tab"></div>`;
-  renderS5Bibs();
+    <div id="rec-tab"></div>`;
+  renderRecSource();
 };
 
-function switchS5Tab(tab, btn) {
+function switchRecTab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ({ bibs: renderS5Bibs, patrons: renderS5Patrons, holds: renderS5Holds, reindex: renderS5Reindex, manifests: renderS5Manifests })[tab]();
+  ({ source: renderRecSource, scan: renderRecScan, rules: renderRecRules, validate: renderRecValidate, apply: renderRecApply, report: renderRecReport })[tab]();
 }
 
-async function renderS5Bibs() {
+// ── Source confirmation ─────────────────────────────────────────
+async function renderRecSource() {
   const p = state.currentProject;
-  document.getElementById('s5-tab').innerHTML = `
+  document.getElementById('rec-tab').innerHTML = `
+    <div class="card" style="max-width:560px">
+      <div class="card-header"><span class="card-title">Source File</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Confirm the MARC file to scan for item data matching.
+        The system will auto-detect the best available output from Stage 3/4.
+      </p>
+      <div class="form-group">
+        <label class="form-label">Override filename (optional)</label>
+        <input class="form-input" id="rec-source-override" placeholder="Leave blank for auto-detect">
+      </div>
+      <button class="btn btn-primary" onclick="recConfirmSource()">Confirm Source</button>
+      <div id="rec-source-status" style="margin-top:12px"></div>
+    </div>`;
+}
+
+async function recConfirmSource() {
+  const p = state.currentProject;
+  const override = document.getElementById('rec-source-override')?.value?.trim() || null;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/reconcile/confirm-source`, override ? { source_file: override } : {});
+    if (!r) return;
+    document.getElementById('rec-source-status').innerHTML = `
+      <div class="alert alert-success">
+        Source confirmed: <span class="mono">${esc(r.source_file)}</span> — ${r.record_count.toLocaleString()} records
+      </div>`;
+    toast(r.message, 'success');
+  } catch (e) { console.error(e); }
+}
+
+// ── Scan ────────────────────────────────────────────────────────
+async function renderRecScan() {
+  const p = state.currentProject;
+  document.getElementById('rec-tab').innerHTML = `
+    <div class="card" style="max-width:560px">
+      <div class="card-header"><span class="card-title">Scan Item Values</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Scan all 952 fields to extract unique values per vocab category (itype, loc, ccode, branches, etc.).
+      </p>
+      <button class="btn btn-primary" onclick="recStartScan()">▶ Start Scan</button>
+      <div id="rec-scan-status" style="margin-top:12px"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><span class="card-title">Scan Results</span></div>
+      <div class="form-group" style="max-width:220px">
+        <label class="form-label">Vocab Category</label>
+        <select class="form-input" id="rec-vocab-select" onchange="recLoadValues()">
+          <option value="itype">itype ($y)</option>
+          <option value="loc">loc ($c)</option>
+          <option value="ccode">ccode ($8)</option>
+          <option value="not_loan">not_loan ($7)</option>
+          <option value="withdrawn">withdrawn ($1)</option>
+          <option value="damaged">damaged ($4)</option>
+          <option value="homebranch">homebranch ($a)</option>
+          <option value="holdingbranch">holdingbranch ($b)</option>
+        </select>
+      </div>
+      <div id="rec-values-list"><span class="text-dim" style="font-size:12px">Run a scan first.</span></div>
+    </div>`;
+}
+
+async function recStartScan() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/reconcile/scan`);
+    if (!r) return;
+    toast('Items scan started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'rec-scan-status', 'reconcile-scan', 'reconcile-scan', () => recLoadValues());
+  } catch (e) { console.error(e); }
+}
+
+async function recLoadValues() {
+  const p = state.currentProject;
+  const vocab = document.getElementById('rec-vocab-select')?.value || 'itype';
+  const el = document.getElementById('rec-values-list');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const values = await window.api('GET', `/projects/${p.id}/reconcile/values?vocab=${vocab}`);
+    if (!values || !values.length) {
+      el.innerHTML = '<span class="text-dim" style="font-size:12px">No values found for this category. Run a scan first.</span>';
+      return;
+    }
+    el.innerHTML = `
+      <table class="data-table" style="font-size:12px;width:100%">
+        <thead><tr><th>Value</th><th>Records</th></tr></thead>
+        <tbody>${values.map(v => `<tr>
+          <td class="mono">${esc(v.source_value)}</td>
+          <td>${v.record_count.toLocaleString()}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:12px">Failed to load values.</span>';
+  }
+}
+
+// ── Rules ───────────────────────────────────────────────────────
+async function renderRecRules() {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-tab');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const rules = await window.api('GET', `/projects/${p.id}/reconcile/rules`);
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span class="text-secondary" style="font-size:12px">${rules.length} rule(s)</span>
+        <button class="btn btn-primary" onclick="recShowAddRule()">+ Add Rule</button>
+      </div>
+      <div id="rec-rules-list">
+        ${rules.length ? `<table class="data-table" style="font-size:12px;width:100%">
+          <thead><tr><th>Category</th><th>Operation</th><th>Source</th><th>Target</th><th>Active</th><th></th></tr></thead>
+          <tbody>${rules.map(r => `<tr>
+            <td><span class="badge badge-dim">${esc(r.vocab_category)}</span></td>
+            <td>${esc(r.operation)}</td>
+            <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc((r.source_values || []).join(', '))}</td>
+            <td class="mono">${esc(r.target_value || '—')}</td>
+            <td>${r.active ? '<span class="text-green">yes</span>' : '<span class="text-dim">no</span>'}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="recDeleteRule('${esc(r.id)}')">Delete</button>
+            </td>
+          </tr>`).join('')}</tbody>
+        </table>` : '<div class="empty-state"><div class="empty-title">No rules defined</div><div class="empty-body">Add rules to map source values to Koha vocabulary.</div></div>'}
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Koha Values (from API)</span></div>
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0;flex:1">
+            <label class="form-label">Vocab Category</label>
+            <select class="form-input" id="rec-koha-vocab">
+              <option value="itype">itype</option>
+              <option value="loc">loc</option>
+              <option value="ccode">ccode</option>
+              <option value="not_loan">not_loan</option>
+              <option value="withdrawn">withdrawn</option>
+              <option value="damaged">damaged</option>
+              <option value="homebranch">homebranch</option>
+              <option value="holdingbranch">holdingbranch</option>
+            </select>
+          </div>
+          <button class="btn btn-ghost" onclick="recLoadKohaList()">Fetch</button>
+        </div>
+        <div id="rec-koha-list"><span class="text-dim" style="font-size:12px">Click Fetch to load Koha values.</span></div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim">Failed to load rules.</span>';
+  }
+}
+
+// Cache scan values per vocab category for the rule modal
+window._recScanCache = {};
+
+async function _recLoadScanValues(vocab) {
+  const p = state.currentProject;
+  if (window._recScanCache[vocab]) return window._recScanCache[vocab];
+  try {
+    const values = await window.api('GET', `/projects/${p.id}/reconcile/values?vocab=${vocab}`);
+    window._recScanCache[vocab] = values || [];
+    return window._recScanCache[vocab];
+  } catch (e) { return []; }
+}
+
+async function _recPopulateSourceOptions(vocab) {
+  const wrap = document.getElementById('rule-source-options');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner" style="padding:8px"></div>';
+  const values = await _recLoadScanValues(vocab);
+  if (!values.length) {
+    wrap.innerHTML = '<span class="text-dim" style="font-size:11px">No scan results. Run a scan first or type values below.</span>';
+    return;
+  }
+  wrap.innerHTML = values.map(v =>
+    `<label style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;cursor:pointer">
+      <input type="checkbox" class="rule-src-check" value="${esc(v.source_value)}">
+      <span class="mono">${esc(v.source_value)}</span>
+      <span class="text-dim" style="margin-left:auto;font-size:11px">${v.record_count.toLocaleString()}</span>
+    </label>`
+  ).join('');
+}
+
+async function _recPopulateTargetOptions(vocab) {
+  const sel = document.getElementById('rule-target-select');
+  if (!sel) return;
+  const values = await _recLoadScanValues(vocab);
+  sel.innerHTML = '<option value="">— select or type below —</option>' +
+    values.map(v => `<option value="${esc(v.source_value)}">${esc(v.source_value)} (${v.record_count.toLocaleString()})</option>`).join('');
+}
+
+function _recOnVocabChange() {
+  const vocab = document.getElementById('rule-vocab')?.value;
+  if (vocab) {
+    _recPopulateSourceOptions(vocab);
+    _recPopulateTargetOptions(vocab);
+  }
+}
+
+function _recSyncTargetInputs() {
+  const sel = document.getElementById('rule-target-select');
+  const inp = document.getElementById('rule-target-value');
+  if (sel && inp && sel.value) inp.value = sel.value;
+}
+
+function recShowAddRule() {
+  window._recScanCache = {};
+  openModal(`
+    <div style="max-width:560px">
+      <h3 style="margin-bottom:16px">Add Item Rule</h3>
+      <div class="form-group">
+        <label class="form-label">Vocab Category</label>
+        <select class="form-input" id="rule-vocab" onchange="_recOnVocabChange()">
+          <option value="itype">itype ($y)</option>
+          <option value="loc">loc ($c)</option>
+          <option value="ccode">ccode ($8)</option>
+          <option value="not_loan">not_loan ($7)</option>
+          <option value="withdrawn">withdrawn ($1)</option>
+          <option value="damaged">damaged ($4)</option>
+          <option value="homebranch">homebranch ($a)</option>
+          <option value="holdingbranch">holdingbranch ($b)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Operation</label>
+        <select class="form-input" id="rule-operation" onchange="recToggleRuleFields()">
+          <option value="rename">Rename</option>
+          <option value="merge">Merge</option>
+          <option value="split">Split</option>
+          <option value="delete">Delete</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Source Values <span class="text-dim" style="font-size:11px">(select from scan results)</span></label>
+        <div id="rule-source-options" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px;background:var(--bg-secondary)">
+          <div class="spinner" style="padding:8px"></div>
+        </div>
+        <input class="form-input" id="rule-source-freetext" placeholder="Or type additional values (comma-separated)" style="font-size:12px">
+      </div>
+      <div class="form-group" id="rule-target-group">
+        <label class="form-label">Target Value</label>
+        <select class="form-input" id="rule-target-select" onchange="_recSyncTargetInputs()" style="margin-bottom:6px">
+          <option value="">— select or type below —</option>
+        </select>
+        <input class="form-input" id="rule-target-value" placeholder="Or type a custom target value" style="font-size:12px">
+      </div>
+      <div class="form-group" id="rule-delete-mode-group" style="display:none">
+        <label class="form-label">Delete Mode</label>
+        <select class="form-input" id="rule-delete-mode">
+          <option value="subfield">Remove subfield only</option>
+          <option value="field">Remove entire 952 field</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="recSaveRule()">Save Rule</button>
+      </div>
+    </div>`);
+  // Load scan values for the default vocab category
+  _recOnVocabChange();
+}
+
+function recToggleRuleFields() {
+  const op = document.getElementById('rule-operation')?.value;
+  const targetGroup = document.getElementById('rule-target-group');
+  const deleteGroup = document.getElementById('rule-delete-mode-group');
+  if (targetGroup) targetGroup.style.display = op === 'delete' ? 'none' : '';
+  if (deleteGroup) deleteGroup.style.display = op === 'delete' ? '' : 'none';
+}
+
+async function recSaveRule() {
+  const p = state.currentProject;
+  const vocab = document.getElementById('rule-vocab')?.value;
+  const operation = document.getElementById('rule-operation')?.value;
+
+  // Collect source values from checkboxes + freetext
+  const checked = [...document.querySelectorAll('.rule-src-check:checked')].map(cb => cb.value);
+  const freetext = (document.getElementById('rule-source-freetext')?.value || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const sourceValues = [...new Set([...checked, ...freetext])];
+
+  const targetValue = document.getElementById('rule-target-value')?.value?.trim() || null;
+  const deleteMode = document.getElementById('rule-delete-mode')?.value || null;
+
+  if (!sourceValues.length) { toast('Select or enter at least one source value', 'warn'); return; }
+
+  try {
+    await window.api('POST', `/projects/${p.id}/reconcile/rules`, {
+      vocab_category: vocab,
+      operation,
+      source_values: sourceValues,
+      target_value: operation !== 'delete' ? targetValue : null,
+      delete_mode: operation === 'delete' ? deleteMode : null,
+    });
+    closeModal();
+    toast('Rule created', 'success');
+    renderRecRules();
+  } catch (e) { console.error(e); }
+}
+
+async function recDeleteRule(ruleId) {
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/reconcile/rules/${ruleId}`);
+    toast('Rule deleted', 'success');
+    renderRecRules();
+  } catch (e) { console.error(e); }
+}
+
+async function recLoadKohaList() {
+  const p = state.currentProject;
+  const vocab = document.getElementById('rec-koha-vocab')?.value || 'itype';
+  const el = document.getElementById('rec-koha-list');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/koha-list?vocab=${vocab}`);
+    if (!r || !r.values || !r.values.length) {
+      el.innerHTML = '<span class="text-dim" style="font-size:12px">No values returned from Koha.</span>';
+      return;
+    }
+    // Generic display — show first few keys of each item
+    el.innerHTML = `<div style="max-height:300px;overflow:auto;font-size:12px;font-family:var(--mono)">
+      ${r.values.map(v => `<div style="padding:2px 0;border-bottom:1px solid var(--border)">${esc(JSON.stringify(v))}</div>`).join('')}
+    </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:12px">Failed to fetch Koha values. Check Koha URL and token in settings.</span>';
+  }
+}
+
+// ── Validate ────────────────────────────────────────────────────
+async function renderRecValidate() {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-tab');
+  el.innerHTML = `
+    <div class="card" style="max-width:700px">
+      <div class="card-header"><span class="card-title">Validate Rules</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Cross-reference scan results against defined rules. Unmatched values will generate warnings but won't block Apply.
+      </p>
+      <button class="btn btn-primary" onclick="recRunValidate()">▶ Validate</button>
+      <div id="rec-validate-result" style="margin-top:12px"></div>
+    </div>`;
+}
+
+async function recRunValidate() {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-validate-result');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/validate`);
+    if (!r) return;
+    el.innerHTML = `
+      <div style="display:flex;gap:16px;margin-bottom:12px">
+        <div class="badge badge-dim">Total: ${r.total_values}</div>
+        <div class="badge badge-green">Matched: ${r.matched_values}</div>
+        <div class="badge ${r.unmatched_values ? 'badge-amber' : 'badge-dim'}">Unmatched: ${r.unmatched_values}</div>
+      </div>
+      ${r.issues.length ? `
+        <table class="data-table" style="font-size:12px;width:100%">
+          <thead><tr><th>Category</th><th>Value</th><th>Records</th><th>Issue</th></tr></thead>
+          <tbody>${r.issues.slice(0, 100).map(i => `<tr>
+            <td><span class="badge badge-dim">${esc(i.vocab_category)}</span></td>
+            <td class="mono">${esc(i.source_value)}</td>
+            <td>${i.record_count.toLocaleString()}</td>
+            <td><span class="badge badge-amber">${esc(i.issue)}</span></td>
+          </tr>`).join('')}</tbody>
+        </table>
+        ${r.issues.length > 100 ? `<div class="text-dim" style="font-size:11px;margin-top:4px">Showing first 100 of ${r.issues.length} issues</div>` : ''}
+      ` : '<div class="alert alert-success">All scanned values are covered by rules.</div>'}`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim">Validation failed.</span>';
+  }
+}
+
+// ── Apply ───────────────────────────────────────────────────────
+async function renderRecApply() {
+  const p = state.currentProject;
+  document.getElementById('rec-tab').innerHTML = `
+    <div class="card" style="max-width:560px">
+      <div class="card-header"><span class="card-title">Apply Rules</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Apply all active item rules to the source file. Generates <span class="mono">Biblios-mapped-items.mrc</span> which will be used by Stage 6 (Push).
+      </p>
+      <button class="btn btn-primary" onclick="recStartApply()">▶ Apply Rules</button>
+      <div id="rec-apply-status" style="margin-top:12px"></div>
+    </div>
+    <div class="card" style="margin-top:16px;max-width:560px">
+      <div class="card-header"><span class="card-title">Clear</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Delete scan results and output file. Rules are preserved.
+      </p>
+      <button class="btn btn-danger" onclick="recClear()">Clear Scan & Output</button>
+    </div>`;
+}
+
+async function recStartApply() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/reconcile/apply`);
+    if (!r) return;
+    toast('Items apply started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'rec-apply-status', 'reconcile-apply', 'reconcile-apply');
+  } catch (e) { console.error(e); }
+}
+
+async function recClear() {
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/reconcile/clear`);
+    toast('Scan results and output cleared', 'success');
+  } catch (e) { console.error(e); }
+}
+
+// ── Report ──────────────────────────────────────────────────────
+async function renderRecReport() {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-tab');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/report`);
+    if (!r || r.state === 'IDLE') {
+      el.innerHTML = '<div class="empty-state"><div class="empty-title">No apply run yet</div><div class="empty-body">Apply rules first to see the report.</div></div>';
+      return;
+    }
+    if (r.state === 'SUCCESS' && r.result) {
+      const res = r.result;
+      el.innerHTML = `
+        <div class="card" style="max-width:700px">
+          <div class="card-header"><span class="card-title">Apply Report</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+            <div><span class="text-dim" style="font-size:11px">Records In</span><div class="mono" style="font-size:18px">${(res.records_in || 0).toLocaleString()}</div></div>
+            <div><span class="text-dim" style="font-size:11px">Records Out</span><div class="mono" style="font-size:18px">${(res.records_out || 0).toLocaleString()}</div></div>
+            <div><span class="text-dim" style="font-size:11px">Rules Applied</span><div class="mono" style="font-size:18px">${(res.rules_applied || 0).toLocaleString()}</div></div>
+            <div><span class="text-dim" style="font-size:11px">Fields Deleted</span><div class="mono" style="font-size:18px">${(res.fields_deleted || 0).toLocaleString()}</div></div>
+          </div>
+          ${res.output_path ? `<div class="text-dim mono" style="font-size:11px;margin-top:12px">Output: ${esc(res.output_path.split('/').pop())}</div>` : ''}
+        </div>
+        <div id="rec-category-files" style="margin-top:16px"></div>`;
+      _recLoadCategoryFiles();
+    } else if (r.state === 'FAILURE') {
+      el.innerHTML = `<div class="alert alert-error">${esc(r.error || 'Apply failed')}</div>`;
+    } else {
+      el.innerHTML = `<div class="alert alert-info">Apply in progress (${esc(r.state)})…</div>`;
+    }
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim">Failed to load report.</span>';
+  }
+}
+
+async function _recLoadCategoryFiles() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('rec-category-files');
+  if (!wrap) return;
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/files`);
+    if (!r || !r.files || !r.files.length) {
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="card" style="max-width:700px">
+        <div class="card-header"><span class="card-title">Controlled Value Lists</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+          Final values per Koha controlled vocabulary after applying rules. Review these before pushing.
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          ${r.files.map(f => `
+            <button class="btn btn-ghost btn-sm" onclick="_recShowCategoryFile('${esc(f.filename)}', '${esc(f.category)}')"
+              style="display:flex;align-items:center;gap:6px">
+              <span class="badge badge-dim">${esc(f.category)}</span>
+              <span class="text-dim" style="font-size:11px">${f.value_count} values</span>
+            </button>
+          `).join('')}
+        </div>
+        <div id="rec-file-preview"></div>
+      </div>`;
+  } catch (e) {
+    wrap.innerHTML = '';
+  }
+}
+
+// Track pending description saves
+window._recDescTimer = null;
+window._recDescCategory = null;
+
+function _recQueueDescSave(category) {
+  window._recDescCategory = category;
+  clearTimeout(window._recDescTimer);
+  window._recDescTimer = setTimeout(() => _recSaveDescs(category), 800);
+}
+
+async function _recSaveDescs(category) {
+  const p = state.currentProject;
+  const inputs = document.querySelectorAll('.rec-desc-input');
+  const descriptions = {};
+  inputs.forEach(inp => { descriptions[inp.dataset.value] = inp.value.trim(); });
+  try {
+    await window.api('PUT', `/projects/${p.id}/reconcile/descriptions/${category}`, { descriptions });
+  } catch (e) { console.error('Failed to save descriptions:', e); }
+}
+
+async function _recShowCategoryFile(filename, category) {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-file-preview');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/files/${filename}`);
+    if (!r || !r.rows) { el.innerHTML = ''; return; }
+    const apiBase = window.API_BASE || '/api/v1';
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-weight:500;font-size:13px">${esc(category)} — ${r.rows.length} values</span>
+        <div style="display:flex;gap:8px">
+          <span id="rec-desc-status" class="text-dim" style="font-size:11px"></span>
+          <a href="${apiBase}/projects/${p.id}/reconcile/files/${filename}/download"
+             class="btn btn-ghost btn-sm" download>Download CSV</a>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px">
+        <div style="flex:2;max-height:500px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+          <table class="data-table" style="font-size:12px;width:100%">
+            <thead><tr>
+              <th>Code</th>
+              <th>Description</th>
+              <th style="text-align:right">Records</th>
+            </tr></thead>
+            <tbody>${r.rows.map(row => `<tr>
+              <td class="mono" style="cursor:pointer;white-space:nowrap" onclick="_recPreviewValue('${esc(category)}', '${esc(row.value)}')" title="Click to preview sample records">${esc(row.value)}</td>
+              <td><input class="form-input rec-desc-input" data-value="${esc(row.value)}"
+                value="${esc(row.description || '')}"
+                placeholder="Enter description…"
+                oninput="_recQueueDescSave('${esc(category)}')"
+                style="font-size:11px;padding:2px 6px;height:26px;width:100%"></td>
+              <td style="text-align:right;white-space:nowrap">${row.record_count.toLocaleString()}</td>
+            </tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <div id="rec-sample-preview" style="flex:1;min-width:0">
+          <div class="text-dim" style="font-size:12px;padding:12px;text-align:center">Click a code to preview sample records</div>
+        </div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:12px">Failed to load file.</span>';
+  }
+}
+
+async function _recPreviewValue(category, value) {
+  const p = state.currentProject;
+  const el = document.getElementById('rec-sample-preview');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="padding:16px"></div>';
+
+  // Highlight the clicked row
+  document.querySelectorAll('#rec-file-preview table tbody tr').forEach(tr => tr.style.background = '');
+  event?.target?.closest?.('tr')?.style && (event.target.closest('tr').style.background = 'rgba(56,189,248,0.08)');
+
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/sample?vocab=${encodeURIComponent(category)}&value=${encodeURIComponent(value)}&limit=5`);
+    if (!r || !r.records || !r.records.length) {
+      el.innerHTML = '<div class="text-dim" style="font-size:12px;padding:12px">No matching records found.</div>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="font-size:12px;margin-bottom:8px">
+        <span class="badge badge-dim">${esc(category)}</span>
+        <span class="mono" style="font-weight:500"> = ${esc(value)}</span>
+        <span class="text-dim" style="margin-left:8px">${r.total_matched > 1000 ? '1,000+' : r.total_matched.toLocaleString()} records</span>
+      </div>
+      ${r.records.map((rec, i) => `
+        <div style="margin-bottom:12px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <div style="background:var(--bg-secondary);padding:4px 10px;font-size:11px;color:var(--text-secondary);border-bottom:1px solid var(--border)">
+            Record #${rec.index + 1}${rec.title ? ' — ' + esc(rec.title) : ''}
+          </div>
+          <div style="padding:8px 10px;max-height:200px;overflow:auto;font-size:11px;font-family:var(--font-mono);line-height:1.5">
+            ${s3RenderFields(rec.fields)}
+          </div>
+        </div>
+      `).join('')}`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:12px;padding:12px">Failed to load sample records.</span>';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 6 — Patron Data Transformation
+// ══════════════════════════════════════════════════════════════════
+window.renderStage6 = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 6 — Patron Data Transformation</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchPatronTab('upload', this)">Upload &amp; Parse</button>
+      <button class="tab-btn" onclick="switchPatronTab('mapping', this)">Column Mapping</button>
+      <button class="tab-btn" onclick="switchPatronTab('values', this)">Value Reconciliation</button>
+      <button class="tab-btn" onclick="switchPatronTab('apply', this)">Apply &amp; Report</button>
+    </div>
+    <div id="patron-tab"></div>`;
+  renderPatronUpload();
+};
+
+function switchPatronTab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ({ upload: renderPatronUpload, mapping: renderPatronMapping, values: renderPatronValues, apply: renderPatronApply })[tab]();
+}
+
+// ── Tab 1: Upload & Parse ────────────────────────────────────────
+async function renderPatronUpload() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('patron-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  // Fetch patron files list and available Stage 1 files in parallel
+  let patronFiles = [];
+  let availableFiles = [];
+  try { patronFiles = await window.api('GET', `/projects/${p.id}/patrons/files`); } catch(e) {}
+  try { availableFiles = await window.api('GET', `/projects/${p.id}/patrons/available-files`); } catch(e) {}
+
+  const anyParsing = patronFiles.some(f => f.status === 'parsing');
+
+  // Build patron files table rows
+  const _statusBadge = (s) => s === 'parsed'
+    ? '<span class="badge badge-green">Parsed</span>'
+    : s === 'parsing' ? '<span class="badge badge-amber">Parsing...</span>'
+    : s === 'error' ? '<span class="badge badge-red">Error</span>'
+    : '<span class="badge badge-dim">Uploaded</span>';
+
+  const patronFileRows = patronFiles.length ? patronFiles.map(f => `
+    <tr>
+      <td class="mono" style="white-space:nowrap">${esc(f.filename)}</td>
+      <td class="mono">${esc(f.detected_format || f.file_format || '—')}</td>
+      <td class="mono">${f.row_count != null ? f.row_count.toLocaleString() : '—'}</td>
+      <td>${(f.column_headers || []).length ? `<span class="text-dim" style="font-size:10px">${f.column_headers.length} cols</span>` : '—'}</td>
+      <td>${_statusBadge(f.status)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-danger btn-sm" style="font-size:10px" onclick="deleteSinglePatronFile('${f.id}')">Delete</button>
+      </td>
+    </tr>`).join('') : '';
+
+  const totalRows = patronFiles.reduce((sum, f) => sum + (f.row_count || 0), 0);
+
+  // Build Stage 1 selection rows (exclude already-selected filenames)
+  const selectedNames = new Set(patronFiles.map(f => f.filename));
+  const selectableFiles = availableFiles.filter(f => !selectedNames.has(f.filename));
+  const selectRows = selectableFiles.length ? selectableFiles.map(f => `
+    <tr>
+      <td class="mono" style="white-space:nowrap">${esc(f.filename)}${f.is_patron_likely ? ' <span class="badge badge-amber" style="font-size:9px;vertical-align:middle">Likely patron</span>' : ''}</td>
+      <td class="mono">${esc(f.file_format || '—')}</td>
+      <td class="mono">${f.file_size_bytes != null ? (f.file_size_bytes / 1024).toFixed(1) + ' KB' : '—'}</td>
+      <td><button class="btn btn-primary btn-sm" style="font-size:10px" onclick="selectPatronFile('${f.file_id}')">Add</button></td>
+    </tr>`).join('') : '';
+
+  wrap.innerHTML = `
+    <div class="card" style="max-width:900px">
+      <div class="card-header">
+        <span class="card-title">Patron Files${patronFiles.length ? ` (${patronFiles.length})` : ''}</span>
+        ${patronFiles.length ? `<button class="btn btn-danger btn-sm" style="font-size:10px" onclick="deleteAllPatronFiles()">Delete All</button>` : ''}
+      </div>
+      ${patronFiles.length ? `
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr><th>Filename</th><th>Format</th><th>Rows</th><th>Columns</th><th>Status</th><th></th></tr></thead>
+          <tbody>${patronFileRows}</tbody>
+        </table>
+      </div>
+      <div class="text-dim" style="font-size:11px;margin-bottom:4px">Combined rows: <strong>${totalRows.toLocaleString()}</strong></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="reparsePatronFiles()">Re-parse All</button>
+      </div>` : `
+      <p class="text-dim" style="font-size:12px;margin-bottom:0">No patron files added yet. Select from Stage 1 uploads or upload a new file below.</p>`}
+    </div>
+
+    ${patronFiles.some(f => f.status === 'parsed') ? `
+    <div class="card" style="max-width:none;margin-top:16px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">Data Preview</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="text-dim" style="font-size:11px" id="patron-preview-info"></span>
+          <button class="btn btn-ghost btn-sm" style="font-size:10px" id="patron-preview-prev" onclick="_patronPreviewPage(-1)" disabled>&laquo; Prev</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:10px" id="patron-preview-next" onclick="_patronPreviewPage(1)" disabled>Next &raquo;</button>
+        </div>
+      </div>
+      <div id="patron-preview" style="min-height:60px"><div class="spinner" style="margin:16px 0"></div></div>
+    </div>` : ''}
+
+    <div class="card" style="max-width:900px;margin-top:16px">
+      <div class="card-header"><span class="card-title">Add Files</span></div>
+      ${selectableFiles.length ? `
+      <p class="text-secondary" style="font-size:12px;margin-bottom:8px">Select from Stage 1 uploads:</p>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px;margin-bottom:12px">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr><th>Filename</th><th>Format</th><th>Size</th><th></th></tr></thead>
+          <tbody>${selectRows}</tbody>
+        </table>
+      </div>
+      <div id="patron-select-status"></div>` : `
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">No additional Stage 1 files available.</p>`}
+      <details style="margin-top:4px">
+        <summary style="cursor:pointer;font-weight:600;font-size:12px;padding:4px 0">Or upload a new file</summary>
+        <p class="text-secondary" style="font-size:11px;margin:8px 0">CSV, TSV, Excel, XML, or Patron MARC.</p>
+        <form id="patron-upload-form" style="display:flex;flex-direction:column;gap:10px">
+          <input type="file" id="patron-file-input" accept=".csv,.tsv,.txt,.dat,.prn,.xlsx,.xls,.xml,.mrc,.marc" class="form-input">
+          <button type="submit" class="btn btn-primary" style="align-self:flex-start">Upload &amp; Parse</button>
+        </form>
+        <div id="patron-upload-status" style="margin-top:8px"></div>
+      </details>
+    </div>
+
+    `;
+
+  // Attach upload form handler
+  document.getElementById('patron-upload-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('patron-file-input');
+    if (!input.files.length) { toast('Select a file first', 'warn'); return; }
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    document.getElementById('patron-upload-status').innerHTML = renderProgressBar({ label: 'Uploading...' });
+    try {
+      const resp = await fetch(`/api/v1/projects/${p.id}/patrons/upload`, { method: 'POST', body: formData });
+      const r = await resp.json();
+      if (resp.ok) {
+        toast('File uploaded, parsing...', 'info');
+        await refreshProject();
+        setTimeout(renderPatronUpload, 2000);
+      } else {
+        document.getElementById('patron-upload-status').innerHTML = `<div class="alert alert-error">${esc(r.detail?.message || 'Upload failed')}</div>`;
+      }
+    } catch(err) {
+      document.getElementById('patron-upload-status').innerHTML = `<div class="alert alert-error">Upload failed</div>`;
+    }
+  });
+
+  // Auto-refresh if any file is still parsing
+  if (anyParsing) {
+    setTimeout(renderPatronUpload, 2000);
+  }
+
+  // Load data preview for parsed files
+  if (patronFiles.some(f => f.status === 'parsed') && !anyParsing) {
+    _loadPatronPreview();
+  }
+}
+
+// ── Patron data preview (uses combined parsed.csv endpoint) ──────
+let _patronPreviewOffset = 0;
+const _patronPreviewLimit = 30;
+
+async function _loadPatronPreview() {
+  const p = state.currentProject;
+  const el = document.getElementById('patron-preview');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="margin:16px 0"></div>';
+
+  try {
+    const preview = await window.api('GET',
+      `/projects/${p.id}/patrons/preview?limit=${_patronPreviewLimit}&offset=${_patronPreviewOffset}`);
+    if (!preview || !preview.columns || !preview.columns.length) {
+      el.innerHTML = '<div class="text-dim" style="font-size:12px;padding:12px">No data to preview. Check that files have been parsed successfully.</div>';
+      return;
+    }
+
+    const pageStart = _patronPreviewOffset + 1;
+    const pageEnd = _patronPreviewOffset + preview.rows.length;
+    const hasPrev = _patronPreviewOffset > 0;
+    const hasNext = _patronPreviewOffset + _patronPreviewLimit < preview.total_rows;
+
+    // Update nav
+    const info = document.getElementById('patron-preview-info');
+    const prevBtn = document.getElementById('patron-preview-prev');
+    const nextBtn = document.getElementById('patron-preview-next');
+    if (info) info.textContent = `Rows ${pageStart}\u2013${pageEnd} of ${preview.total_rows.toLocaleString()} \u00b7 ${preview.columns.length} columns`;
+    if (prevBtn) prevBtn.disabled = !hasPrev;
+    if (nextBtn) nextBtn.disabled = !hasNext;
+
+    el.innerHTML = `
+      <div style="overflow-x:auto;max-height:500px;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr>${preview.columns.map(c =>
+            `<th style="white-space:nowrap;position:sticky;top:0;background:var(--bg-card,#1e1e2e);z-index:1">${esc(c)}</th>`
+          ).join('')}</tr></thead>
+          <tbody>${preview.rows.length ? preview.rows.map(row =>
+            `<tr>${preview.columns.map(c =>
+              `<td class="mono" style="white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc(row[c] || '')}</td>`
+            ).join('')}</tr>`
+          ).join('') : `<tr><td colspan="${preview.columns.length}" class="text-dim" style="text-align:center;padding:20px">No rows</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    el.innerHTML = `<div class="text-dim" style="font-size:12px;padding:12px">Failed to load preview: ${esc(e.message || 'unknown error')}</div>`;
+    console.error('Patron preview error:', e);
+  }
+}
+
+function _patronPreviewPage(dir) {
+  _patronPreviewOffset = Math.max(0, _patronPreviewOffset + (dir * _patronPreviewLimit));
+  _loadPatronPreview();
+}
+
+async function deleteSinglePatronFile(fileId) {
+  if (!confirm('Delete this patron file?')) return;
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/patrons/files/${fileId}`);
+    toast('File deleted', 'info');
+    await refreshProject();
+    renderPatronUpload();
+  } catch(e) { console.error(e); }
+}
+
+async function deleteAllPatronFiles() {
+  if (!confirm('Delete ALL patron files and associated data?')) return;
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/patrons/file`);
+    toast('All patron files deleted', 'info');
+    await refreshProject();
+    renderPatronUpload();
+  } catch(e) { console.error(e); }
+}
+
+async function reparsePatronFiles() {
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/patrons/reparse`);
+    toast('Re-parse started', 'info');
+    setTimeout(renderPatronUpload, 2000);
+  } catch(e) { console.error(e); }
+}
+
+async function selectPatronFile(marcFileId) {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('patron-select-status');
+  if (statusEl) statusEl.innerHTML = renderProgressBar({ label: 'Adding file...' });
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/select-file`, { marc_file_id: marcFileId });
+    toast('File added, parsing...', 'info');
+    await refreshProject();
+    setTimeout(renderPatronUpload, 2000);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<div class="alert alert-error">${esc(e.message || 'Selection failed')}</div>`;
+  }
+}
+
+// ── Tab 2: Column Mapping ────────────────────────────────────────
+
+const KOHA_BORROWER_HEADERS = [
+  "cardnumber","surname","firstname","title","othernames","initials",
+  "streetnumber","streettype","address","address2","city","state",
+  "zipcode","country","email","phone","mobile","fax","emailpro",
+  "phonepro","B_streetnumber","B_streettype","B_address","B_address2",
+  "B_city","B_state","B_zipcode","B_country","B_email","B_phone",
+  "dateofbirth","branchcode","categorycode","dateenrolled","dateexpiry",
+  "gonenoaddress","lost","debarred","debarredcomment","contactname",
+  "contactfirstname","contacttitle","borrowernotes","relationship",
+  "sex","password","flags","userid","opacnote","contactnote","sort1",
+  "sort2","altcontactfirstname","altcontactsurname","altcontactaddress1",
+  "altcontactaddress2","altcontactaddress3","altcontactstate",
+  "altcontactzipcode","altcontactcountry","altcontactphone",
+  "smsalertnumber","sms_provider_id","privacy","privacy_guarantor_checkouts",
+  "checkprevcheckout","updated_on","lastseen","lang","login_attempts",
+  "overdrive_auth_token","anonymized","autorenew_checkouts","patron_attributes"
+];
+
+const PATRON_CONTROLLED_HEADERS = ["categorycode","branchcode","title","lost"];
+
+const PATRON_TRANSFORMS = [
+  {value:"copy", label:"copy"},
+  {value:"split|0| ", label:"split: first word"},
+  {value:"split|-1| ", label:"split: last word"},
+  {value:"split|0|,", label:"split: before comma"},
+  {value:"split|1|,", label:"split: after comma"},
+  {value:"date_mdy_to_iso", label:"date MM/DD/YYYY → ISO"},
+  {value:"date_dmy_to_iso", label:"date DD/MM/YYYY → ISO"},
+  {value:"date_ymd_to_iso", label:"date YYYY-MM-DD normalise"},
+  {value:"date_marc_to_iso", label:"date YYYYMMDD → ISO"},
+  {value:"case_upper", label:"UPPERCASE"},
+  {value:"case_lower", label:"lowercase"},
+  {value:"case_title", label:"Title Case"},
+  {value:"const", label:"constant value"},
+  {value:"regex", label:"regex substitution"},
+];
+
+// Encode transform_type + config into a single select value, decode on save
+function _encodeTransform(type, config) {
+  if (type === 'split' && config) {
+    return `split|${config.index ?? 0}|${config.delimiter ?? ' '}`;
+  }
+  return type || 'copy';
+}
+function _decodeTransform(val) {
+  if (val && val.startsWith('split|')) {
+    const parts = val.split('|');
+    return { transform_type: 'split', transform_config: { index: parseInt(parts[1]) || 0, delimiter: parts[2] ?? ' ' } };
+  }
+  return { transform_type: val || 'copy', transform_config: null };
+}
+
+// Cached maps data so inline changes don't require full re-render
+let _patronMaps = [];
+let _patronSourceColumns = []; // source columns from uploaded files
+
+async function renderPatronMapping() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('patron-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    _patronMaps = await window.api('GET', `/projects/${p.id}/patrons/maps`) || [];
+    let patronFiles = [];
+    try { patronFiles = await window.api('GET', `/projects/${p.id}/patrons/files`); } catch(e) {}
+    const hasFile = patronFiles.length > 0;
+
+    // Collect unique source columns from all parsed files
+    const colSet = new Set();
+    for (const f of patronFiles) {
+      if (f.column_headers) f.column_headers.forEach(c => colSet.add(c));
+    }
+    _patronSourceColumns = [...colSet].sort();
+
+    wrap.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="runPatronAISuggest()" ${!hasFile ? 'disabled title="Upload a file first"' : ''}>AI Suggest Mappings</button>
+        <button class="btn btn-ghost" onclick="patronApproveAll()">Approve All (&ge; 0.85)</button>
+        <button class="btn btn-ghost" onclick="addPatronMap()">+ Add Mapping</button>
+        <div id="patron-ai-status" style="margin-left:8px"></div>
+      </div>
+      <div id="patron-maps-table"></div>`;
+
+    _renderPatronMapsTable(_patronMaps);
+  } catch(e) {
+    wrap.innerHTML = '<span class="text-dim">Failed to load column maps.</span>';
+    console.error(e);
+  }
+}
+
+function _kohaHeaderOptions(selected) {
+  return '<option value="">(ignored)</option>' +
+    KOHA_BORROWER_HEADERS.map(h =>
+      `<option value="${esc(h)}" ${h === selected ? 'selected' : ''}>${esc(h)}</option>`
+    ).join('');
+}
+
+function _transformOptions(selectedEncoded) {
+  return PATRON_TRANSFORMS.map(t =>
+    `<option value="${esc(t.value)}" ${t.value === (selectedEncoded || 'copy') ? 'selected' : ''}>${esc(t.label)}</option>`
+  ).join('');
+}
+
+function _renderPatronMapsTable(maps) {
+  const el = document.getElementById('patron-maps-table');
+  if (!el) return;
+  if (!maps.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-title">No column mappings yet</div><div class="empty-body">Click "AI Suggest Mappings" or "+ Add Mapping" to get started.</div></div>';
+    return;
+  }
+  el.innerHTML = `
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:6px">
+      <table class="data-table" style="font-size:12px;width:100%">
+        <thead><tr>
+          <th>Source Column</th>
+          <th>Koha Header</th>
+          <th>Transform</th>
+          <th style="text-align:center">Ctrl</th>
+          <th>Conf.</th>
+          <th>Status</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${maps.map(m => _patronMapRow(m)).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function _transformNeedsConfig(type) {
+  return type === 'regex' || type === 'const' || type === 'split';
+}
+
+function _transformConfigSummary(m) {
+  const cfg = m.transform_config || {};
+  if (m.transform_type === 'regex') {
+    if (cfg.pattern) return `s/${cfg.pattern}/${cfg.replacement || ''}/`;
+    return 'configure...';
+  }
+  if (m.transform_type === 'const') {
+    if (cfg.value) return `"${cfg.value}"`;
+    return 'configure...';
+  }
+  if (m.transform_type === 'split') {
+    const d = cfg.delimiter === ' ' ? 'space' : cfg.delimiter === ',' ? 'comma' : `"${cfg.delimiter || ' '}"`;
+    return `part ${(cfg.index ?? 0) + 1} by ${d}`;
+  }
+  return '';
+}
+
+function _patronMapRow(m) {
+  const conf = m.ai_confidence;
+  const confBadge = conf != null
+    ? `<span class="badge ${conf >= 0.85 ? 'badge-green' : conf >= 0.70 ? 'badge-amber' : 'badge-red'}">${(conf * 100).toFixed(0)}%</span>`
+    : '<span class="text-dim">&mdash;</span>';
+  const encodedTransform = _encodeTransform(m.transform_type, m.transform_config);
+  const needsConfig = _transformNeedsConfig(m.transform_type);
+  const configSummary = needsConfig ? _transformConfigSummary(m) : '';
+
+  return `<tr data-map-id="${esc(m.id)}">
+    <td class="mono">${esc(m.source_column)}</td>
+    <td>
+      <select class="form-select" onchange="patchPatronMapField('${m.id}','target_header',this.value)"
+        style="font-size:11px;padding:2px 4px;min-width:140px;font-family:var(--font-mono,monospace);background:transparent;border:1px solid transparent;cursor:pointer"
+        onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'">
+        ${_kohaHeaderOptions(m.target_header || '')}
+      </select>
+    </td>
+    <td style="white-space:nowrap">
+      <select class="form-select" onchange="patchPatronMapTransform('${m.id}',this.value)"
+        style="font-size:11px;padding:2px 4px;background:transparent;border:1px solid transparent;cursor:pointer;display:inline-block;max-width:130px"
+        onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'">
+        ${_transformOptions(encodedTransform)}
+      </select>${needsConfig ? `<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 4px;margin-left:2px;vertical-align:middle" onclick="openTransformConfig('${m.id}')" title="Configure transform">${esc(configSummary)}</button>` : ''}
+    </td>
+    <td style="text-align:center">
+      <input type="checkbox" ${m.is_controlled_list ? 'checked' : ''}
+        onchange="patchPatronMapField('${m.id}','is_controlled_list',this.checked)"
+        title="Controlled list column">
+    </td>
+    <td>${confBadge}</td>
+    <td>${m.approved
+      ? '<span class="badge badge-green" style="cursor:pointer" title="Click to unapprove" onclick="patchPatronMapField(\'' + m.id + '\',\'approved\',false)">approved</span>'
+      : '<span class="badge badge-dim" style="cursor:pointer" title="Click to approve" onclick="patchPatronMapField(\'' + m.id + '\',\'approved\',true)">pending</span>'}</td>
+    <td style="text-align:right;white-space:nowrap">
+      <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="splitPatronColumn('${m.id}')" title="Split this column into multiple Koha fields">Split</button>
+      <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="deletePatronMap('${m.id}')">Del</button>
+    </td>
+  </tr>`;
+}
+
+function openTransformConfig(mapId) {
+  const m = _patronMaps.find(x => x.id === mapId);
+  if (!m) return;
+  const cfg = m.transform_config || {};
+
+  if (m.transform_type === 'regex') {
+    openModal(`
+      <h3 style="margin-bottom:4px">Regex Transform</h3>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
+        Source: <strong class="mono">${esc(m.source_column)}</strong> &rarr; <strong class="mono">${esc(m.target_header || '?')}</strong>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Pattern (regex to match)</label>
+        <input class="form-input mono" id="pm-cfg-pattern" value="${esc(cfg.pattern || '')}" placeholder="e.g. ^(\\d{3})-(\\d{4})$" style="font-size:12px">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Replacement</label>
+        <input class="form-input mono" id="pm-cfg-replacement" value="${esc(cfg.replacement || '')}" placeholder="e.g. $1$2 or leave empty to delete match" style="font-size:12px">
+      </div>
+      <p class="text-dim" style="font-size:11px;margin-bottom:16px">Uses Python re.sub() syntax. Capture groups: \\1 or $1</p>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTransformConfig('${m.id}','regex')">Save</button>
+      </div>`);
+  } else if (m.transform_type === 'const') {
+    openModal(`
+      <h3 style="margin-bottom:4px">Constant Value</h3>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
+        Every row will get this fixed value for <strong class="mono">${esc(m.target_header || '?')}</strong>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Value</label>
+        <input class="form-input mono" id="pm-cfg-value" value="${esc(cfg.value || '')}" placeholder="e.g. MAIN" style="font-size:12px">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTransformConfig('${m.id}','const')">Save</button>
+      </div>`);
+  } else if (m.transform_type === 'split') {
+    openModal(`
+      <h3 style="margin-bottom:4px">Split Config</h3>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
+        Source: <strong class="mono">${esc(m.source_column)}</strong> &rarr; <strong class="mono">${esc(m.target_header || '?')}</strong>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Delimiter</label>
+        <select class="form-select" id="pm-cfg-delimiter" style="font-size:12px">
+          <option value=" " ${(cfg.delimiter || ' ') === ' ' ? 'selected' : ''}>Space</option>
+          <option value="," ${cfg.delimiter === ',' ? 'selected' : ''}>Comma (,)</option>
+          <option value=", " ${cfg.delimiter === ', ' ? 'selected' : ''}>Comma+space (, )</option>
+          <option value=";" ${cfg.delimiter === ';' ? 'selected' : ''}>Semicolon (;)</option>
+          <option value="|" ${cfg.delimiter === '|' ? 'selected' : ''}>Pipe (|)</option>
+          <option value="-" ${cfg.delimiter === '-' ? 'selected' : ''}>Hyphen (-)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Part index (0 = first, 1 = second, -1 = last)</label>
+        <input class="form-input mono" id="pm-cfg-index" type="number" value="${cfg.index ?? 0}" style="font-size:12px;width:80px">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTransformConfig('${m.id}','split')">Save</button>
+      </div>`);
+  }
+}
+
+async function saveTransformConfig(mapId, type) {
+  const p = state.currentProject;
+  let config = {};
+  if (type === 'regex') {
+    config = {
+      pattern: document.getElementById('pm-cfg-pattern')?.value || '',
+      replacement: document.getElementById('pm-cfg-replacement')?.value || '',
+    };
+  } else if (type === 'const') {
+    config = { value: document.getElementById('pm-cfg-value')?.value || '' };
+  } else if (type === 'split') {
+    config = {
+      delimiter: document.getElementById('pm-cfg-delimiter')?.value || ' ',
+      index: parseInt(document.getElementById('pm-cfg-index')?.value) || 0,
+    };
+  }
+  try {
+    const updated = await window.api('PATCH', `/projects/${p.id}/patrons/maps/${mapId}`, {
+      transform_config: config,
+    });
+    const idx = _patronMaps.findIndex(m => m.id === mapId);
+    if (idx !== -1 && updated) _patronMaps[idx] = updated;
+    const tr = document.querySelector(`tr[data-map-id="${mapId}"]`);
+    if (tr && updated) tr.outerHTML = _patronMapRow(updated);
+    closeModal();
+    toast('Config saved', 'success');
+  } catch(e) {
+    toast(e.message || 'Save failed', 'error');
+  }
+}
+
+async function patchPatronMapField(mapId, field, value) {
+  const p = state.currentProject;
+  const body = {};
+  body[field] = value;
+  // Auto-set ignored when header is cleared, auto-detect controlled list
+  if (field === 'target_header') {
+    body.ignored = !value;
+    if (PATRON_CONTROLLED_HEADERS.includes(value)) {
+      body.is_controlled_list = true;
+    }
+  }
+  try {
+    const updated = await window.api('PATCH', `/projects/${p.id}/patrons/maps/${mapId}`, body);
+    const idx = _patronMaps.findIndex(m => m.id === mapId);
+    if (idx !== -1 && updated) _patronMaps[idx] = updated;
+    const tr = document.querySelector(`tr[data-map-id="${mapId}"]`);
+    if (tr && updated) tr.outerHTML = _patronMapRow(updated);
+  } catch(e) {
+    toast(e.message || 'Update failed', 'error');
+  }
+}
+
+async function patchPatronMapTransform(mapId, encodedValue) {
+  const p = state.currentProject;
+  const { transform_type, transform_config } = _decodeTransform(encodedValue);
+  try {
+    const updated = await window.api('PATCH', `/projects/${p.id}/patrons/maps/${mapId}`, {
+      transform_type,
+      transform_config,
+    });
+    const idx = _patronMaps.findIndex(m => m.id === mapId);
+    if (idx !== -1 && updated) _patronMaps[idx] = updated;
+    const tr = document.querySelector(`tr[data-map-id="${mapId}"]`);
+    if (tr && updated) tr.outerHTML = _patronMapRow(updated);
+  } catch(e) {
+    toast(e.message || 'Update failed', 'error');
+  }
+}
+
+function splitPatronColumn(mapId) {
+  const m = _patronMaps.find(x => x.id === mapId);
+  if (!m) return;
+  const src = m.source_column;
+
+  openModal(`
+    <h3 style="margin-bottom:4px">Split Column</h3>
+    <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
+      Split <strong class="mono">${esc(src)}</strong> into multiple Koha fields.
+      This updates the current mapping and creates additional ones for each extra part.
+    </p>
+    <div class="form-group">
+      <label class="form-label">Delimiter</label>
+      <select class="form-select" id="pm-split-delim" style="font-size:12px" onchange="_splitPreviewUpdate()">
+        <option value=" ">Space</option>
+        <option value=",">Comma (,)</option>
+        <option value=", ">Comma+space (, )</option>
+        <option value=";">Semicolon (;)</option>
+        <option value="|">Pipe (|)</option>
+        <option value="/">Slash (/)</option>
+        <option value="-">Hyphen (-)</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:8px">
+      <label class="form-label">Preview — enter a sample value to see how it splits:</label>
+      <input class="form-input mono" id="pm-split-sample" placeholder="e.g. Smith, John" oninput="_splitPreviewUpdate()" style="font-size:12px">
+    </div>
+    <div id="pm-split-preview" style="margin-bottom:16px"></div>
+    <div id="pm-split-parts">
+      <div class="form-group" style="display:flex;gap:8px;align-items:center">
+        <span class="text-dim" style="font-size:11px;min-width:52px">Part 1 →</span>
+        <select class="form-select pm-split-header" style="font-size:12px;font-family:var(--font-mono,monospace);flex:1">${_kohaHeaderOptions(m.target_header || '')}</select>
+      </div>
+      <div class="form-group" style="display:flex;gap:8px;align-items:center">
+        <span class="text-dim" style="font-size:11px;min-width:52px">Part 2 →</span>
+        <select class="form-select pm-split-header" style="font-size:12px;font-family:var(--font-mono,monospace);flex:1">${_kohaHeaderOptions('')}</select>
+      </div>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="font-size:10px;margin-bottom:16px" onclick="_splitAddPart()">+ Add part</button>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitSplitColumn('${m.id}','${esc(src)}')">Apply Split</button>
+    </div>`);
+}
+
+function _splitPreviewUpdate() {
+  const sample = document.getElementById('pm-split-sample')?.value || '';
+  const delim = document.getElementById('pm-split-delim')?.value || ' ';
+  const el = document.getElementById('pm-split-preview');
+  if (!el) return;
+  if (!sample) { el.innerHTML = ''; return; }
+  const parts = sample.split(delim).map(p => p.trim()).filter(Boolean);
+  el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap">${parts.map((p, i) =>
+    `<span class="badge badge-dim mono" style="font-size:11px">Part ${i + 1}: <strong>${esc(p)}</strong></span>`
+  ).join('')}</div>`;
+  // Ensure enough part selects exist
+  const selects = document.querySelectorAll('.pm-split-header');
+  while (selects.length < parts.length) _splitAddPart();
+}
+
+function _splitAddPart() {
+  const container = document.getElementById('pm-split-parts');
+  if (!container) return;
+  const count = container.querySelectorAll('.pm-split-header').length;
+  const div = document.createElement('div');
+  div.className = 'form-group';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <span class="text-dim" style="font-size:11px;min-width:52px">Part ${count + 1} →</span>
+    <select class="form-select pm-split-header" style="font-size:12px;font-family:var(--font-mono,monospace);flex:1">${_kohaHeaderOptions('')}</select>`;
+  container.appendChild(div);
+}
+
+async function submitSplitColumn(mapId, sourceColumn) {
+  const p = state.currentProject;
+  const delim = document.getElementById('pm-split-delim')?.value || ' ';
+  const headerSelects = document.querySelectorAll('.pm-split-header');
+  const parts = [];
+  headerSelects.forEach((sel, i) => {
+    if (sel.value) parts.push({ index: i, header: sel.value });
+  });
+  if (!parts.length) { toast('Select at least one Koha header', 'error'); return; }
+
+  try {
+    // Update the existing mapping to be the first part
+    await window.api('PATCH', `/projects/${p.id}/patrons/maps/${mapId}`, {
+      target_header: parts[0].header,
+      transform_type: 'split',
+      transform_config: { delimiter: delim, index: parts[0].index },
+      ignored: false,
+    });
+
+    // Create additional mappings for remaining parts
+    for (let i = 1; i < parts.length; i++) {
+      await window.api('POST', `/projects/${p.id}/patrons/maps`, {
+        source_column: sourceColumn,
+        target_header: parts[i].header,
+        transform_type: 'split',
+        transform_config: { delimiter: delim, index: parts[i].index },
+        ignored: false,
+        is_controlled_list: PATRON_CONTROLLED_HEADERS.includes(parts[i].header),
+      });
+    }
+
+    closeModal();
+    toast(`Split into ${parts.length} fields`, 'success');
+    renderPatronMapping();
+  } catch(e) {
+    toast(e.message || 'Split failed', 'error');
+  }
+}
+
+function addPatronMap() {
+  const srcOptions = _patronSourceColumns.length
+    ? '<option value="">— select —</option>' + _patronSourceColumns.map(c =>
+        `<option value="${esc(c)}">${esc(c)}</option>`).join('')
+    : '';
+  openModal(`
+    <h3 style="margin-bottom:16px">Add Column Mapping</h3>
+    <div class="form-group">
+      <label class="form-label">Source Column *</label>
+      ${_patronSourceColumns.length
+        ? `<select class="form-select" id="pm-add-source" style="font-size:12px;font-family:var(--font-mono,monospace)">${srcOptions}</select>`
+        : `<input class="form-input" id="pm-add-source" placeholder="e.g. PATRON_ID">`}
+    </div>
+    <div class="form-group">
+      <label class="form-label">Koha Header</label>
+      <select class="form-select" id="pm-add-header" style="font-size:12px;font-family:var(--font-mono,monospace)">${_kohaHeaderOptions('')}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Transform</label>
+      <select class="form-select" id="pm-add-transform" style="font-size:12px" onchange="_addMapTransformChanged()">${_transformOptions('copy')}</select>
+    </div>
+    <div id="pm-add-config-area"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <input type="checkbox" id="pm-add-ctrl">
+      <label for="pm-add-ctrl" style="font-size:12px;color:var(--text-secondary)">Controlled list column</label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPatronMap()">Add Mapping</button>
+    </div>`);
+}
+
+function _addMapTransformChanged() {
+  const sel = document.getElementById('pm-add-transform')?.value || 'copy';
+  const area = document.getElementById('pm-add-config-area');
+  if (!area) return;
+  const { transform_type } = _decodeTransform(sel);
+  if (transform_type === 'regex') {
+    area.innerHTML = `
+      <div class="form-group">
+        <label class="form-label">Regex pattern</label>
+        <input class="form-input mono" id="pm-add-cfg-pattern" placeholder="e.g. ^(\\d{3})-(\\d{4})$" style="font-size:12px">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Replacement</label>
+        <input class="form-input mono" id="pm-add-cfg-replacement" placeholder="e.g. $1$2" style="font-size:12px">
+      </div>`;
+  } else if (transform_type === 'const') {
+    area.innerHTML = `
+      <div class="form-group">
+        <label class="form-label">Constant value</label>
+        <input class="form-input mono" id="pm-add-cfg-value" placeholder="e.g. MAIN" style="font-size:12px">
+      </div>`;
+  } else {
+    area.innerHTML = '';
+  }
+}
+
+async function submitPatronMap() {
+  const p = state.currentProject;
+  const source = (document.getElementById('pm-add-source')?.value || '').trim();
+  if (!source) { toast('Source column is required', 'error'); return; }
+  const targetHeader = document.getElementById('pm-add-header')?.value || null;
+  const rawTransform = document.getElementById('pm-add-transform')?.value || 'copy';
+  let { transform_type, transform_config } = _decodeTransform(rawTransform);
+  // Pick up config from the extra fields if present
+  if (transform_type === 'regex') {
+    transform_config = {
+      pattern: document.getElementById('pm-add-cfg-pattern')?.value || '',
+      replacement: document.getElementById('pm-add-cfg-replacement')?.value || '',
+    };
+  } else if (transform_type === 'const') {
+    transform_config = { value: document.getElementById('pm-add-cfg-value')?.value || '' };
+  }
+  const isControlled = document.getElementById('pm-add-ctrl')?.checked || false;
+  try {
+    await window.api('POST', `/projects/${p.id}/patrons/maps`, {
+      source_column: source,
+      target_header: targetHeader || null,
+      ignored: !targetHeader,
+      transform_type,
+      transform_config,
+      is_controlled_list: isControlled,
+    });
+    closeModal();
+    toast('Mapping added', 'success');
+    renderPatronMapping();
+  } catch(e) {
+    toast(e.message || 'Failed to add mapping', 'error');
+  }
+}
+
+async function runPatronAISuggest() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/maps/ai-suggest`);
+    if (!r) return;
+    toast('AI mapping started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'patron-ai-status', 'Patron AI Map', 'patron-ai', () => renderPatronMapping());
+  } catch(e) { console.error(e); }
+}
+
+async function patronApproveAll() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/maps/approve-all`, { min_confidence: 0.85 });
+    if (r) toast(`Approved ${r.approved_count} maps`, 'success');
+    renderPatronMapping();
+  } catch(e) { console.error(e); }
+}
+
+async function approvePatronMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/patrons/maps/${mapId}/approve`);
+    renderPatronMapping();
+  } catch(e) { console.error(e); }
+}
+
+async function deletePatronMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/patrons/maps/${mapId}`);
+    renderPatronMapping();
+  } catch(e) { console.error(e); }
+}
+
+// ── Tab 3: Value Reconciliation ──────────────────────────────────
+async function renderPatronValues() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('patron-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  const categories = ['categorycode', 'branchcode', 'title', 'lost'];
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <button class="btn btn-primary" onclick="runPatronScan()">Scan Controlled Values</button>
+      <div id="patron-scan-status" style="margin-left:8px"></div>
+    </div>
+    <div id="patron-values-panels"></div>
+    <div style="margin-top:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Value Rules</span></div>
+        <div id="patron-rules-list"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+
+  // Load scan values per category
+  const panels = document.getElementById('patron-values-panels');
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+  for (const cat of categories) {
+    try {
+      const vals = await window.api('GET', `/projects/${p.id}/patrons/values?header=${cat}`);
+      html += `
+        <div class="card">
+          <div class="card-header"><span class="card-title">${esc(cat)}</span><span class="badge badge-dim">${vals?.length || 0} values</span></div>
+          ${vals && vals.length ? `
+          <div style="max-height:250px;overflow:auto;border:1px solid var(--border);border-radius:4px;margin-top:8px">
+            <table class="data-table" style="font-size:11px;width:100%">
+              <thead><tr><th>Value</th><th style="text-align:right">Records</th></tr></thead>
+              <tbody>${vals.slice(0, 50).map(v => `<tr>
+                <td class="mono">${esc(v.source_value)}</td>
+                <td style="text-align:right">${v.record_count.toLocaleString()}</td>
+              </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          ${vals.length > 50 ? `<div class="text-dim" style="font-size:10px;margin-top:4px">Showing 50 of ${vals.length}</div>` : ''}
+          ` : '<div class="text-dim" style="font-size:12px;margin-top:8px">No values scanned. Click Scan above.</div>'}
+        </div>`;
+    } catch(e) {
+      html += `<div class="card"><div class="card-header"><span class="card-title">${esc(cat)}</span></div><div class="text-dim">Error loading</div></div>`;
+    }
+  }
+  html += '</div>';
+  panels.innerHTML = html;
+
+  // Load rules
+  try {
+    const rules = await window.api('GET', `/projects/${p.id}/patrons/rules`);
+    const rulesEl = document.getElementById('patron-rules-list');
+    if (!rules || !rules.length) {
+      rulesEl.innerHTML = '<div class="text-dim" style="font-size:12px">No value rules defined yet.</div>';
+    } else {
+      rulesEl.innerHTML = `
+        <table class="data-table" style="font-size:12px;width:100%">
+          <thead><tr><th>Header</th><th>Operation</th><th>Source</th><th>Target</th><th></th></tr></thead>
+          <tbody>${rules.map(r => `<tr>
+            <td class="mono">${esc(r.koha_header)}</td>
+            <td><span class="badge ${r.operation==='rename'?'badge-dim':r.operation==='delete'?'badge-red':'badge-amber'}">${esc(r.operation)}</span></td>
+            <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc((r.source_values||[]).join(', '))}</td>
+            <td class="mono">${esc(r.target_value || '—')}</td>
+            <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="deletePatronRule('${r.id}')">Del</button></td>
+          </tr>`).join('')}</tbody>
+        </table>`;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function runPatronScan() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/scan`);
+    if (!r) return;
+    toast('Patron scan started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'patron-scan-status', 'Patron Scan', 'patron-scan', () => renderPatronValues());
+  } catch(e) { console.error(e); }
+}
+
+async function deletePatronRule(ruleId) {
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/patrons/rules/${ruleId}`);
+    renderPatronValues();
+  } catch(e) { console.error(e); }
+}
+
+// ── Tab 4: Apply & Report ────────────────────────────────────────
+async function renderPatronApply() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('patron-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  // Check for validation issues
+  let validation = null;
+  try { validation = await window.api('GET', `/projects/${p.id}/patrons/validate`); } catch(e) {}
+
+  wrap.innerHTML = `
+    ${validation && validation.unmatched_values > 0 ? `
+    <div class="alert alert-warn" style="margin-bottom:16px">
+      ${validation.unmatched_values} unmatched value(s) across ${validation.total_values} total.
+      Unmatched values will pass through unchanged.
+    </div>` : ''}
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <button class="btn btn-primary" onclick="runPatronApply()">Apply Transformations</button>
+      <button class="btn btn-ghost" onclick="clearPatronData()">Clear Output</button>
+      <div id="patron-apply-status" style="margin-left:8px"></div>
+    </div>
+    <div id="patron-report"></div>
+    <div id="patron-output-files" style="margin-top:16px"></div>`;
+
+  // Load report if available
+  try {
+    const report = await window.api('GET', `/projects/${p.id}/patrons/report`);
+    const el = document.getElementById('patron-report');
+    if (report && report.state === 'SUCCESS' && report.result) {
+      const r = report.result;
+      el.innerHTML = `
+        <div class="card">
+          <div class="card-header"><span class="card-title">Apply Report</span></div>
+          <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;font-size:13px">
+            <div><span class="text-dim">Rows In:</span> <strong>${(r.rows_in||0).toLocaleString()}</strong></div>
+            <div><span class="text-dim">Rows Out:</span> <strong class="text-green">${(r.rows_out||0).toLocaleString()}</strong></div>
+            <div><span class="text-dim">Excluded:</span> <strong class="text-red">${(r.rows_excluded||0).toLocaleString()}</strong></div>
+            <div><span class="text-dim">Rules Applied:</span> <strong>${(r.rules_applied||0).toLocaleString()}</strong></div>
+          </div>
+        </div>`;
+    }
+  } catch(e) {}
+
+  // Load output files
+  try {
+    const files = await window.api('GET', `/projects/${p.id}/patrons/output-files`);
+    const el = document.getElementById('patron-output-files');
+    if (files && files.files && files.files.length) {
+      el.innerHTML = `
+        <div class="card">
+          <div class="card-header"><span class="card-title">Output Files</span></div>
+          <table class="data-table" style="font-size:12px;width:100%">
+            <thead><tr><th>File</th><th>Type</th><th>Rows/Values</th><th></th></tr></thead>
+            <tbody>${files.files.map(f => `<tr>
+              <td class="mono">${esc(f.filename)}</td>
+              <td><span class="badge badge-dim">${esc(f.type)}</span>${f.category ? ` <span class="badge badge-purple">${esc(f.category)}</span>` : ''}</td>
+              <td class="mono">${(f.row_count || f.value_count || 0).toLocaleString()}</td>
+              <td style="text-align:right">
+                <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="previewPatronFile('${esc(f.filename)}')">Preview</button>
+                <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/patrons/output-files/${encodeURIComponent(f.filename)}/download" download="${esc(f.filename)}">Download</a>
+              </td>
+            </tr>`).join('')}</tbody>
+          </table>
+          <div id="patron-file-preview" style="margin-top:12px"></div>
+        </div>`;
+    }
+  } catch(e) {}
+}
+
+async function runPatronApply() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/apply`);
+    if (!r) return;
+    toast('Patron apply started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'patron-apply-status', 'Patron Apply', 'patron-apply', async () => {
+      await refreshProject();
+      renderPatronApply();
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function clearPatronData() {
+  if (!confirm('Clear scan results and output files? Maps and rules will be preserved.')) return;
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/patrons/clear`);
+    toast('Patron output cleared', 'info');
+    await refreshProject();
+    renderPatronApply();
+  } catch(e) { console.error(e); }
+}
+
+async function previewPatronFile(filename) {
+  const p = state.currentProject;
+  const el = document.getElementById('patron-file-preview');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/patrons/output-files/${encodeURIComponent(filename)}`);
+    if (!r || !r.rows || !r.rows.length) { el.innerHTML = '<span class="text-dim">No data.</span>'; return; }
+    const cols = Object.keys(r.rows[0]);
+    el.innerHTML = `
+      <div style="margin-bottom:6px;font-size:11px"><span class="mono">${esc(filename)}</span> — ${r.rows.length} rows</div>
+      <div style="max-height:350px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+          <tbody>${r.rows.slice(0, 100).map(row => `<tr>${cols.map(c => `<td class="mono">${esc(row[c]||'')}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  } catch(e) { el.innerHTML = '<span class="text-dim">Failed to load preview.</span>'; }
+}
+
+async function refreshProject() {
+  const p = state.currentProject;
+  if (!p) return;
+  try {
+    const updated = await window.api('GET', `/projects/${p.id}`);
+    if (updated) {
+      state.currentProject = updated;
+      updateStageBadges(updated);
+    }
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 7 — Push to Koha
+// ══════════════════════════════════════════════════════════════════
+window.renderStage7 = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 7 — Push to Koha</div>
+        <div class="page-subtitle">${p.library_name}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchS7Tab('bibs', this)">Bibs</button>
+      <button class="tab-btn" onclick="switchS7Tab('patrons', this)">Patrons</button>
+      <button class="tab-btn" onclick="switchS7Tab('holds', this)">Holds</button>
+      <button class="tab-btn" onclick="switchS7Tab('reindex', this)">ES Reindex</button>
+      <button class="tab-btn" onclick="switchS7Tab('manifests', this)">Manifests</button>
+    </div>
+    <div id="s7-tab"></div>`;
+  renderS7Bibs();
+};
+
+function switchS7Tab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  ({ bibs: renderS7Bibs, patrons: renderS7Patrons, holds: renderS7Holds, reindex: renderS7Reindex, manifests: renderS7Manifests })[tab]();
+}
+
+async function renderS7Bibs() {
+  const p = state.currentProject;
+  document.getElementById('s7-tab').innerHTML = `
     <div class="alert alert-warn">
       Preflight first — confirms Koha is reachable and detects version/search engine.
     </div>
@@ -3575,20 +5279,20 @@ async function renderS5Bibs() {
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-header"><span class="card-title">Push-Ready Files</span></div>
-      <div id="s5-files"><div class="spinner"></div></div>
+      <div id="s7-files"><div class="spinner"></div></div>
     </div>
-    <div class="card" style="margin-top:16px;display:none" id="s5-preview-card">
+    <div class="card" style="margin-top:16px;display:none" id="s7-preview-card">
       <div class="card-header">
         <span class="card-title">Record Preview</span>
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-sm" onclick="s5PreviewNav(-1)">← Prev</button>
-          <span id="s5-preview-index" class="mono" style="font-size:12px">—</span>
-          <button class="btn btn-sm" onclick="s5PreviewNav(1)">Next →</button>
+          <button class="btn btn-sm" onclick="s7PreviewNav(-1)">← Prev</button>
+          <span id="s7-preview-index" class="mono" style="font-size:12px">—</span>
+          <button class="btn btn-sm" onclick="s7PreviewNav(1)">Next →</button>
         </div>
       </div>
-      <div id="s5-preview" style="margin-top:8px"></div>
+      <div id="s7-preview" style="margin-top:8px"></div>
     </div>`;
-  s5LoadFiles();
+  s7LoadFiles();
 }
 
 function _fmtBytes(b) {
@@ -3598,9 +5302,9 @@ function _fmtBytes(b) {
   return (b / 1048576).toFixed(1) + ' MB';
 }
 
-async function s5LoadFiles() {
+async function s7LoadFiles() {
   const p = state.currentProject;
-  const el = document.getElementById('s5-files');
+  const el = document.getElementById('s7-files');
   if (!el) return;
   try {
     const r = await window.api('GET', `/projects/${p.id}/push/files`);
@@ -3608,60 +5312,80 @@ async function s5LoadFiles() {
       el.innerHTML = '<span class="text-dim" style="font-size:12px">No push-ready files found. Complete Transform/Merge first.</span>';
       return;
     }
-    const sourceLabels = { dedup: 'Deduped', merge: 'Merged', transform: 'Transformed' };
-    el.innerHTML = `<table class="data-table" style="font-size:12px;width:100%">
-      <thead><tr><th>File</th><th>Source</th><th>Records</th><th>Size</th><th></th></tr></thead>
-      <tbody>${r.files.map(f => `<tr>
-        <td class="mono">${esc(f.filename)}</td>
-        <td><span class="badge badge-dim">${sourceLabels[f.source] || f.source}</span></td>
-        <td>${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
-        <td>${_fmtBytes(f.size)}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s5PreviewFile('${esc(f.filename)}', ${f.record_count || 0})">Preview</button>
-          <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
-        </td>
-      </tr>`).join('')}</tbody></table>`;
+    const marcFiles = r.files.filter(f => f.type === 'marc');
+    const cvFiles = r.files.filter(f => f.type === 'controlled_values');
+
+    let html = '';
+    if (marcFiles.length) {
+      html += `<div style="margin-bottom:6px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">MARC File</div>
+        <table class="data-table" style="font-size:12px;width:100%;margin-bottom:16px">
+          <thead><tr><th>File</th><th>Source</th><th>Size</th><th></th></tr></thead>
+          <tbody>${marcFiles.map(f => `<tr>
+            <td class="mono">${esc(f.filename)}</td>
+            <td><span class="badge badge-dim">${esc(f.source)}</span></td>
+            <td>${_fmtBytes(f.size)}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7PreviewFile('${esc(f.filename)}', ${f.record_count || 0})">Preview</button>
+              <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
+            </td>
+          </tr>`).join('')}</tbody></table>`;
+    }
+    if (cvFiles.length) {
+      html += `<div style="margin-bottom:6px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Controlled Value Lists</div>
+        <table class="data-table" style="font-size:12px;width:100%">
+          <thead><tr><th>File</th><th>Category</th><th>Size</th><th></th></tr></thead>
+          <tbody>${cvFiles.map(f => `<tr>
+            <td class="mono">${esc(f.filename)}</td>
+            <td><span class="badge badge-dim">${esc(f.source)}</span></td>
+            <td>${_fmtBytes(f.size)}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7PreviewCSV('${esc(f.filename)}', '${esc(f.source)}')">Preview</button>
+              <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
+            </td>
+          </tr>`).join('')}</tbody></table>`;
+    }
+    el.innerHTML = html;
   } catch (e) {
     el.innerHTML = '<span class="text-dim" style="font-size:12px">Failed to load files.</span>';
     console.error(e);
   }
 }
 
-window._s5PreviewFile = null;
-window._s5PreviewIdx = 0;
-window._s5PreviewTotal = 0;
+window._s7PreviewFile = null;
+window._s7PreviewIdx = 0;
+window._s7PreviewTotal = 0;
 
-function s5PreviewFile(filename, totalRecords) {
-  window._s5PreviewFile = filename;
-  window._s5PreviewIdx = 0;
-  window._s5PreviewTotal = totalRecords;
-  const card = document.getElementById('s5-preview-card');
+function s7PreviewFile(filename, totalRecords) {
+  window._s7PreviewFile = filename;
+  window._s7PreviewIdx = 0;
+  window._s7PreviewTotal = totalRecords;
+  const card = document.getElementById('s7-preview-card');
   if (card) card.style.display = '';
-  s5LoadPreview(0);
+  s7LoadPreview(0);
 }
 
-function s5PreviewNav(dir) {
-  const next = window._s5PreviewIdx + dir;
-  if (next < 0 || next >= window._s5PreviewTotal) return;
-  window._s5PreviewIdx = next;
-  s5LoadPreview(next);
+function s7PreviewNav(dir) {
+  const next = window._s7PreviewIdx + dir;
+  if (next < 0 || next >= window._s7PreviewTotal) return;
+  window._s7PreviewIdx = next;
+  s7LoadPreview(next);
 }
 
-async function s5LoadPreview(idx) {
+async function s7LoadPreview(idx) {
   const p = state.currentProject;
-  const el = document.getElementById('s5-preview');
-  const idxEl = document.getElementById('s5-preview-index');
+  const el = document.getElementById('s7-preview');
+  const idxEl = document.getElementById('s7-preview-index');
   if (!el) return;
   el.innerHTML = '<div class="spinner"></div>';
   try {
-    const r = await window.api('GET', `/projects/${p.id}/push/files/preview?filename=${encodeURIComponent(window._s5PreviewFile)}&record_index=${idx}`);
+    const r = await window.api('GET', `/projects/${p.id}/push/files/preview?filename=${encodeURIComponent(window._s7PreviewFile)}&record_index=${idx}`);
     if (!r || !r.record) { el.innerHTML = '<span class="text-dim">Could not load record.</span>'; return; }
-    window._s5PreviewTotal = r.total_records;
+    window._s7PreviewTotal = r.total_records;
     if (idxEl) idxEl.textContent = `${idx + 1} / ${r.total_records}`;
     const rec = r.record;
     el.innerHTML = `
       <div style="margin-bottom:6px;font-size:12px;color:var(--text-secondary)">
-        <span class="mono">${esc(window._s5PreviewFile)}</span> — Title: <strong>${esc(rec.title || '—')}</strong>
+        <span class="mono">${esc(window._s7PreviewFile)}</span> — Title: <strong>${esc(rec.title || '—')}</strong>
       </div>
       <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:450px;overflow:auto;font-size:12px;font-family:var(--mono)">
         ${rec.fields.map(f => {
@@ -3675,7 +5399,43 @@ async function s5LoadPreview(idx) {
   } catch (e) {
     el.innerHTML = '<span class="text-dim">Preview not available.</span>';
   }
-  const card = document.getElementById('s5-preview-card');
+  const card = document.getElementById('s7-preview-card');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function s7PreviewCSV(filename, category) {
+  const p = state.currentProject;
+  const card = document.getElementById('s7-preview-card');
+  const el = document.getElementById('s7-preview');
+  const idxEl = document.getElementById('s7-preview-index');
+  if (card) card.style.display = '';
+  if (idxEl) idxEl.textContent = category;
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/reconcile/files/${filename}`);
+    if (!r || !r.rows || !r.rows.length) {
+      el.innerHTML = '<span class="text-dim">No data in file.</span>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="margin-bottom:8px;font-size:12px">
+        <span class="badge badge-dim">${esc(category)}</span>
+        <span class="text-dim" style="margin-left:8px">${r.rows.length} values</span>
+      </div>
+      <div style="max-height:450px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" style="font-size:12px;width:100%">
+          <thead><tr><th>Code</th><th>Description</th><th style="text-align:right">Records</th></tr></thead>
+          <tbody>${r.rows.map(row => `<tr>
+            <td class="mono">${esc(row.value)}</td>
+            <td>${esc(row.description || '')}</td>
+            <td style="text-align:right">${row.record_count.toLocaleString()}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim">Failed to load preview.</span>';
+  }
   if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -3709,9 +5469,9 @@ async function runPushBibs() {
   } catch (e) { console.error(e); }
 }
 
-function renderS5Patrons() {
+function renderS7Patrons() {
   const p = state.currentProject;
-  document.getElementById('s5-tab').innerHTML = `
+  document.getElementById('s7-tab').innerHTML = `
     <div class="card" style="max-width:520px">
       <div class="card-header"><span class="card-title">Patron Import</span></div>
       <div class="alert alert-info">Place patrons.csv at /data/projects/${esc(p.id)}/patrons.csv<br>
@@ -3744,9 +5504,9 @@ async function runPushPatrons() {
   } catch (e) { console.error(e); }
 }
 
-function renderS5Holds() {
+function renderS7Holds() {
   const p = state.currentProject;
-  document.getElementById('s5-tab').innerHTML = `
+  document.getElementById('s7-tab').innerHTML = `
     <div class="card" style="max-width:520px">
       <div class="card-header"><span class="card-title">Holds Import</span></div>
       <div class="alert alert-info">Place holds.csv at /data/projects/${esc(p.id)}/holds.csv<br>
@@ -3779,11 +5539,11 @@ async function runPushHolds() {
   } catch (e) { console.error(e); }
 }
 
-function renderS5Reindex() {
-  document.getElementById('s5-tab').innerHTML = `
+function renderS7Reindex() {
+  document.getElementById('s7-tab').innerHTML = `
     <div class="card" style="max-width:480px">
       <div class="card-header"><span class="card-title">ES Reindex</span></div>
-      <div class="alert alert-warn">Run this AFTER all bibs are imported. Marks Stage 5 as complete.</div>
+      <div class="alert alert-warn">Run this AFTER all bibs are imported. Marks Stage 7 as complete.</div>
       <button class="btn btn-primary" onclick="runReindex()">▶ Rebuild Index</button>
       <div id="reindex-status" style="margin-top:12px"></div>
     </div>`;
@@ -3808,9 +5568,9 @@ async function runReindex() {
   } catch (e) { console.error(e); }
 }
 
-async function renderS5Manifests() {
+async function renderS7Manifests() {
   const p = state.currentProject;
-  const wrap = document.getElementById('s5-tab');
+  const wrap = document.getElementById('s7-tab');
   wrap.innerHTML = `<div class="spinner"></div>`;
   try {
     const manifests = await window.api('GET', `/projects/${p.id}/push/manifests`);
@@ -3837,14 +5597,14 @@ async function renderS5Manifests() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 6 — KTD Sandbox
+// Stage 8 — KTD Sandbox
 // ══════════════════════════════════════════════════════════════════
-window.renderStage6 = async function(el) {
+window.renderStage8 = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 6 — KTD Sandbox</div>
+        <div class="page-title">Stage 8 — KTD Sandbox</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
@@ -4048,6 +5808,8 @@ function _parseProgress(r, label) {
       if (prog.current_file) detail += ` · ${prog.current_file}`;
     } else if (prog.records_scanned != null) {
       detail = `${prog.records_scanned.toLocaleString()} scanned`;
+    } else if (prog.records_processed != null) {
+      detail = `${prog.records_processed.toLocaleString()} processed`;
     } else if (prog.records_written != null) {
       detail = `${prog.records_written.toLocaleString()} written`;
     } else if (prog.step) {
@@ -4074,10 +5836,15 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
   };
 
   const statusEndpoints = {
-    transform: `/projects/${projectId}/transform/status?task_id=${taskId}`,
-    dedup:     `/projects/${projectId}/dedup/status?task_id=${taskId}`,
-    push:      `/projects/${projectId}/push/status?task_id=${taskId}`,
-    sandbox:   `/projects/${projectId}/sandbox/status`,
+    transform:       `/projects/${projectId}/transform/status?task_id=${taskId}`,
+    dedup:           `/projects/${projectId}/dedup/status?task_id=${taskId}`,
+    'reconcile-scan':  `/projects/${projectId}/reconcile/scan/status`,
+    'reconcile-apply': `/projects/${projectId}/reconcile/apply/status`,
+    'patron-scan':   `/projects/${projectId}/patrons/scan/status`,
+    'patron-apply':  `/projects/${projectId}/patrons/apply/status`,
+    'patron-ai':     `/projects/${projectId}/patrons/maps/ai-suggest/status`,
+    push:            `/projects/${projectId}/push/status?task_id=${taskId}`,
+    sandbox:         `/projects/${projectId}/sandbox/status`,
   };
   const statusUrl = statusEndpoints[stageType] || statusEndpoints.transform;
 
@@ -4123,7 +5890,7 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Override navigate — add stage6 + sandbox breadcrumb
+// Override navigate — add stage7 + sandbox breadcrumb
 // ══════════════════════════════════════════════════════════════════
 window.navigate = function(view, params = {}) {
   state.currentView = view;
@@ -4147,6 +5914,8 @@ window.navigate = function(view, params = {}) {
     stage4:        window.renderStage4,
     stage5:        window.renderStage5,
     stage6:        window.renderStage6,
+    stage7:        window.renderStage7,
+    stage8:        window.renderStage8,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,

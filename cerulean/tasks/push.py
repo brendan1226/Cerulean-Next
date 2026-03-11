@@ -1,14 +1,14 @@
 """
 cerulean/tasks/push.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 5 Celery tasks: Push to Koha.
+Stage 7 Celery tasks: Push to Koha.
 
     push_preflight_task  — verify Koha connectivity and version
     push_bulkmarc_task   — POST MARC records to Koha REST API
     push_patrons_task    — POST patron records from CSV
     push_holds_task      — POST holds from CSV
     push_circ_task       — validate circ history CSV (manual SQL import)
-    es_reindex_task      — log reindex command, mark stage 5 complete
+    es_reindex_task      — log reindex command, mark stage 7 complete
 
 All tasks write AuditEvent rows via AuditLogger.
 """
@@ -43,9 +43,12 @@ _PROGRESS_INTERVAL = 500
 def _find_marc_paths(project_id: str) -> list[Path]:
     """Find best available MARC output files in priority order.
 
-    Priority: merged_deduped.mrc > merged.mrc > transformed/*.mrc
+    Priority: Biblios-mapped-items.mrc > merged_deduped.mrc > merged.mrc > transformed/*.mrc
     """
     project_dir = Path(settings.data_root) / project_id
+    reconciled = project_dir / "Biblios-mapped-items.mrc"
+    if reconciled.is_file():
+        return [reconciled]
     deduped = project_dir / "merged_deduped.mrc"
     if deduped.is_file():
         return [deduped]
@@ -62,7 +65,10 @@ def _find_marc_paths(project_id: str) -> list[Path]:
 
 def _decrypt_token(encrypted: str) -> str:
     """Decrypt a Fernet-encrypted Koha API token."""
-    f = Fernet(settings.fernet_key.encode())
+    key = settings.fernet_key.strip() if settings.fernet_key else ""
+    if not key or key.startswith("#"):
+        return encrypted  # dev fallback — stored unencrypted
+    f = Fernet(key.encode())
     return f.decrypt(encrypted.encode()).decode()
 
 
@@ -122,7 +128,7 @@ def push_preflight_task(self, project_id: str, manifest_id: str) -> dict:
     """
     from cerulean.models import Project
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[preflight]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[preflight]")
     log.info("Preflight check starting")
 
     try:
@@ -197,7 +203,7 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
     """
     from cerulean.models import Project
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[push-bibs]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-bibs]")
     log.info(f"Bulk MARC push starting (dry_run={dry_run})")
 
     try:
@@ -319,13 +325,16 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
     """
     from cerulean.models import Project
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[push-patrons]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-patrons]")
     log.info(f"Patrons push starting (dry_run={dry_run})")
 
     try:
-        csv_path = Path(settings.data_root) / project_id / "patrons.csv"
+        # Prefer Stage 6 output, fall back to legacy patrons.csv
+        csv_path = Path(settings.data_root) / project_id / "patrons" / "patrons_transformed.csv"
         if not csv_path.is_file():
-            error_msg = "patrons.csv not found"
+            csv_path = Path(settings.data_root) / project_id / "patrons.csv"
+        if not csv_path.is_file():
+            error_msg = "patrons_transformed.csv or patrons.csv not found"
             log.error(error_msg)
             with Session(_engine) as db:
                 _update_push_manifest(db, manifest_id,
@@ -458,7 +467,7 @@ def push_holds_task(self, project_id: str, manifest_id: str, dry_run: bool = Tru
     """
     from cerulean.models import Project
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[push-holds]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-holds]")
     log.info(f"Holds push starting (dry_run={dry_run})")
 
     try:
@@ -585,7 +594,7 @@ def push_circ_task(self, project_id: str, manifest_id: str, dry_run: bool = True
     Returns:
         dict with records_total, records_success, records_failed.
     """
-    log = AuditLogger(project_id=project_id, stage=5, tag="[push-circ]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-circ]")
     log.info(f"Circ history push starting (dry_run={dry_run})")
 
     try:
@@ -660,7 +669,7 @@ def push_circ_task(self, project_id: str, manifest_id: str, dry_run: bool = True
     queue="push",
 )
 def es_reindex_task(self, project_id: str, manifest_id: str) -> dict:
-    """Log appropriate reindex command and mark Stage 5 complete.
+    """Log appropriate reindex command and mark Stage 7 complete.
 
     Args:
         project_id: UUID of the project.
@@ -671,7 +680,7 @@ def es_reindex_task(self, project_id: str, manifest_id: str) -> dict:
     """
     from cerulean.models import Project
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[reindex]")
+    log = AuditLogger(project_id=project_id, stage=7, tag="[reindex]")
     log.info("Reindex task starting")
 
     try:
@@ -689,15 +698,15 @@ def es_reindex_task(self, project_id: str, manifest_id: str) -> dict:
         with Session(_engine) as db:
             project = db.get(Project, project_id)
             if project:
-                project.stage_5_complete = True
-                project.current_stage = 6
+                project.stage_7_complete = True
+                project.current_stage = 8
 
             _update_push_manifest(db, manifest_id,
                                   status="complete",
                                   result_data={"search_engine": search_engine, "reindex_command": reindex_cmd},
                                   completed_at=datetime.utcnow())
 
-        log.complete(f"Reindex task complete — Stage 5 done, advancing to Stage 6")
+        log.complete(f"Reindex task complete — Stage 7 done, advancing to Stage 8")
         return {
             "search_engine": search_engine,
             "reindex_command": reindex_cmd,

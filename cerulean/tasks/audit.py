@@ -38,7 +38,7 @@ class AuditLogger:
 
     Args:
         project_id: UUID string of the project being worked on.
-        stage: Pipeline stage number (1–6). None for cross-project events.
+        stage: Pipeline stage number (1–8). None for cross-project events.
         tag: Short label shown in the log UI, e.g. "[push]", "[ai-map]".
     """
 
