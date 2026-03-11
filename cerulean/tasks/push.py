@@ -420,22 +420,78 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                                       completed_at=datetime.utcnow())
             return {"error": error_msg}
 
-        # CSV column → Koha patron field mapping
+        # CSV column (Koha DB name) → Koha REST API field name
+        # Full mapping from Koha::Patron->to_api_mapping()
         _PATRON_FIELD_MAP = {
-            "cardnumber": "cardnumber",
+            # Required
             "surname": "surname",
-            "firstname": "firstname",
             "branchcode": "library_id",
             "categorycode": "category_id",
-            "email": "email",
-            "phone": "phone",
+            # Identity
+            "cardnumber": "cardnumber",
+            "firstname": "firstname",
+            "title": "title",
+            "othernames": "other_name",
+            "initials": "initials",
+            "sex": "gender",
+            "userid": "userid",
+            "dateofbirth": "date_of_birth",
+            # Primary address
+            "streetnumber": "street_number",
+            "streettype": "street_type",
             "address": "address",
+            "address2": "address2",
             "city": "city",
             "state": "state",
             "zipcode": "postal_code",
-            "dateofbirth": "date_of_birth",
+            "country": "country",
+            # Primary contact
+            "email": "email",
+            "phone": "phone",
+            "mobile": "mobile",
+            "fax": "fax",
+            "emailpro": "secondary_email",
+            "phonepro": "secondary_phone",
+            # Alternate address
+            "B_streetnumber": "altaddress_street_number",
+            "B_streettype": "altaddress_street_type",
+            "B_address": "altaddress_address",
+            "B_address2": "altaddress_address2",
+            "B_city": "altaddress_city",
+            "B_state": "altaddress_state",
+            "B_zipcode": "altaddress_postal_code",
+            "B_country": "altaddress_country",
+            "B_email": "altaddress_email",
+            "B_phone": "altaddress_phone",
+            # Alternate contact
+            "altcontactfirstname": "altcontact_firstname",
+            "altcontactsurname": "altcontact_surname",
+            "altcontactaddress1": "altcontact_address",
+            "altcontactaddress2": "altcontact_address2",
+            "altcontactaddress3": "altcontact_city",
+            "altcontactstate": "altcontact_state",
+            "altcontactzipcode": "altcontact_postal_code",
+            "altcontactcountry": "altcontact_country",
+            "altcontactphone": "altcontact_phone",
+            # Dates
             "dateenrolled": "date_enrolled",
             "dateexpiry": "expiry_date",
+            # Status flags
+            "gonenoaddress": "incorrect_address",
+            "lost": "patron_card_lost",
+            # Notes
+            "borrowernotes": "staff_notes",
+            "opacnote": "opac_notes",
+            "relationship": "relationship_type",
+            # SMS
+            "smsalertnumber": "sms_number",
+            "sms_provider_id": "sms_provider_id",
+            # Statistics / sorting
+            "sort1": "statistics_1",
+            "sort2": "statistics_2",
+            # Preferences
+            "lang": "lang",
+            "checkprevcheckout": "check_previous_checkout",
         }
 
         total = 0
@@ -461,6 +517,8 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                         })
             else:
                 base_url, headers = _koha_client(project_id)
+                # Skip Koha's duplicate patron detection during migration
+                headers["x-confirm-not-duplicate"] = "1"
                 skipped = 0
                 with httpx.Client(timeout=30.0) as client:
                     for row in reader:
