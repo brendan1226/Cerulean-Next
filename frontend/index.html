@@ -4554,6 +4554,15 @@ const PATRON_CONTROLLED_HEADERS = ["categorycode","branchcode","title","lost"];
 
 const PATRON_TRANSFORMS = [
   {value:"copy", label:"copy"},
+  {value:"name_split|surname|auto", label:"name → surname (auto-detect)"},
+  {value:"name_split|firstname|auto", label:"name → firstname (auto-detect)"},
+  {value:"name_split|middlename|auto", label:"name → middlename (auto-detect)"},
+  {value:"name_split|surname|last_first", label:"name → surname (Last, First)"},
+  {value:"name_split|firstname|last_first", label:"name → firstname (Last, First)"},
+  {value:"name_split|surname|first_last", label:"name → surname (First Last)"},
+  {value:"name_split|firstname|first_last", label:"name → firstname (First Last)"},
+  {value:"gender_normalize", label:"gender: FEMALE/MALE → F/M"},
+  {value:"first_char", label:"first character only"},
   {value:"split|0| ", label:"split: first word"},
   {value:"split|-1| ", label:"split: last word"},
   {value:"split|0|,", label:"split: before comma"},
@@ -4571,12 +4580,19 @@ const PATRON_TRANSFORMS = [
 
 // Encode transform_type + config into a single select value, decode on save
 function _encodeTransform(type, config) {
+  if (type === 'name_split' && config) {
+    return `name_split|${config.part ?? 'surname'}|${config.format ?? 'auto'}`;
+  }
   if (type === 'split' && config) {
     return `split|${config.index ?? 0}|${config.delimiter ?? ' '}`;
   }
   return type || 'copy';
 }
 function _decodeTransform(val) {
+  if (val && val.startsWith('name_split|')) {
+    const parts = val.split('|');
+    return { transform_type: 'name_split', transform_config: { part: parts[1] || 'surname', format: parts[2] || 'auto' } };
+  }
   if (val && val.startsWith('split|')) {
     const parts = val.split('|');
     return { transform_type: 'split', transform_config: { index: parseInt(parts[1]) || 0, delimiter: parts[2] ?? ' ' } };
@@ -5368,7 +5384,7 @@ window.renderStage7 = async function(el) {
       <button class="tab-btn" onclick="switchS7Tab('bibs', this)">Bibs</button>
       <button class="tab-btn" onclick="switchS7Tab('patrons', this)">Patrons</button>
       <button class="tab-btn" onclick="switchS7Tab('holds', this)">Holds</button>
-      <button class="tab-btn" onclick="switchS7Tab('reindex', this)">ES Reindex</button>
+      <button class="tab-btn" onclick="switchS7Tab('reindex', this)">Reindex</button>
       <button class="tab-btn" onclick="switchS7Tab('manifests', this)">Manifests</button>
     </div>
     <div id="s7-tab"></div>`;
@@ -5434,7 +5450,7 @@ function s7RenderSetupGrid() {
 
   const categories = [
     { key: 'libraries', label: 'Libraries (branches)', kohaKey: 'libraries', kohaIdField: 'library_id', kohaNameField: 'name', canPush: true },
-    { key: 'patron_categories', label: 'Patron Categories', kohaKey: 'patron_categories', kohaIdField: 'patron_category_id', kohaNameField: 'name', canPush: false },
+    { key: 'patron_categories', label: 'Patron Categories', kohaKey: 'patron_categories', kohaIdField: 'patron_category_id', kohaNameField: 'name', canPush: true, pushType: 'patron_categories' },
     { key: 'item_types', label: 'Item Types', kohaKey: 'item_types', kohaIdField: 'item_type_id', kohaNameField: 'description', canPush: false },
     { key: 'locations', label: 'Locations (LOC)', kohaKey: null, avKey: 'LOC', canPush: false },
     { key: 'ccodes', label: 'Collection Codes (CCODE)', kohaKey: null, avKey: 'CCODE', canPush: false },
@@ -5491,9 +5507,11 @@ function s7RenderSetupGrid() {
 
     // Action buttons
     if (cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
+      const pushId = 's7-push-' + cat.key + '-status';
+      const pushFn = cat.pushType === 'patron_categories' ? 's7PushMissingPatronCategories' : 's7PushMissingLibraries';
       html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">'
-        + '<button class="btn btn-primary btn-sm" onclick="s7PushMissingLibraries()">Push ' + missingItems.length + ' Missing Libraries</button>'
-        + '<div id="s7-push-libs-status" style="margin-top:8px"></div></div>';
+        + '<button class="btn btn-primary btn-sm" onclick="' + pushFn + '()">Push ' + missingItems.length + ' Missing ' + esc(cat.label) + '</button>'
+        + '<div id="' + pushId + '" style="margin-top:8px"></div></div>';
     } else if (!cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
       html += '<div style="margin-top:8px;padding:8px;background:var(--surface-dim);border-radius:4px;font-size:11px;color:var(--text-secondary)">'
         + 'These must be created manually in Koha Staff UI &rarr; Administration &rarr; ' + esc(cat.label) + '</div>';
@@ -5512,7 +5530,7 @@ function s7RenderSetupGrid() {
 
 async function s7PushMissingLibraries() {
   const p = state.currentProject;
-  const statusEl = document.getElementById('s7-push-libs-status');
+  const statusEl = document.getElementById('s7-push-libraries-status');
   if (!_s7NeededRefs || !_s7KohaRefs) return;
 
   // Build set of existing
@@ -5534,6 +5552,39 @@ async function s7PushMissingLibraries() {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + r.success_count + ' created, ' + r.failed_count + ' failed.</span>';
     if (r.success_count > 0) {
       // Refresh Koha data
+      await s7FetchKohaRefs();
+    }
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + e.message + '</span>';
+  }
+}
+
+async function s7PushMissingPatronCategories() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-push-patron_categories-status');
+  if (!_s7NeededRefs || !_s7KohaRefs) return;
+
+  const existing = new Set();
+  (_s7KohaRefs.patron_categories || []).forEach(c => existing.add(c.patron_category_id || ''));
+
+  const missing = (_s7NeededRefs.patron_categories || [])
+    .filter(n => !existing.has(n.value))
+    .map(n => ({ category_id: n.value, name: n.value, enrolmentperiod: 99 }));
+
+  if (!missing.length) {
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All patron categories already exist.</span>';
+    return;
+  }
+
+  statusEl.innerHTML = '<div class="spinner"></div> Pushing ' + missing.length + ' patron categories…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/push/patron-categories', { categories: missing });
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + r.success_count + ' created, ' + r.failed_count + ' failed.</span>';
+    if (r.failed_count > 0) {
+      const errors = r.results.filter(x => !x.success).map(x => x.category_id + ': ' + x.error).join('<br>');
+      statusEl.innerHTML += '<div class="text-red" style="font-size:11px;margin-top:4px">' + errors + '</div>';
+    }
+    if (r.success_count > 0) {
       await s7FetchKohaRefs();
     }
   } catch (e) {
@@ -5887,15 +5938,38 @@ async function runPushHolds() {
 function renderS7Reindex() {
   document.getElementById('s7-tab').innerHTML = `
     <div class="card" style="max-width:480px">
-      <div class="card-header"><span class="card-title">ES Reindex</span></div>
+      <div class="card-header"><span class="card-title">Reindex</span></div>
       <div class="alert alert-warn">Run this AFTER all bibs are imported. Marks Stage 7 as complete.</div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Search Engine</label>
+        <select id="reindex-engine" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          <option value="elasticsearch">Elasticsearch</option>
+          <option value="zebra">Zebra</option>
+        </select>
+      </div>
+      <div id="reindex-cmd-preview" style="margin-bottom:12px;padding:8px;border-radius:4px;background:var(--bg-main);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)"></div>
       <button class="btn btn-primary" onclick="runReindex()">▶ Rebuild Index</button>
       <div id="reindex-status" style="margin-top:12px"></div>
     </div>`;
+  // Show command preview on load and on change
+  updateReindexPreview();
+  document.getElementById('reindex-engine').addEventListener('change', updateReindexPreview);
+}
+
+function updateReindexPreview() {
+  const engine = document.getElementById('reindex-engine').value;
+  const el = document.getElementById('reindex-cmd-preview');
+  if (!el) return;
+  if (engine === 'elasticsearch') {
+    el.textContent = 'koha-elasticsearch --rebuild -d -b -a kohadev';
+  } else {
+    el.textContent = 'koha-rebuild-zebra -f -b -a --run-as-root kohadev';
+  }
 }
 
 async function runReindex() {
   const p = state.currentProject;
+  const engine = document.getElementById('reindex-engine').value;
   try {
     const r = await window.api('POST', `/projects/${p.id}/push/start`, {
       dry_run: false,
@@ -5904,11 +5978,13 @@ async function runReindex() {
       push_holds: false,
       push_circ: false,
       reindex: true,
+      reindex_engine: engine,
     });
     if (!r) return;
     const taskId = r.task_ids?.reindex;
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
-    toast('ES reindex started', 'info');
+    const label = engine === 'elasticsearch' ? 'Elasticsearch' : 'Zebra';
+    toast(`${label} reindex started`, 'info');
     pollTaskStatus(p.id, taskId, 'reindex-status', 'reindex', 'push');
   } catch (e) { console.error(e); }
 }

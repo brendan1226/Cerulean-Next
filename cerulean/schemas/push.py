@@ -39,6 +39,7 @@ class PushStartRequest(BaseModel):
     push_holds: bool = False
     push_circ: bool = False
     reindex: bool = False
+    reindex_engine: str | None = None           # "elasticsearch" | "zebra" (auto-detect if None)
     bib_options: BibPushOptions | None = None   # None = use defaults (REST API)
 
 
@@ -120,3 +121,28 @@ class PushLibrariesResponse(BaseModel):
     success_count: int
     failed_count: int
     results: list[PushLibraryResult]
+
+
+# ── Patron Categories Push ───────────────────────────────────────────
+
+class PatronCategoryPushItem(BaseModel):
+    category_id: str
+    name: str
+    enrolmentperiod: int = 99          # months — default generous
+
+
+class PushPatronCategoriesRequest(BaseModel):
+    categories: list[PatronCategoryPushItem]
+
+
+class PushPatronCategoryResult(BaseModel):
+    category_id: str
+    success: bool
+    error: str | None = None
+
+
+class PushPatronCategoriesResponse(BaseModel):
+    total: int
+    success_count: int
+    failed_count: int
+    results: list[PushPatronCategoryResult]

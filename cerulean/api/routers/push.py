@@ -43,12 +43,16 @@ from cerulean.schemas.push import (
     LibraryPushItem,
     NeededRefDataResponse,
     NeededRefValue,
+    PatronCategoryPushItem,
     PreflightRequest,
     PreflightResponse,
     PushLibrariesRequest,
     PushLibrariesResponse,
     PushLibraryResult,
     PushManifestOut,
+    PushPatronCategoriesRequest,
+    PushPatronCategoriesResponse,
+    PushPatronCategoryResult,
     PushStartRequest,
     PushStartResponse,
     PushStatusResponse,
@@ -208,6 +212,8 @@ async def start_push(
             task_kwargs["dry_run"] = body.dry_run
         if task_type == "bulkmarc" and body.bib_options and body.bib_options.method == "bulkmarcimport":
             task_kwargs["bib_options"] = body.bib_options.model_dump()
+        if task_type == "reindex" and body.reindex_engine:
+            task_kwargs["reindex_engine"] = body.reindex_engine
 
         task = task_func.apply_async(
             args=[project_id, manifest.id],
@@ -500,6 +506,61 @@ async def push_libraries(
 
     return PushLibrariesResponse(
         total=len(body.libraries),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+@router.post("/{project_id}/push/patron-categories", response_model=PushPatronCategoriesResponse)
+async def push_patron_categories(
+    project_id: str,
+    body: PushPatronCategoriesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Push missing patron categories to Koha via POST /api/v1/patron_categories."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    base_url, headers = _koha_headers(project)
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for cat in body.categories:
+            try:
+                resp = await client.post(
+                    f"{base_url}/api/v1/patron_categories",
+                    json={
+                        "patron_category_id": cat.category_id,
+                        "name": cat.name,
+                        "enrolmentperiod": cat.enrolmentperiod,
+                    },
+                    headers=headers,
+                )
+                if resp.status_code < 300:
+                    success_count += 1
+                    results.append(PushPatronCategoryResult(category_id=cat.category_id, success=True))
+                else:
+                    failed_count += 1
+                    error_text = resp.text[:200]
+                    results.append(PushPatronCategoryResult(
+                        category_id=cat.category_id, success=False,
+                        error=f"HTTP {resp.status_code}: {error_text}",
+                    ))
+            except httpx.HTTPError as exc:
+                failed_count += 1
+                results.append(PushPatronCategoryResult(
+                    category_id=cat.category_id, success=False, error=str(exc),
+                ))
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[setup]",
+                    message=f"Pushed {success_count}/{len(body.categories)} patron categories to Koha")
+
+    return PushPatronCategoriesResponse(
+        total=len(body.categories),
         success_count=success_count,
         failed_count=failed_count,
         results=results,

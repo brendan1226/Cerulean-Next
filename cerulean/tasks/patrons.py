@@ -246,14 +246,24 @@ KOHA BORROWER HEADERS (most important):
 
 AVAILABLE TRANSFORMS:
 - copy: Direct copy (default)
+- name_split: Smart name splitter — auto-detects format and extracts the requested part.
+  Handles: "Last, First", "Last, First Middle", "First Last", "First Middle Last", single names.
+  Config: {"part": "surname"} or {"part": "firstname"} or {"part": "middlename"}.
+  Optional: {"format": "last_first"} or {"format": "first_last"} to force format (default: "auto").
+  IMPORTANT: When a source column contains a full name (like "name", "patron_name", "borrower_name",
+  "full_name", etc.), create TWO mappings from the same source column:
+    1. source → surname with transform_type="name_split", transform_config={"part": "surname"}
+    2. source → firstname with transform_type="name_split", transform_config={"part": "firstname"}
 - split: Split a field and take one part (provide delimiter and index in transform_config).
-  Example: full name "Smith, John" → surname with {delimiter:", ",index:0}, firstname with {delimiter:", ",index:1}.
+  Example: "Smith, John" → surname with {delimiter:", ",index:0}, firstname with {delimiter:", ",index:1}.
   Use index 0 for first part, 1 for second, -1 for last. A single source column can be mapped multiple times with different split configs.
 - date_mdy_to_iso: Convert MM/DD/YYYY to YYYY-MM-DD
 - date_dmy_to_iso: Convert DD/MM/YYYY to YYYY-MM-DD
 - date_ymd_to_iso: Normalise YYYY-MM-DD
 - date_marc_to_iso: Convert YYYYMMDD to YYYY-MM-DD
 - case_upper, case_lower, case_title: Case transforms
+- gender_normalize: Normalise gender/sex values (FEMALE→F, MALE→M, etc.). Use for any column mapped to sex.
+- first_char: Take first character only (uppercase). Useful for single-char Koha fields.
 - const: Constant value (provide in transform_config.value)
 - regex: Regex substitution (provide pattern/replacement in transform_config)
 
@@ -625,14 +635,13 @@ def patron_apply_task(self, project_id: str) -> dict:
         controlled_dir = project_dir / "controlled"
         controlled_dir.mkdir(parents=True, exist_ok=True)
 
-        # Determine output headers from mappings
-        output_headers = []
-        seen_headers = set()
+        # Use full Koha borrower headers — mapped columns get values, rest stay empty
+        output_headers = list(KOHA_BORROWER_HEADERS)
+        # Also include any mapped headers not in the standard list (future-proofing)
         for cm in column_maps:
             hdr = cm["target_header"]
-            if hdr and hdr not in seen_headers:
+            if hdr and hdr not in output_headers:
                 output_headers.append(hdr)
-                seen_headers.add(hdr)
 
         rows_in = 0
         rows_out = 0
@@ -646,7 +655,7 @@ def patron_apply_task(self, project_id: str) -> dict:
             reader = csv.DictReader(in_f)
 
             with open(str(output_path), "w", newline="", encoding="utf-8") as out_f:
-                writer = csv.DictWriter(out_f, fieldnames=output_headers)
+                writer = csv.DictWriter(out_f, fieldnames=output_headers, restval="", extrasaction="ignore")
                 writer.writeheader()
 
                 for row in reader:
@@ -1072,6 +1081,21 @@ def _apply_transform(value: str, transform_type: str, config: dict) -> str:
         except (IndexError, ValueError):
             return value
 
+    if transform_type == "name_split":
+        return _name_split(value, config)
+
+    if transform_type == "gender_normalize":
+        # FEMALE/MALE/F/M/female/male → F/M (single char, uppercase)
+        v = value.strip().upper()
+        if v.startswith("F"):
+            return "F"
+        if v.startswith("M"):
+            return "M"
+        return ""
+
+    if transform_type == "first_char":
+        return value.strip()[0].upper() if value.strip() else ""
+
     if transform_type == "regex":
         import re
         pattern = config.get("pattern", "")
@@ -1083,6 +1107,98 @@ def _apply_transform(value: str, transform_type: str, config: dict) -> str:
                 return value
 
     return value
+
+
+def _name_split(value: str, config: dict) -> str:
+    """Split a name field into surname/firstname components.
+
+    Handles common name formats:
+        "Last, First"           → surname="Last", firstname="First"
+        "Last, First Middle"    → surname="Last", firstname="First Middle"
+        "Last,First"            → surname="Last", firstname="First"
+        "First Last"            → surname="Last", firstname="First"
+        "First Middle Last"     → surname="Last", firstname="First Middle"
+        "Last"                  → surname="Last", firstname=""
+        "Last, First (Suffix)"  → surname="Last", firstname="First (Suffix)"
+        "prefix Last, First"    → surname="Last", firstname="First" (if prefix detected)
+
+    Config:
+        part: "surname" | "firstname" | "middlename"  — which part to return
+        format: "auto" | "last_first" | "first_last"   — hint if auto-detect fails
+    """
+    part = config.get("part", "surname")
+    fmt = config.get("format", "auto")
+
+    if not value or not value.strip():
+        return ""
+
+    value = value.strip()
+
+    # Determine format
+    if fmt == "auto":
+        fmt = _detect_name_format(value)
+
+    if fmt == "last_first":
+        # "Last, First Middle" or "Last,First"
+        if "," in value:
+            pieces = value.split(",", 1)
+            surname = pieces[0].strip()
+            rest = pieces[1].strip() if len(pieces) > 1 else ""
+        else:
+            # Single word, treat as surname
+            surname = value
+            rest = ""
+
+        if part == "surname":
+            return surname
+        elif part == "firstname":
+            # First name is the first word of rest
+            words = rest.split() if rest else []
+            return words[0] if words else ""
+        elif part == "middlename":
+            words = rest.split() if rest else []
+            return " ".join(words[1:]) if len(words) > 1 else ""
+
+    elif fmt == "first_last":
+        # "First Last" or "First Middle Last"
+        words = value.split()
+        if len(words) == 1:
+            # Single word — treat as surname
+            if part == "surname":
+                return words[0]
+            return ""
+        elif len(words) == 2:
+            if part == "surname":
+                return words[-1]
+            elif part == "firstname":
+                return words[0]
+            elif part == "middlename":
+                return ""
+        else:
+            # 3+ words: last word is surname, first is firstname, middle is the rest
+            if part == "surname":
+                return words[-1]
+            elif part == "firstname":
+                return words[0]
+            elif part == "middlename":
+                return " ".join(words[1:-1])
+
+    # Fallback: return whole value for surname, empty for others
+    if part == "surname":
+        return value
+    return ""
+
+
+def _detect_name_format(value: str) -> str:
+    """Auto-detect whether a name is 'Last, First' or 'First Last' format.
+
+    Heuristics:
+        - Contains comma → "last_first"
+        - Otherwise → "first_last"
+    """
+    if "," in value:
+        return "last_first"
+    return "first_last"
 
 
 def _convert_date(value: str, in_fmt: str, out_fmt: str) -> str:

@@ -763,6 +763,13 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
 
         with open(str(csv_path), "r", encoding="utf-8", errors="replace", newline="") as fh:
             reader = csv.DictReader(fh)
+            csv_headers = reader.fieldnames or []
+            log.info(f"CSV headers ({len(csv_headers)}): {csv_headers[:20]}")
+            mapped_headers = [h for h in csv_headers if h in _PATRON_FIELD_MAP]
+            unmapped_headers = [h for h in csv_headers if h not in _PATRON_FIELD_MAP]
+            log.info(f"Mapped to Koha fields: {mapped_headers}")
+            if unmapped_headers:
+                log.info(f"Unmapped CSV columns (ignored): {unmapped_headers}")
 
             if dry_run:
                 for row in reader:
@@ -779,6 +786,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                         })
             else:
                 base_url, headers = _koha_client(project_id)
+                log.info(f"Posting patrons to {base_url}/api/v1/patrons")
                 # Skip Koha's duplicate patron detection during migration
                 headers["x-confirm-not-duplicate"] = "1"
                 skipped = 0
@@ -806,6 +814,10 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                             )
                             if resp.status_code < 300:
                                 success += 1
+                                if success <= 3:
+                                    log.info(f"Patron {total} created: HTTP {resp.status_code} — {resp.text[:300]}")
+                                    if success == 1:
+                                        log.info(f"Patron {total} payload sent: {patron_data}")
                             else:
                                 failed += 1
                                 if failed <= 10:
@@ -1085,12 +1097,13 @@ def push_circ_task(self, project_id: str, manifest_id: str, dry_run: bool = True
     max_retries=0,
     queue="push",
 )
-def es_reindex_task(self, project_id: str, manifest_id: str) -> dict:
+def es_reindex_task(self, project_id: str, manifest_id: str, reindex_engine: str | None = None) -> dict:
     """Log appropriate reindex command and mark Stage 7 complete.
 
     Args:
         project_id: UUID of the project.
         manifest_id: UUID of the PushManifest row.
+        reindex_engine: "elasticsearch" or "zebra". Auto-detects from project if None.
 
     Returns:
         dict with search_engine and reindex_command.
@@ -1105,12 +1118,16 @@ def es_reindex_task(self, project_id: str, manifest_id: str) -> dict:
             project = db.get(Project, project_id)
             search_engine = project.search_engine if project else None
 
-        if search_engine == "es8" or search_engine == "elasticsearch":
+        # User-selected engine overrides auto-detection
+        if reindex_engine:
+            search_engine = reindex_engine
+
+        if search_engine in ("es8", "elasticsearch"):
             reindex_cmd = "koha-elasticsearch --rebuild -d -b -a kohadev"
-            log.info(f"Elasticsearch detected — run: {reindex_cmd}")
+            log.info(f"Elasticsearch — run: {reindex_cmd}")
         else:
             reindex_cmd = "koha-rebuild-zebra -f -b -a --run-as-root kohadev"
-            log.info(f"Zebra detected — run: {reindex_cmd}")
+            log.info(f"Zebra — run: {reindex_cmd}")
 
         with Session(_engine) as db:
             project = db.get(Project, project_id)
