@@ -16,6 +16,7 @@ All tasks write AuditEvent rows via AuditLogger.
 import base64
 import csv
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -372,6 +373,267 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
 
     except Exception as exc:
         log.error(f"Bulk MARC push failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc),
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BULKMARCIMPORT.PL PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _detect_container(project_id: str, bib_options: dict | None) -> str:
+    """Determine Docker container name for bulkmarcimport.
+
+    Priority: bib_options["container"] > SandboxInstance table > fallback.
+    """
+    if bib_options and bib_options.get("container"):
+        return bib_options["container"]
+
+    from cerulean.models import SandboxInstance
+
+    with Session(_engine) as db:
+        instance = db.query(SandboxInstance).filter_by(
+            project_id=project_id, status="running"
+        ).first()
+        if instance and instance.container_name:
+            return instance.container_name
+
+    # Fallback naming convention
+    return f"koha-kohadev-1"
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_bulkmarcimport_task",
+    max_retries=0,
+    queue="push",
+)
+def push_bulkmarcimport_task(
+    self, project_id: str, manifest_id: str,
+    dry_run: bool = True, bib_options: dict | None = None,
+) -> dict:
+    """Import MARC records via bulkmarcimport.pl inside a KTD Docker container.
+
+    Steps:
+        1. docker cp MARC file(s) into the container at /tmp/
+        2. Build bulkmarcimport.pl command with user flags
+        3. docker exec to run it
+        4. Parse stdout for record counts
+
+    Args:
+        project_id: UUID of the project.
+        manifest_id: UUID of the PushManifest row.
+        dry_run: If True, add -t (test mode) flag.
+        bib_options: Dict with match_field, insert, update, framework, container.
+
+    Returns:
+        dict with records_total, records_success, records_failed, command, output.
+    """
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-bibs-import]")
+    bib_options = bib_options or {}
+    log.info(f"bulkmarcimport.pl push starting (dry_run={dry_run}, options={bib_options})")
+
+    try:
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            error_msg = "No transformed or merged MARC files found"
+            log.error(error_msg)
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      status="error", error_message=error_msg,
+                                      completed_at=datetime.utcnow())
+            return {"error": error_msg}
+
+        container = _detect_container(project_id, bib_options)
+        log.info(f"Using container: {container}")
+        log.info(f"Importing from {len(marc_paths)} file(s): {[p.name for p in marc_paths]}")
+
+        self.update_state(state="PROGRESS", meta={
+            "step": "copying_files", "container": container,
+        })
+
+        # Verify container is running
+        try:
+            inspect = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", container],
+                capture_output=True, text=True, timeout=10,
+            )
+            if inspect.returncode != 0 or "true" not in inspect.stdout.lower():
+                error_msg = f"Container '{container}' is not running. stdout={inspect.stdout.strip()} stderr={inspect.stderr.strip()}"
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+        except subprocess.TimeoutExpired:
+            error_msg = f"Timeout checking container '{container}'"
+            log.error(error_msg)
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      status="error", error_message=error_msg,
+                                      completed_at=datetime.utcnow())
+            return {"error": error_msg}
+
+        all_output = []
+        total_records = 0
+        total_success = 0
+        total_failed = 0
+
+        for i, marc_path in enumerate(marc_paths):
+            filename = marc_path.name
+            container_path = f"/tmp/{filename}"
+
+            # docker cp the file into the container
+            cp_result = subprocess.run(
+                ["docker", "cp", str(marc_path), f"{container}:{container_path}"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if cp_result.returncode != 0:
+                error_msg = f"docker cp failed for {filename}: {cp_result.stderr.strip()}"
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+
+            log.info(f"Copied {filename} into container at {container_path}")
+
+            # Build bulkmarcimport.pl command
+            cmd_parts = ["bulkmarcimport.pl", "-file", container_path]
+
+            if dry_run:
+                cmd_parts.append("-t")  # test mode
+
+            match_field = bib_options.get("match_field")
+            if match_field:
+                cmd_parts.extend(["-match", match_field])
+
+            if bib_options.get("insert", True):
+                cmd_parts.append("--insert")
+
+            if bib_options.get("update", False):
+                cmd_parts.append("--update")
+
+            framework = bib_options.get("framework")
+            if framework:
+                cmd_parts.extend(["-framework", framework])
+
+            shell_cmd = " ".join(cmd_parts)
+            log.info(f"Running: {shell_cmd}")
+
+            self.update_state(state="PROGRESS", meta={
+                "step": "running_import",
+                "file": filename,
+                "file_index": i + 1,
+                "file_count": len(marc_paths),
+                "command": shell_cmd,
+            })
+
+            # Execute via koha-shell inside the container
+            exec_result = subprocess.run(
+                ["docker", "exec", container, "koha-shell", "-c", shell_cmd, "kohadev"],
+                capture_output=True, text=True, timeout=600,
+            )
+
+            stdout = exec_result.stdout
+            stderr = exec_result.stderr
+            all_output.append({
+                "file": filename,
+                "command": shell_cmd,
+                "returncode": exec_result.returncode,
+                "stdout": stdout[-5000:] if len(stdout) > 5000 else stdout,
+                "stderr": stderr[-2000:] if len(stderr) > 2000 else stderr,
+            })
+
+            if exec_result.returncode != 0:
+                log.warn(f"bulkmarcimport.pl returned code {exec_result.returncode} for {filename}")
+                log.warn(f"stderr: {stderr[:1000]}")
+
+            # Parse stdout for record counts
+            # bulkmarcimport.pl outputs lines like:
+            #   "X records added"
+            #   "X records updated"
+            #   "X records done"
+            import re
+            added = 0
+            updated = 0
+            done = 0
+            errors = 0
+            for line in stdout.splitlines():
+                m = re.search(r"(\d+)\s+records?\s+added", line, re.IGNORECASE)
+                if m:
+                    added = int(m.group(1))
+                m = re.search(r"(\d+)\s+records?\s+updated", line, re.IGNORECASE)
+                if m:
+                    updated = int(m.group(1))
+                m = re.search(r"(\d+)\s+records?\s+done", line, re.IGNORECASE)
+                if m:
+                    done = int(m.group(1))
+                m = re.search(r"(\d+)\s+records?\s+(not added|errors?|failed)", line, re.IGNORECASE)
+                if m:
+                    errors = int(m.group(1))
+
+            file_success = added + updated
+            file_total = done if done > 0 else (file_success + errors)
+            total_records += file_total
+            total_success += file_success
+            total_failed += errors
+
+            log.info(f"{filename}: {file_total} processed, {added} added, {updated} updated, {errors} errors")
+
+            # Clean up temp file in container
+            subprocess.run(
+                ["docker", "exec", container, "rm", "-f", container_path],
+                capture_output=True, text=True, timeout=10,
+            )
+
+        # Update manifest
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=total_records,
+                                  records_success=total_success,
+                                  records_failed=total_failed,
+                                  result_data={"outputs": all_output, "method": "bulkmarcimport"},
+                                  completed_at=datetime.utcnow())
+
+            if not dry_run:
+                project = db.get(Project, project_id)
+                if project:
+                    project.bib_count_pushed = total_success
+                    db.commit()
+
+        log.complete(
+            f"bulkmarcimport.pl complete — {total_records:,} records, "
+            f"{total_success:,} success, {total_failed:,} failed (dry_run={dry_run})"
+        )
+        return {
+            "records_total": total_records,
+            "records_success": total_success,
+            "records_failed": total_failed,
+            "dry_run": dry_run,
+            "method": "bulkmarcimport",
+            "outputs": all_output,
+        }
+
+    except subprocess.TimeoutExpired as exc:
+        error_msg = f"bulkmarcimport.pl timed out after 600s: {exc}"
+        log.error(error_msg)
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=error_msg,
+                                  completed_at=datetime.utcnow())
+        raise
+    except Exception as exc:
+        log.error(f"bulkmarcimport.pl push failed: {exc}")
         with Session(_engine) as db:
             _update_push_manifest(db, manifest_id,
                                   status="error", error_message=str(exc),

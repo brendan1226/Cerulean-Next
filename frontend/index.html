@@ -5556,9 +5556,42 @@ async function renderS7Bibs() {
       </div>
       <div class="card">
         <div class="card-header"><span class="card-title">Bib Import</span></div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Push Method</label>
+          <select id="bib-push-method" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)" onchange="toggleBibImportOptions()">
+            <option value="rest_api">REST API (POST /biblios)</option>
+            <option value="bulkmarcimport">bulkmarcimport.pl (Docker)</option>
+          </select>
+        </div>
+        <div id="bib-import-options" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Match Field</label>
+              <input type="text" id="bib-match-field" placeholder="e.g. 001, 020a" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Framework</label>
+              <input type="text" id="bib-framework" placeholder="e.g. FA, BKS" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            </div>
+          </div>
+          <div style="display:flex;gap:16px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="bib-insert" checked>
+              <label for="bib-insert" style="font-size:12px;color:var(--text-secondary)">Insert new</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="bib-update">
+              <label for="bib-update" style="font-size:12px;color:var(--text-secondary)">Update matched</label>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Container Name</label>
+            <input type="text" id="bib-container" placeholder="auto-detect" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
           <input type="checkbox" id="push-dry-run" checked>
-          <label for="push-dry-run" style="font-size:12px;color:var(--text-secondary)">Dry run (count only, no HTTP calls)</label>
+          <label for="push-dry-run" style="font-size:12px;color:var(--text-secondary)">Dry run (count only / test mode)</label>
         </div>
         <button class="btn btn-primary" onclick="runPushBibs()">▶ Push Bibs</button>
         <div id="bibs-status" style="margin-top:12px"></div>
@@ -5736,22 +5769,47 @@ async function runPreflight() {
   } catch (e) { console.error(e); }
 }
 
+function toggleBibImportOptions() {
+  const method = document.getElementById('bib-push-method').value;
+  const opts = document.getElementById('bib-import-options');
+  if (opts) opts.style.display = method === 'bulkmarcimport' ? 'block' : 'none';
+}
+
 async function runPushBibs() {
   const p = state.currentProject;
   const dryRun = document.getElementById('push-dry-run').checked;
+  const method = document.getElementById('bib-push-method').value;
+
+  const body = {
+    dry_run: dryRun,
+    push_bibs: true,
+    push_patrons: false,
+    push_holds: false,
+    push_circ: false,
+    reindex: false,
+  };
+
+  if (method === 'bulkmarcimport') {
+    const matchField = document.getElementById('bib-match-field').value.trim();
+    const framework = document.getElementById('bib-framework').value.trim();
+    const container = document.getElementById('bib-container').value.trim();
+    body.bib_options = {
+      method: 'bulkmarcimport',
+      match_field: matchField || null,
+      insert: document.getElementById('bib-insert').checked,
+      update: document.getElementById('bib-update').checked,
+      framework: framework || null,
+      container: container || null,
+    };
+  }
+
   try {
-    const r = await window.api('POST', `/projects/${p.id}/push/start`, {
-      dry_run: dryRun,
-      push_bibs: true,
-      push_patrons: false,
-      push_holds: false,
-      push_circ: false,
-      reindex: false,
-    });
+    const r = await window.api('POST', `/projects/${p.id}/push/start`, body);
     if (!r) return;
     const taskId = r.task_ids?.bulkmarc;
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
-    document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `Push ${dryRun ? '(dry run)' : ''} running…` });
+    const methodLabel = method === 'bulkmarcimport' ? 'bulkmarcimport.pl' : 'REST API';
+    document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `${methodLabel} push ${dryRun ? '(dry run)' : ''} running…` });
     pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
   } catch (e) { console.error(e); }
 }

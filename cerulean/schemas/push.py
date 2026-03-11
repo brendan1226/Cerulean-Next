@@ -23,6 +23,15 @@ class PreflightResponse(BaseModel):
 
 # ── Push start ───────────────────────────────────────────────────────────
 
+class BibPushOptions(BaseModel):
+    method: str = "rest_api"           # "rest_api" | "bulkmarcimport"
+    match_field: str | None = None     # e.g. "001", "020a", "999c"
+    insert: bool = True                # --insert: insert new records
+    update: bool = False               # --update: update matched records
+    framework: str | None = None       # --framework CODE
+    container: str | None = None       # Docker container name (auto-detect if None)
+
+
 class PushStartRequest(BaseModel):
     dry_run: bool = True
     push_bibs: bool = True
@@ -30,6 +39,7 @@ class PushStartRequest(BaseModel):
     push_holds: bool = False
     push_circ: bool = False
     reindex: bool = False
+    bib_options: BibPushOptions | None = None   # None = use defaults (REST API)
 
 
 class PushStartResponse(BaseModel):

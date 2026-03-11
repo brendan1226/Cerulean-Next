@@ -57,6 +57,7 @@ from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.push import (
     es_reindex_task,
     push_bulkmarc_task,
+    push_bulkmarcimport_task,
     push_circ_task,
     push_holds_task,
     push_patrons_task,
@@ -170,7 +171,11 @@ async def start_push(
     # Map of task_type → (task_func, needs_dry_run)
     tasks_to_dispatch: list[tuple[str, object, bool]] = []
     if body.push_bibs:
-        tasks_to_dispatch.append(("bulkmarc", push_bulkmarc_task, True))
+        bib_method = (body.bib_options.method if body.bib_options else "rest_api") or "rest_api"
+        if bib_method == "bulkmarcimport":
+            tasks_to_dispatch.append(("bulkmarc", push_bulkmarcimport_task, True))
+        else:
+            tasks_to_dispatch.append(("bulkmarc", push_bulkmarc_task, True))
     if body.push_patrons:
         tasks_to_dispatch.append(("patrons", push_patrons_task, True))
     if body.push_holds:
@@ -198,13 +203,15 @@ async def start_push(
         await db.flush()
         await db.refresh(manifest)
 
-        kwargs = {"project_id": project_id, "manifest_id": manifest.id}
+        task_kwargs = {}
         if needs_dry_run:
-            kwargs["dry_run"] = body.dry_run
+            task_kwargs["dry_run"] = body.dry_run
+        if task_type == "bulkmarc" and body.bib_options and body.bib_options.method == "bulkmarcimport":
+            task_kwargs["bib_options"] = body.bib_options.model_dump()
 
         task = task_func.apply_async(
             args=[project_id, manifest.id],
-            kwargs={"dry_run": body.dry_run} if needs_dry_run else {},
+            kwargs=task_kwargs if task_kwargs else {},
             queue="push",
         )
         manifest.celery_task_id = task.id
