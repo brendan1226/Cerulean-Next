@@ -135,6 +135,36 @@ async def start_push(
             "message": "No transformed or merged MARC files found. Complete Stage 3 first.",
         })
 
+    # Reject if any of the requested task types are already running
+    requested_types = []
+    if body.push_bibs:
+        requested_types.append("bulkmarc")
+    if body.push_patrons:
+        requested_types.append("patrons")
+    if body.push_holds:
+        requested_types.append("holds")
+    if body.push_circ:
+        requested_types.append("circ")
+    if body.reindex:
+        requested_types.append("reindex")
+
+    if requested_types:
+        already_running = (
+            await db.execute(
+                select(PushManifest).where(
+                    PushManifest.project_id == project_id,
+                    PushManifest.status == "running",
+                    PushManifest.task_type.in_(requested_types),
+                )
+            )
+        ).scalars().all()
+        if already_running:
+            running_types = [m.task_type for m in already_running]
+            raise HTTPException(409, detail={
+                "error": "TASK_ALREADY_RUNNING",
+                "message": f"Already running: {', '.join(running_types)}. Cancel or wait for completion.",
+            })
+
     task_ids: dict[str, str] = {}
 
     # Map of task_type → (task_func, needs_dry_run)

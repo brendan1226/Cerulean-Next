@@ -441,6 +441,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
         total = 0
         success = 0
         failed = 0
+        skipped = 0
 
         with open(str(csv_path), "r", encoding="utf-8", errors="replace", newline="") as fh:
             reader = csv.DictReader(fh)
@@ -460,6 +461,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                         })
             else:
                 base_url, headers = _koha_client(project_id)
+                skipped = 0
                 with httpx.Client(timeout=30.0) as client:
                     for row in reader:
                         total += 1
@@ -468,6 +470,13 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                             val = row.get(csv_col, "").strip()
                             if val:
                                 patron_data[koha_field] = val
+
+                        # Skip rows missing required Koha fields
+                        if not patron_data.get("surname") or not patron_data.get("library_id") or not patron_data.get("category_id"):
+                            skipped += 1
+                            if skipped <= 5:
+                                log.warn(f"Row {total} skipped — missing required field(s) (surname/library_id/category_id): {patron_data}")
+                            continue
 
                         try:
                             resp = client.post(
@@ -511,10 +520,13 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                     project.patron_count = success
                     db.commit()
 
-        log.complete(f"Patrons push complete — {total:,} total, {success:,} success, {failed:,} failed")
+        if skipped:
+            log.warn(f"Skipped {skipped} rows missing required fields")
+        log.complete(f"Patrons push complete — {total:,} total, {success:,} success, {failed:,} failed, {skipped} skipped")
         return {
             "records_total": total, "records_success": success,
-            "records_failed": failed, "dry_run": dry_run,
+            "records_failed": failed, "records_skipped": skipped,
+            "dry_run": dry_run,
         }
 
     except Exception as exc:
