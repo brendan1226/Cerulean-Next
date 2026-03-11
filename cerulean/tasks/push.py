@@ -480,7 +480,10 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                             else:
                                 failed += 1
                                 if failed <= 10:
-                                    log.warn(f"Patron {total} failed: HTTP {resp.status_code}")
+                                    resp_body = resp.text[:500]
+                                    log.warn(f"Patron {total} failed: HTTP {resp.status_code} — {resp_body}")
+                                    if failed == 1:
+                                        log.warn(f"Patron {total} payload: {patron_data}")
                         except httpx.HTTPError as exc:
                             failed += 1
                             if failed <= 10:
