@@ -80,9 +80,9 @@ async def pause_task(
     celery_task_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Set project-level pause flag in Redis."""
+    """Set per-task pause flag in Redis."""
     await require_project(project_id, db)
-    _redis.set(f"cerulean:pause:{project_id}", "1")
+    _redis.set(f"cerulean:pause:task:{celery_task_id}", "1")
     return {"status": "paused"}
 
 
@@ -92,9 +92,9 @@ async def resume_task(
     celery_task_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Clear project-level pause flag in Redis."""
+    """Clear per-task pause flag in Redis."""
     await require_project(project_id, db)
-    _redis.delete(f"cerulean:pause:{project_id}")
+    _redis.delete(f"cerulean:pause:task:{celery_task_id}")
     return {"status": "resumed"}
 
 
@@ -111,7 +111,7 @@ async def cancel_task(
     celery_app.control.revoke(celery_task_id, terminate=True, signal="SIGTERM")
 
     # Clear any pause flag
-    _redis.delete(f"cerulean:pause:{project_id}")
+    _redis.delete(f"cerulean:pause:task:{celery_task_id}")
 
     # Update TransformManifest if it matches
     tm = (

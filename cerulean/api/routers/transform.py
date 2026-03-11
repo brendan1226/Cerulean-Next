@@ -177,8 +177,8 @@ async def transform_status(
     result_data = None
     error = None
 
-    # Check if paused via Redis flag
-    is_paused = _redis.exists(f"cerulean:pause:{project_id}")
+    # Check if paused via per-task Redis flag
+    is_paused = _redis.exists(f"cerulean:pause:task:{task_id}")
     if is_paused and state in ("PROGRESS", "PAUSED", "STARTED"):
         state = "PAUSED"
 
@@ -350,7 +350,14 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
 async def pause_transform(project_id: str, db: AsyncSession = Depends(get_db)):
     """Set pause flag — running transform will pause at the next record."""
     await require_project(project_id, db)
-    _redis.set(f"cerulean:pause:{project_id}", "1")
+    # Find the currently running transform task
+    manifest = (await db.execute(
+        select(TransformManifest)
+        .where(TransformManifest.project_id == project_id, TransformManifest.status == "running")
+        .order_by(TransformManifest.started_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if manifest and manifest.celery_task_id:
+        _redis.set(f"cerulean:pause:task:{manifest.celery_task_id}", "1")
     return {"status": "paused"}
 
 
@@ -358,5 +365,11 @@ async def pause_transform(project_id: str, db: AsyncSession = Depends(get_db)):
 async def resume_transform(project_id: str, db: AsyncSession = Depends(get_db)):
     """Clear pause flag — transform resumes processing."""
     await require_project(project_id, db)
-    _redis.delete(f"cerulean:pause:{project_id}")
+    manifest = (await db.execute(
+        select(TransformManifest)
+        .where(TransformManifest.project_id == project_id, TransformManifest.status == "running")
+        .order_by(TransformManifest.started_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if manifest and manifest.celery_task_id:
+        _redis.delete(f"cerulean:pause:task:{manifest.celery_task_id}")
     return {"status": "resumed"}
