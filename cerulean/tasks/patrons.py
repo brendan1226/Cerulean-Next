@@ -825,7 +825,12 @@ def _concat_patron_files(project_id: str) -> None:
 
 
 def _parse_csv_tsv(path: Path, parse_settings: dict, ext: str) -> tuple[list[dict], str]:
-    """Parse CSV/TSV/fixed-width text file."""
+    """Parse CSV/TSV/fixed-width text file.
+
+    Auto-detects the header row by scanning for the first line with enough
+    delimited columns (>= 3), skipping preamble lines like report titles,
+    dates, and blank rows.
+    """
     try:
         import chardet
     except ImportError:
@@ -854,25 +859,45 @@ def _parse_csv_tsv(path: Path, parse_settings: dict, ext: str) -> tuple[list[dic
             delimiter = "\t" if ext == ".tsv" else ","
 
     skip_rows = parse_settings.get("skip_rows", 0)
-    header_row = parse_settings.get("header_row", 0)  # 0-indexed after skipping
+    header_row = parse_settings.get("header_row")  # None = auto-detect
+    min_columns = parse_settings.get("min_columns", 3)
 
     detected_format = "tsv" if delimiter == "\t" else "csv"
 
-    rows = []
+    # Read all lines so we can auto-detect the header
     with open(str(path), "r", encoding=encoding, errors="replace", newline="") as f:
-        # Skip rows
-        for _ in range(skip_rows):
-            next(f, None)
-        # Skip to header row
-        for _ in range(header_row):
-            next(f, None)
+        all_lines = f.readlines()
 
-        reader = csv.DictReader(f, delimiter=delimiter)
-        for row in reader:
-            # Clean None keys and strip values
-            cleaned = {(k or "").strip(): (v or "").strip() for k, v in row.items() if k}
-            if any(cleaned.values()):
-                rows.append(cleaned)
+    # Apply skip_rows
+    all_lines = all_lines[skip_rows:]
+
+    if header_row is not None:
+        # Explicit header row (0-indexed after skip_rows)
+        data_start = header_row
+    else:
+        # Auto-detect: find the first line with >= min_columns delimited fields
+        data_start = 0
+        for i, line in enumerate(all_lines):
+            fields = line.strip().split(delimiter)
+            non_empty = [f.strip() for f in fields if f.strip()]
+            if len(non_empty) >= min_columns:
+                data_start = i
+                break
+
+    # Parse from detected header row
+    lines_from_header = all_lines[data_start:]
+    if not lines_from_header:
+        return [], detected_format
+
+    import io
+    reader = csv.DictReader(io.StringIO("".join(lines_from_header)), delimiter=delimiter)
+
+    rows = []
+    for row in reader:
+        # Clean None keys and strip values
+        cleaned = {(k or "").strip(): (v or "").strip() for k, v in row.items() if k}
+        if any(cleaned.values()):
+            rows.append(cleaned)
 
     return rows, detected_format
 
