@@ -4,9 +4,16 @@ cerulean/utils/marc.py
 Shared MARC file helpers used across multiple task modules.
 """
 
+import re
 from typing import Generator
 
 import pymarc
+
+# XML 1.0 only allows #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF].
+# Control chars 0x00-0x08, 0x0B-0x0C, 0x0E-0x1F (includes ESC 0x1B) are illegal.
+_XML_ILLEGAL_CHARS = re.compile(
+    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'
+)
 
 
 def is_valid_marc(path: str) -> tuple[bool, str]:
@@ -62,10 +69,33 @@ def is_valid_marc(path: str) -> tuple[bool, str]:
     return False, "File does not appear to contain MARC data"
 
 
+def sanitize_record(record: pymarc.Record) -> pymarc.Record:
+    """Strip XML-illegal control characters from all fields in a MARC record.
+
+    Characters like ESC (0x1B), NUL, and other C0 control chars (except
+    TAB, LF, CR) are invalid in XML 1.0 and cause Koha/Zebra indexing
+    failures. This strips them from field data and subfield values in-place.
+    """
+    for field in record.fields:
+        if field.is_control_field():
+            if field.data:
+                field.data = _XML_ILLEGAL_CHARS.sub('', field.data)
+        else:
+            for sf in field.subfields:
+                if sf.value:
+                    cleaned = _XML_ILLEGAL_CHARS.sub('', sf.value)
+                    if cleaned != sf.value:
+                        sf.value = cleaned
+    return record
+
+
 def iter_marc(
     path: str, fmt: str = "iso2709"
 ) -> Generator[pymarc.Record, None, None]:
     """Yield pymarc Record objects from a MARC file.
+
+    Records are sanitized to strip XML-illegal control characters
+    (ESC, NUL, etc.) that cause Koha/Zebra indexing failures.
 
     Args:
         path: Absolute path to the MARC file.
@@ -79,13 +109,17 @@ def iter_marc(
     """
     if fmt == "mrk":
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            yield from pymarc.MARCReader(fh)
+            for record in pymarc.MARCReader(fh):
+                if record:
+                    yield sanitize_record(record)
     else:
         with open(path, "rb") as fh:
             reader = pymarc.MARCReader(
                 fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
             )
-            yield from reader
+            for record in reader:
+                if record:
+                    yield sanitize_record(record)
 
 
 def get_001(record: pymarc.Record) -> str | None:
