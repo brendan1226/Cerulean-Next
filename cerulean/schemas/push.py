@@ -1,7 +1,7 @@
 """
 cerulean/schemas/push.py
 ─────────────────────────────────────────────────────────────────────────────
-Pydantic v2 schemas for Stage 5 — Push to Koha API contracts.
+Pydantic v2 schemas for Stage 7 — Push to Koha API contracts.
 """
 
 from datetime import datetime
@@ -64,3 +64,49 @@ class PushManifestOut(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+
+
+# ── Reference Data (Setup tab) ────────────────────────────────────────
+
+class KohaRefDataResponse(BaseModel):
+    """What currently exists in Koha."""
+    libraries: list[dict]
+    patron_categories: list[dict]
+    item_types: list[dict]
+    authorised_values: dict[str, list[dict]]   # {"LOC": [...], "CCODE": [...], "LOST": [...]}
+
+
+class NeededRefValue(BaseModel):
+    value: str
+    record_count: int
+
+
+class NeededRefDataResponse(BaseModel):
+    """What the project data requires."""
+    libraries: list[NeededRefValue]
+    patron_categories: list[NeededRefValue]
+    item_types: list[NeededRefValue]
+    locations: list[NeededRefValue]
+    ccodes: list[NeededRefValue]
+
+
+class LibraryPushItem(BaseModel):
+    library_id: str
+    name: str
+
+
+class PushLibrariesRequest(BaseModel):
+    libraries: list[LibraryPushItem]
+
+
+class PushLibraryResult(BaseModel):
+    library_id: str
+    success: bool
+    error: str | None = None
+
+
+class PushLibrariesResponse(BaseModel):
+    total: int
+    success_count: int
+    failed_count: int
+    results: list[PushLibraryResult]

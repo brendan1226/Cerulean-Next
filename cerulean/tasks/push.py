@@ -13,6 +13,7 @@ Stage 7 Celery tasks: Push to Koha.
 All tasks write AuditEvent rows via AuditLogger.
 """
 
+import base64
 import csv
 import os
 from datetime import datetime
@@ -72,19 +73,43 @@ def _decrypt_token(encrypted: str) -> str:
     return f.decrypt(encrypted.encode()).decode()
 
 
+def _rewrite_localhost(url: str) -> str:
+    """Rewrite localhost URLs to host.docker.internal for Docker workers."""
+    import re
+    return re.sub(
+        r"^(https?://)localhost(:\d+)?",
+        r"\1host.docker.internal\2",
+        url,
+    )
+
+
 def _koha_client(project_id: str) -> tuple[str, dict[str, str]]:
-    """Load project, decrypt token, return (base_url, auth_headers)."""
+    """Load project, decrypt token, return (base_url, auth_headers).
+
+    Supports two auth modes (project.koha_auth_type):
+        "basic"  — HTTP Basic Auth. Token stores "user:pass".
+        "bearer" — Bearer token. Token stores the raw token string.
+    Defaults to "basic" (KTD default: koha/koha).
+    """
     from cerulean.models import Project
 
     with Session(_engine) as db:
         project = db.get(Project, project_id)
         if not project or not project.koha_url:
             raise ValueError("Project or koha_url not configured")
-        base_url = project.koha_url.rstrip("/")
+        base_url = _rewrite_localhost(project.koha_url.rstrip("/"))
         token = _decrypt_token(project.koha_token_enc) if project.koha_token_enc else ""
+        auth_type = getattr(project, "koha_auth_type", "basic") or "basic"
+
+    if auth_type == "bearer":
+        auth_value = f"Bearer {token}"
+    else:
+        # Basic auth — token is stored as "user:pass"
+        b64 = base64.b64encode(token.encode()).decode()
+        auth_value = f"Basic {b64}"
 
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": auth_value,
         "Accept": "application/json",
     }
     return base_url, headers
@@ -223,6 +248,9 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
         total = 0
         success = 0
         failed = 0
+        _aborted = False
+        _first_error_status = None
+        _first_error_body = None
 
         if dry_run:
             # Count records only
@@ -238,8 +266,17 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
             base_url, headers = _koha_client(project_id)
             push_headers = {**headers, "Content-Type": "application/marc"}
 
+            # Early-abort tracking: if first N records all fail with same status, stop
+            _EARLY_ABORT_THRESHOLD = 10
+            _first_error_status = None
+            _first_error_body = None
+            _consecutive_same_error = 0
+            _aborted = False
+
             with httpx.Client(timeout=60.0) as client:
                 for marc_path in marc_paths:
+                    if _aborted:
+                        break
                     for record in _iter_marc(str(marc_path)):
                         total += 1
                         try:
@@ -250,10 +287,30 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                             )
                             if resp.status_code < 300:
                                 success += 1
+                                _consecutive_same_error = 0
+                                _first_error_status = None
                             else:
                                 failed += 1
+                                resp_body = resp.text[:500]
                                 if failed <= 10:
-                                    log.warn(f"Record {total} failed: HTTP {resp.status_code}")
+                                    log.warn(f"Record {total} failed: HTTP {resp.status_code} — {resp_body}")
+                                if _first_error_body is None:
+                                    _first_error_body = resp_body
+                                # Track consecutive same-status errors for early abort
+                                if _first_error_status is None or _first_error_status == resp.status_code:
+                                    _first_error_status = resp.status_code
+                                    _consecutive_same_error += 1
+                                else:
+                                    _consecutive_same_error = 1
+                                    _first_error_status = resp.status_code
+                                if _consecutive_same_error >= _EARLY_ABORT_THRESHOLD and success == 0:
+                                    error_msg = (
+                                        f"Early abort: first {_EARLY_ABORT_THRESHOLD} records all failed "
+                                        f"with HTTP {_first_error_status}. Response: {_first_error_body}"
+                                    )
+                                    log.error(error_msg)
+                                    _aborted = True
+                                    break
                         except httpx.HTTPError as exc:
                             failed += 1
                             if failed <= 10:
@@ -266,30 +323,48 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                                 "records_failed": failed,
                             })
 
+        # Build result data
+        result_data_extra = {}
+        if _aborted:
+            result_data_extra["early_abort"] = True
+            result_data_extra["abort_reason"] = error_msg
+            result_data_extra["first_error_status"] = _first_error_status
+            result_data_extra["first_error_body"] = _first_error_body
+
         # Update manifest and project
+        final_status = "error" if _aborted else "complete"
         with Session(_engine) as db:
             _update_push_manifest(db, manifest_id,
-                                  status="complete",
+                                  status=final_status,
                                   records_total=total,
                                   records_success=success,
                                   records_failed=failed,
+                                  error_message=error_msg if _aborted else None,
+                                  result_data=result_data_extra or None,
                                   completed_at=datetime.utcnow())
 
-            if not dry_run:
+            if not dry_run and not _aborted:
                 project = db.get(Project, project_id)
                 if project:
                     project.bib_count_pushed = success
                     db.commit()
 
-        log.complete(
-            f"Bulk MARC push complete — {total:,} records, "
-            f"{success:,} success, {failed:,} failed (dry_run={dry_run})"
-        )
+        if _aborted:
+            log.error(
+                f"Bulk MARC push aborted — {total:,} records attempted, "
+                f"{failed:,} failed (dry_run={dry_run})"
+            )
+        else:
+            log.complete(
+                f"Bulk MARC push complete — {total:,} records, "
+                f"{success:,} success, {failed:,} failed (dry_run={dry_run})"
+            )
         return {
             "records_total": total,
             "records_success": success,
             "records_failed": failed,
             "dry_run": dry_run,
+            **({"early_abort": True, "abort_reason": result_data_extra.get("abort_reason")} if _aborted else {}),
         }
 
     except Exception as exc:

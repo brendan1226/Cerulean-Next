@@ -83,6 +83,10 @@ async def update_project(project_id: str, body: ProjectUpdate, db: AsyncSession 
         project.koha_url = body.koha_url
     if body.koha_token is not None:
         project.koha_token_enc = _encrypt_token(body.koha_token)
+    if body.koha_auth_type is not None:
+        if body.koha_auth_type not in ("basic", "bearer"):
+            raise HTTPException(400, detail={"error": "INVALID_AUTH_TYPE", "message": "koha_auth_type must be 'basic' or 'bearer'."})
+        project.koha_auth_type = body.koha_auth_type
     if body.source_ils is not None:
         project.source_ils = body.source_ils
     if body.archived is not None:

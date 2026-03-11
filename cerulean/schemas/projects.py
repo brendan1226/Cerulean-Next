@@ -22,6 +22,7 @@ class ProjectUpdate(BaseModel):
     library_name: str | None = None
     koha_url: str | None = None
     koha_token: str | None = None
+    koha_auth_type: str | None = None
     source_ils: str | None = None
     archived: bool | None = None
 
@@ -35,6 +36,7 @@ class ProjectOut(BaseModel):
     source_ils: str | None
     ils_confidence: float | None
     koha_url: str | None
+    koha_auth_type: str
     koha_version: str | None
     search_engine: str | None
     current_stage: int

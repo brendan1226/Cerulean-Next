@@ -2628,8 +2628,27 @@ function renderProjectSettings(el) {
         <input class="form-input" id="ps-koha-url" value="${esc(p.koha_url || '')}" placeholder="https://koha.library.org" />
       </div>
       <div class="form-group">
-        <label class="form-label">Koha API Token</label>
-        <input class="form-input" id="ps-koha-token" type="password" placeholder="${p.koha_url ? '(token saved — enter new to replace)' : 'Enter API token'}" />
+        <label class="form-label">Auth Type</label>
+        <select class="form-input" id="ps-koha-auth-type" onchange="toggleAuthFields()">
+          <option value="basic" ${(p.koha_auth_type||'basic')==='basic'?'selected':''}>Basic Auth (username:password)</option>
+          <option value="bearer" ${p.koha_auth_type==='bearer'?'selected':''}>Bearer Token</option>
+        </select>
+      </div>
+      <div id="ps-auth-basic" style="display:${(p.koha_auth_type||'basic')==='basic'?'block':'none'}">
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input class="form-input" id="ps-koha-user" placeholder="koha" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-input" id="ps-koha-pass" type="password" placeholder="${p.koha_url ? '(saved — enter new to replace)' : 'koha'}" />
+        </div>
+      </div>
+      <div id="ps-auth-bearer" style="display:${p.koha_auth_type==='bearer'?'block':'none'}">
+        <div class="form-group">
+          <label class="form-label">API Token</label>
+          <input class="form-input" id="ps-koha-token" type="password" placeholder="${p.koha_url ? '(token saved — enter new to replace)' : 'Enter API token'}" />
+        </div>
       </div>
       <div style="display:flex;gap:8px;margin-top:16px">
         <button class="btn btn-primary" onclick="saveProjectSettings()">Save Changes</button>
@@ -2654,6 +2673,12 @@ function renderProjectSettings(el) {
     </div>`;
 }
 
+function toggleAuthFields() {
+  const authType = document.getElementById('ps-koha-auth-type').value;
+  document.getElementById('ps-auth-basic').style.display = authType === 'basic' ? 'block' : 'none';
+  document.getElementById('ps-auth-bearer').style.display = authType === 'bearer' ? 'block' : 'none';
+}
+
 async function saveProjectSettings() {
   const p = state.currentProject;
   const statusEl = document.getElementById('ps-status');
@@ -2662,11 +2687,23 @@ async function saveProjectSettings() {
   const name = document.getElementById('ps-name').value.trim();
   const sourceIls = document.getElementById('ps-source-ils').value.trim();
   const kohaUrl = document.getElementById('ps-koha-url').value.trim();
-  const kohaToken = document.getElementById('ps-koha-token').value.trim();
+  const authType = document.getElementById('ps-koha-auth-type').value;
+
+  // Build token based on auth type
+  let kohaToken = '';
+  if (authType === 'basic') {
+    const user = document.getElementById('ps-koha-user').value.trim();
+    const pass = document.getElementById('ps-koha-pass').value;
+    if (user && pass) kohaToken = user + ':' + pass;
+  } else {
+    const tokenEl = document.getElementById('ps-koha-token');
+    kohaToken = tokenEl ? tokenEl.value.trim() : '';
+  }
 
   if (name !== (p.library_name || '')) body.library_name = name || null;
   if (sourceIls !== (p.source_ils || '')) body.source_ils = sourceIls || null;
   if (kohaUrl !== (p.koha_url || '')) body.koha_url = kohaUrl || null;
+  if (authType !== (p.koha_auth_type || 'basic')) body.koha_auth_type = authType;
   if (kohaToken) body.koha_token = kohaToken;
 
   if (!Object.keys(body).length) {
@@ -4738,6 +4775,8 @@ async function patchPatronMapField(mapId, field, value) {
     body.ignored = !value;
     if (PATRON_CONTROLLED_HEADERS.includes(value)) {
       body.is_controlled_list = true;
+    } else {
+      body.is_controlled_list = false;
     }
   }
   try {
@@ -5016,9 +5055,42 @@ async function renderPatronValues() {
 
   const categories = ['categorycode', 'branchcode', 'title', 'lost'];
 
+  // Load maps to check readiness
+  const maps = await window.api('GET', `/projects/${p.id}/patrons/maps`) || [];
+  const approvedControlled = maps.filter(m => m.approved && m.is_controlled_list && m.target_header);
+  const controlledNotApproved = maps.filter(m => m.is_controlled_list && !m.approved && m.target_header);
+  const mappedToControlled = maps.filter(m => PATRON_CONTROLLED_HEADERS.includes(m.target_header) && !m.is_controlled_list);
+
+  let prereqHtml = '';
+  if (approvedControlled.length === 0) {
+    const tips = [];
+    if (maps.length === 0) {
+      tips.push('No column maps exist yet. Go to the <strong>Column Mapping</strong> tab first to map your source columns to Koha headers.');
+    } else if (mappedToControlled.length > 0) {
+      tips.push(`${mappedToControlled.length} column(s) are mapped to controlled headers (${mappedToControlled.map(m=>m.target_header).join(', ')}) but the <strong>Controlled</strong> checkbox is not ticked. Go to Column Mapping and tick the checkbox.`);
+    }
+    if (controlledNotApproved.length > 0) {
+      tips.push(`${controlledNotApproved.length} controlled column(s) are not yet <strong>approved</strong>. Click the status badge in Column Mapping to approve them.`);
+    }
+    if (tips.length === 0 && maps.length > 0) {
+      tips.push('No columns are mapped to controlled-list Koha headers (<code>categorycode</code>, <code>branchcode</code>, <code>title</code>, <code>lost</code>). Map at least one source column to a controlled header in Column Mapping, tick the Controlled checkbox, and approve it.');
+    }
+    prereqHtml = `
+      <div style="background:var(--amber-bg,#fff8e1);border:1px solid var(--amber-border,#ffe082);border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+        <strong>Scan requires approved controlled-list column maps</strong>
+        <ul style="margin:6px 0 0 16px;padding:0">${tips.map(t => `<li style="margin-bottom:4px">${t}</li>`).join('')}</ul>
+      </div>`;
+  } else {
+    prereqHtml = `
+      <div style="font-size:12px;margin-bottom:12px;color:var(--text-dim)">
+        Ready to scan <strong>${approvedControlled.length}</strong> controlled column(s): ${approvedControlled.map(m => `<code>${esc(m.target_header)}</code>`).join(', ')}
+      </div>`;
+  }
+
   wrap.innerHTML = `
+    ${prereqHtml}
     <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-      <button class="btn btn-primary" onclick="runPatronScan()">Scan Controlled Values</button>
+      <button class="btn btn-primary" onclick="runPatronScan()" ${approvedControlled.length === 0 ? 'disabled title="No approved controlled maps"' : ''}>Scan Controlled Values</button>
       <div id="patron-scan-status" style="margin-left:8px"></div>
     </div>
     <div id="patron-values-panels"></div>
@@ -5033,6 +5105,7 @@ async function renderPatronValues() {
   const panels = document.getElementById('patron-values-panels');
   let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
   for (const cat of categories) {
+    const hasMap = approvedControlled.some(m => m.target_header === cat);
     try {
       const vals = await window.api('GET', `/projects/${p.id}/patrons/values?header=${cat}`);
       html += `
@@ -5049,7 +5122,7 @@ async function renderPatronValues() {
             </table>
           </div>
           ${vals.length > 50 ? `<div class="text-dim" style="font-size:10px;margin-top:4px">Showing 50 of ${vals.length}</div>` : ''}
-          ` : '<div class="text-dim" style="font-size:12px;margin-top:8px">No values scanned. Click Scan above.</div>'}
+          ` : `<div class="text-dim" style="font-size:12px;margin-top:8px">${hasMap ? 'No values scanned yet. Click Scan above.' : 'No approved controlled map for this header.'}</div>`}
         </div>`;
     } catch(e) {
       html += `<div class="card"><div class="card-header"><span class="card-title">${esc(cat)}</span></div><div class="text-dim">Error loading</div></div>`;
@@ -5238,20 +5311,186 @@ window.renderStage7 = async function(el) {
     </div>
     ${pipelineBar(p)}
     <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchS7Tab('bibs', this)">Bibs</button>
+      <button class="tab-btn active" onclick="switchS7Tab('setup', this)">Setup</button>
+      <button class="tab-btn" onclick="switchS7Tab('bibs', this)">Bibs</button>
       <button class="tab-btn" onclick="switchS7Tab('patrons', this)">Patrons</button>
       <button class="tab-btn" onclick="switchS7Tab('holds', this)">Holds</button>
       <button class="tab-btn" onclick="switchS7Tab('reindex', this)">ES Reindex</button>
       <button class="tab-btn" onclick="switchS7Tab('manifests', this)">Manifests</button>
     </div>
     <div id="s7-tab"></div>`;
-  renderS7Bibs();
+  renderS7Setup();
 };
 
 function switchS7Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ({ bibs: renderS7Bibs, patrons: renderS7Patrons, holds: renderS7Holds, reindex: renderS7Reindex, manifests: renderS7Manifests })[tab]();
+  ({ setup: renderS7Setup, bibs: renderS7Bibs, patrons: renderS7Patrons, holds: renderS7Holds, reindex: renderS7Reindex, manifests: renderS7Manifests })[tab]();
+}
+
+// ── Setup tab ────────────────────────────────────────────────────────
+let _s7KohaRefs = null;
+let _s7NeededRefs = null;
+
+async function renderS7Setup() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s7-tab');
+  wrap.innerHTML = `
+    <div class="alert alert-warn" style="margin-bottom:16px">
+      Before pushing data, ensure Koha has the required reference data (libraries, patron categories, item types, authorised values).
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="s7FetchKohaRefs()">Fetch from Koha</button>
+      <button class="btn btn-ghost" onclick="s7FetchNeededRefs()">Scan Project Data</button>
+    </div>
+    <div id="s7-setup-status" style="margin-bottom:12px"></div>
+    <div id="s7-setup-grid"></div>`;
+
+  // Auto-load needed refs
+  s7FetchNeededRefs();
+}
+
+async function s7FetchKohaRefs() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-setup-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Fetching from Koha…';
+  try {
+    _s7KohaRefs = await window.api('GET', \`/projects/\${p.id}/push/koha-refs\`);
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Koha data loaded.</span>';
+    s7RenderSetupGrid();
+  } catch (e) {
+    statusEl.innerHTML = \`<span class="text-red" style="font-size:12px">Failed: \${e.message}</span>\`;
+  }
+}
+
+async function s7FetchNeededRefs() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-setup-status');
+  if (!statusEl) return;
+  try {
+    _s7NeededRefs = await window.api('GET', \`/projects/\${p.id}/push/needed-refs\`);
+    s7RenderSetupGrid();
+  } catch (e) {
+    console.error('Failed to load needed refs:', e);
+  }
+}
+
+function s7RenderSetupGrid() {
+  const grid = document.getElementById('s7-setup-grid');
+  if (!grid) return;
+
+  const categories = [
+    { key: 'libraries', label: 'Libraries (branches)', kohaKey: 'libraries', kohaIdField: 'library_id', kohaNameField: 'name', canPush: true },
+    { key: 'patron_categories', label: 'Patron Categories', kohaKey: 'patron_categories', kohaIdField: 'patron_category_id', kohaNameField: 'name', canPush: false },
+    { key: 'item_types', label: 'Item Types', kohaKey: 'item_types', kohaIdField: 'item_type_id', kohaNameField: 'description', canPush: false },
+    { key: 'locations', label: 'Locations (LOC)', kohaKey: null, avKey: 'LOC', canPush: false },
+    { key: 'ccodes', label: 'Collection Codes (CCODE)', kohaKey: null, avKey: 'CCODE', canPush: false },
+  ];
+
+  let html = '';
+  for (const cat of categories) {
+    const needed = _s7NeededRefs ? (_s7NeededRefs[cat.key] || []) : [];
+    if (!needed.length && !_s7KohaRefs) continue;
+
+    // Build set of existing Koha values
+    let kohaValues = new Set();
+    if (_s7KohaRefs) {
+      if (cat.kohaKey && _s7KohaRefs[cat.kohaKey]) {
+        _s7KohaRefs[cat.kohaKey].forEach(item => {
+          kohaValues.add(item[cat.kohaIdField] || item.value || '');
+        });
+      } else if (cat.avKey && _s7KohaRefs.authorised_values && _s7KohaRefs.authorised_values[cat.avKey]) {
+        _s7KohaRefs.authorised_values[cat.avKey].forEach(item => {
+          kohaValues.add(item.value || item.authorised_value || '');
+        });
+      }
+    }
+
+    const missingItems = needed.filter(n => !kohaValues.has(n.value));
+    const existCount = needed.length - missingItems.length;
+
+    html += \`<div class="card" style="margin-bottom:16px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">\${cat.label}</span>
+        <span style="font-size:11px;color:var(--text-dim)">
+          \${needed.length} needed\${_s7KohaRefs ? \` · \${existCount} exist · \${missingItems.length} missing\` : ''}
+        </span>
+      </div>\`;
+
+    if (!needed.length) {
+      html += '<p class="text-dim" style="font-size:12px;padding:8px 0">No values found in project data. Run Stage 5/6 scans first.</p>';
+    } else {
+      html += \`<table class="data-table" style="font-size:12px;width:100%">
+        <thead><tr><th>Value</th><th>Records</th>\${_s7KohaRefs ? '<th>Status</th>' : ''}</tr></thead>
+        <tbody>\`;
+      for (const n of needed) {
+        const exists = kohaValues.has(n.value);
+        const statusBadge = _s7KohaRefs
+          ? (exists
+            ? '<span class="badge badge-green">exists</span>'
+            : '<span class="badge badge-red">MISSING</span>')
+          : '';
+        html += \`<tr>
+          <td class="mono">\${esc(n.value)}</td>
+          <td class="mono">\${n.record_count.toLocaleString()}</td>
+          \${_s7KohaRefs ? \`<td>\${statusBadge}</td>\` : ''}
+        </tr>\`;
+      }
+      html += '</tbody></table>';
+    }
+
+    // Action buttons
+    if (cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
+      html += \`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <button class="btn btn-primary btn-sm" onclick="s7PushMissingLibraries()">Push \${missingItems.length} Missing Libraries</button>
+        <div id="s7-push-libs-status" style="margin-top:8px"></div>
+      </div>\`;
+    } else if (!cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
+      html += \`<div style="margin-top:8px;padding:8px;background:var(--surface-dim);border-radius:4px;font-size:11px;color:var(--text-secondary)">
+        These must be created manually in Koha Staff UI → Administration → \${esc(cat.label)}
+      </div>\`;
+    }
+
+    html += '</div>';
+  }
+
+  // Show Koha existing data if fetched but no project needs
+  if (_s7KohaRefs && !_s7NeededRefs) {
+    html += '<p class="text-dim" style="font-size:12px">Koha data loaded. Click "Scan Project Data" to compare.</p>';
+  }
+
+  grid.innerHTML = html || '<p class="text-dim" style="font-size:12px">No reference data to display. Run scans in Stages 5-6 first, then fetch from Koha.</p>';
+}
+
+async function s7PushMissingLibraries() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-push-libs-status');
+  if (!_s7NeededRefs || !_s7KohaRefs) return;
+
+  // Build set of existing
+  const existing = new Set();
+  (_s7KohaRefs.libraries || []).forEach(l => existing.add(l.library_id || ''));
+
+  const missing = (_s7NeededRefs.libraries || [])
+    .filter(n => !existing.has(n.value))
+    .map(n => ({ library_id: n.value, name: n.value }));
+
+  if (!missing.length) {
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All libraries already exist.</span>';
+    return;
+  }
+
+  statusEl.innerHTML = \`<div class="spinner"></div> Pushing \${missing.length} libraries…\`;
+  try {
+    const r = await window.api('POST', \`/projects/\${p.id}/push/libraries\`, { libraries: missing });
+    statusEl.innerHTML = \`<span class="text-green" style="font-size:12px">\${r.success_count} created, \${r.failed_count} failed.</span>\`;
+    if (r.success_count > 0) {
+      // Refresh Koha data
+      await s7FetchKohaRefs();
+    }
+  } catch (e) {
+    statusEl.innerHTML = \`<span class="text-red" style="font-size:12px">Failed: \${e.message}</span>\`;
+  }
 }
 
 async function renderS7Bibs() {
@@ -5582,7 +5821,15 @@ async function renderS7Manifests() {
       <table class="data-table">
         <thead><tr><th>Type</th><th>Status</th><th>Dry Run</th><th>Total</th><th>Success</th><th>Failed</th><th>Started</th></tr></thead>
         <tbody>
-          ${manifests.map(m => `<tr>
+          ${manifests.map(m => {
+            const errorDetail = m.error_message
+              ? `<tr><td colspan="7" style="background:var(--surface-dim);padding:8px 12px">
+                  <div style="font-size:11px;color:var(--text-red);white-space:pre-wrap">${esc(m.error_message)}</div>
+                  ${m.result_data && m.result_data.first_error_body ? `<div class="mono" style="font-size:10px;margin-top:4px;color:var(--text-secondary);max-height:80px;overflow:auto">${esc(m.result_data.first_error_body)}</div>` : ''}
+                  ${m.result_data && m.result_data.early_abort ? '<div style="font-size:10px;margin-top:4px"><span class="badge badge-red">early abort</span></div>' : ''}
+                </td></tr>`
+              : '';
+            return `<tr>
             <td class="mono">${esc(m.task_type)}</td>
             <td><span class="badge ${m.status==='complete'?'badge-green':m.status==='error'?'badge-red':'badge-amber'}">${esc(m.status)}</span></td>
             <td>${m.dry_run ? '<span class="text-dim">yes</span>' : '<span class="text-green">no</span>'}</td>
@@ -5590,7 +5837,8 @@ async function renderS7Manifests() {
             <td class="mono text-green">${m.records_success != null ? m.records_success.toLocaleString() : '—'}</td>
             <td class="mono text-red">${m.records_failed != null ? m.records_failed.toLocaleString() : '—'}</td>
             <td class="text-dim" style="font-size:11px">${m.started_at ? new Date(m.started_at).toLocaleString() : '—'}</td>
-          </tr>`).join('')}
+          </tr>${errorDetail}`;
+          }).join('')}
         </tbody>
       </table>`;
   } catch (e) { console.error(e); }

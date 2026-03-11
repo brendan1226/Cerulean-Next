@@ -73,6 +73,7 @@ class Project(Base):
     # Target Koha
     koha_url: Mapped[str | None] = mapped_column(String(500))
     koha_token_enc: Mapped[str | None] = mapped_column(Text)   # Fernet encrypted
+    koha_auth_type: Mapped[str] = mapped_column(String(20), default="basic")  # "basic" | "bearer"
     koha_version: Mapped[str | None] = mapped_column(String(20))
     search_engine: Mapped[str | None] = mapped_column(String(20))  # "es8" | "zebra"
 

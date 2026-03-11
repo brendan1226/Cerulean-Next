@@ -8,29 +8,46 @@ POST  /projects/{id}/push/start       — dispatch selected push tasks
 GET   /projects/{id}/push/status      — poll Celery task status
 GET   /projects/{id}/push/manifests   — list push manifests
 GET   /projects/{id}/push/log         — alias for manifests (by started_at desc)
+GET   /projects/{id}/push/koha-refs   — fetch reference data from Koha
+GET   /projects/{id}/push/needed-refs — scan project data for needed ref values
+POST  /projects/{id}/push/libraries   — push missing libraries to Koha
 GET   /projects/{id}/push/files       — list push-ready MARC files
 GET   /projects/{id}/push/files/download — download a push-ready file
 GET   /projects/{id}/push/files/preview  — preview records from a push-ready file
 """
 
+import base64
 import os
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 import pymarc
 from celery.result import AsyncResult
+from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.api.deps import audit_log, require_project
 from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
-from cerulean.models import PushManifest
+from cerulean.models import (
+    PatronScanResult,
+    PushManifest,
+    ReconciliationScanResult,
+)
 from cerulean.schemas.push import (
+    KohaRefDataResponse,
+    LibraryPushItem,
+    NeededRefDataResponse,
+    NeededRefValue,
     PreflightRequest,
     PreflightResponse,
+    PushLibrariesRequest,
+    PushLibrariesResponse,
+    PushLibraryResult,
     PushManifestOut,
     PushStartRequest,
     PushStartResponse,
@@ -246,6 +263,210 @@ async def push_log(
         .order_by(PushManifest.started_at.desc())
     )
     return result.scalars().all()
+
+
+# ── Reference Data (Setup tab) ────────────────────────────────────────────
+
+
+def _koha_headers(project) -> tuple[str, dict[str, str]]:
+    """Build (base_url, headers) from a Project ORM object."""
+    from cerulean.tasks.push import _rewrite_localhost
+
+    base_url = _rewrite_localhost(project.koha_url.rstrip("/"))
+
+    # Decrypt token
+    key = settings.fernet_key.strip() if settings.fernet_key else ""
+    if key and not key.startswith("#") and project.koha_token_enc:
+        f = Fernet(key.encode())
+        token = f.decrypt(project.koha_token_enc.encode()).decode()
+    else:
+        token = project.koha_token_enc or ""
+
+    auth_type = getattr(project, "koha_auth_type", "basic") or "basic"
+    if auth_type == "bearer":
+        auth_value = f"Bearer {token}"
+    else:
+        b64 = base64.b64encode(token.encode()).decode()
+        auth_value = f"Basic {b64}"
+
+    return base_url, {"Authorization": auth_value, "Accept": "application/json"}
+
+
+@router.get("/{project_id}/push/koha-refs", response_model=KohaRefDataResponse)
+async def get_koha_refs(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch reference data from Koha (libraries, patron categories, item types, authorised values)."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    base_url, headers = _koha_headers(project)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Fire all GETs in parallel
+        responses = await _fetch_koha_refs(client, base_url, headers)
+
+    return KohaRefDataResponse(
+        libraries=responses["libraries"],
+        patron_categories=responses["patron_categories"],
+        item_types=responses["item_types"],
+        authorised_values=responses["authorised_values"],
+    )
+
+
+async def _fetch_koha_refs(client: httpx.AsyncClient, base_url: str, headers: dict) -> dict:
+    """GET all reference data endpoints from Koha, return parsed dicts."""
+    endpoints = {
+        "libraries": "/api/v1/libraries",
+        "patron_categories": "/api/v1/patron_categories",
+        "item_types": "/api/v1/item_types",
+        "av_LOC": "/api/v1/authorised_value_categories/LOC/authorised_values",
+        "av_CCODE": "/api/v1/authorised_value_categories/CCODE/authorised_values",
+        "av_LOST": "/api/v1/authorised_value_categories/LOST/authorised_values",
+    }
+
+    import asyncio
+    tasks = {
+        key: client.get(f"{base_url}{path}", headers=headers)
+        for key, path in endpoints.items()
+    }
+    results_raw = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    results = dict(zip(tasks.keys(), results_raw))
+
+    def _parse(key: str) -> list[dict]:
+        resp = results.get(key)
+        if isinstance(resp, Exception) or resp is None:
+            return []
+        if resp.status_code >= 400:
+            return []
+        try:
+            return resp.json()
+        except Exception:
+            return []
+
+    return {
+        "libraries": _parse("libraries"),
+        "patron_categories": _parse("patron_categories"),
+        "item_types": _parse("item_types"),
+        "authorised_values": {
+            "LOC": _parse("av_LOC"),
+            "CCODE": _parse("av_CCODE"),
+            "LOST": _parse("av_LOST"),
+        },
+    }
+
+
+@router.get("/{project_id}/push/needed-refs", response_model=NeededRefDataResponse)
+async def get_needed_refs(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan project data to determine what reference values are needed."""
+    await require_project(project_id, db)
+
+    # Patron scan results: branchcode, categorycode
+    patron_q = (
+        select(PatronScanResult.koha_header, PatronScanResult.source_value,
+               func.sum(PatronScanResult.record_count).label("cnt"))
+        .where(PatronScanResult.project_id == project_id)
+        .where(PatronScanResult.koha_header.in_(["branchcode", "categorycode"]))
+        .group_by(PatronScanResult.koha_header, PatronScanResult.source_value)
+    )
+    patron_rows = (await db.execute(patron_q)).all()
+
+    # Reconciliation scan results: itype, loc, ccode
+    recon_q = (
+        select(ReconciliationScanResult.vocab_category, ReconciliationScanResult.source_value,
+               func.sum(ReconciliationScanResult.record_count).label("cnt"))
+        .where(ReconciliationScanResult.project_id == project_id)
+        .where(ReconciliationScanResult.vocab_category.in_(["itype", "loc", "ccode"]))
+        .group_by(ReconciliationScanResult.vocab_category, ReconciliationScanResult.source_value)
+    )
+    recon_rows = (await db.execute(recon_q)).all()
+
+    # Build response
+    libraries = []
+    patron_categories = []
+    item_types = []
+    locations = []
+    ccodes = []
+
+    for header, value, cnt in patron_rows:
+        item = NeededRefValue(value=value, record_count=int(cnt))
+        if header == "branchcode":
+            libraries.append(item)
+        elif header == "categorycode":
+            patron_categories.append(item)
+
+    for category, value, cnt in recon_rows:
+        item = NeededRefValue(value=value, record_count=int(cnt))
+        if category == "itype":
+            item_types.append(item)
+        elif category == "loc":
+            locations.append(item)
+        elif category == "ccode":
+            ccodes.append(item)
+
+    return NeededRefDataResponse(
+        libraries=sorted(libraries, key=lambda x: -x.record_count),
+        patron_categories=sorted(patron_categories, key=lambda x: -x.record_count),
+        item_types=sorted(item_types, key=lambda x: -x.record_count),
+        locations=sorted(locations, key=lambda x: -x.record_count),
+        ccodes=sorted(ccodes, key=lambda x: -x.record_count),
+    )
+
+
+@router.post("/{project_id}/push/libraries", response_model=PushLibrariesResponse)
+async def push_libraries(
+    project_id: str,
+    body: PushLibrariesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Push missing libraries to Koha via POST /api/v1/libraries."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    base_url, headers = _koha_headers(project)
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for lib in body.libraries:
+            try:
+                resp = await client.post(
+                    f"{base_url}/api/v1/libraries",
+                    json={"library_id": lib.library_id, "name": lib.name},
+                    headers=headers,
+                )
+                if resp.status_code < 300:
+                    success_count += 1
+                    results.append(PushLibraryResult(library_id=lib.library_id, success=True))
+                else:
+                    failed_count += 1
+                    error_text = resp.text[:200]
+                    results.append(PushLibraryResult(
+                        library_id=lib.library_id, success=False,
+                        error=f"HTTP {resp.status_code}: {error_text}",
+                    ))
+            except httpx.HTTPError as exc:
+                failed_count += 1
+                results.append(PushLibraryResult(
+                    library_id=lib.library_id, success=False, error=str(exc),
+                ))
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[setup]",
+                    message=f"Pushed {success_count}/{len(body.libraries)} libraries to Koha")
+
+    return PushLibrariesResponse(
+        total=len(body.libraries),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
 
 
 # ── File review endpoints ────────────────────────────────────────────────
