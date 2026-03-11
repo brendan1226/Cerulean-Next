@@ -646,7 +646,7 @@
       text-shadow: 0 0 3px var(--bg-primary);
     }
 
-    /* ── Global task bar ── */
+    /* ── Global task panel ── */
     #global-task-bar {
       position: fixed;
       bottom: 0;
@@ -655,18 +655,67 @@
       z-index: 1500;
       background: var(--bg-primary);
       border-top: 1px solid var(--border-mid);
-      padding: 6px 16px;
       display: none;
-      align-items: center;
-      gap: 12px;
+      flex-direction: column;
       font-size: 12px;
       box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
     }
     #global-task-bar.visible { display: flex; }
-    #global-task-bar .gtb-label { font-weight: 600; white-space: nowrap; }
-    #global-task-bar .gtb-progress { flex: 1; max-width: 400px; }
-    #global-task-bar .gtb-detail { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
-    #global-task-bar .gtb-actions { margin-left: auto; display: flex; gap: 8px; }
+    .gtb-collapsed {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .gtb-collapsed:hover { background: var(--bg-secondary); }
+    .gtb-badge {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      font-weight: 700;
+      min-width: 18px;
+      text-align: center;
+    }
+    .gtb-collapsed .gtb-label { font-weight: 600; white-space: nowrap; }
+    .gtb-collapsed .gtb-progress { flex: 1; max-width: 400px; }
+    .gtb-collapsed .gtb-detail { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
+    .gtb-collapsed .gtb-chevron { margin-left: auto; color: var(--text-secondary); font-size: 14px; }
+    .gtb-expanded {
+      display: none;
+      max-height: 260px;
+      overflow-y: auto;
+      border-top: 1px solid var(--border-mid);
+    }
+    #global-task-bar.expanded .gtb-expanded { display: block; }
+    #global-task-bar.expanded .gtb-collapsed .gtb-chevron { transform: rotate(180deg); }
+    .gtb-task-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border-light);
+    }
+    .gtb-task-row:last-child { border-bottom: none; }
+    .gtb-task-row .gtb-task-label { font-weight: 600; white-space: nowrap; min-width: 110px; }
+    .gtb-task-row .gtb-task-bar { flex: 1; max-width: 300px; }
+    .gtb-task-row .gtb-task-detail { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; flex: 1; }
+    .gtb-task-row .gtb-task-actions { display: flex; gap: 6px; }
+    .gtb-task-row .gtb-task-actions button {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border-mid);
+      background: var(--bg-secondary);
+      cursor: pointer;
+      color: var(--text-primary);
+    }
+    .gtb-task-row .gtb-task-actions button:hover { background: var(--bg-tertiary, var(--border-mid)); }
+    .gtb-task-row .gtb-task-actions button.btn-cancel { color: var(--red, #ef4444); border-color: var(--red, #ef4444); }
+    .gtb-task-row .gtb-task-actions button.btn-cancel:hover { background: var(--red, #ef4444); color: #fff; }
 
     /* ── Toast notifications ── */
     #toast-container {
@@ -1042,10 +1091,14 @@
 <!-- ── Toast container ── -->
 <div id="toast-container"></div>
 <div id="global-task-bar">
-  <span class="gtb-label" id="gtb-label"></span>
-  <div class="gtb-progress" id="gtb-progress"></div>
-  <span class="gtb-detail" id="gtb-detail"></span>
-  <div class="gtb-actions" id="gtb-actions"></div>
+  <div class="gtb-collapsed" onclick="toggleTaskPanel()">
+    <span class="gtb-badge" id="gtb-badge">0</span>
+    <span class="gtb-label" id="gtb-label"></span>
+    <div class="gtb-progress" id="gtb-progress"></div>
+    <span class="gtb-detail" id="gtb-detail"></span>
+    <span class="gtb-chevron">&#9650;</span>
+  </div>
+  <div class="gtb-expanded" id="gtb-expanded"></div>
 </div>
 
 <!-- ── Modals ── -->
@@ -5355,11 +5408,11 @@ async function s7FetchKohaRefs() {
   const statusEl = document.getElementById('s7-setup-status');
   statusEl.innerHTML = '<div class="spinner"></div> Fetching from Koha…';
   try {
-    _s7KohaRefs = await window.api('GET', \`/projects/\${p.id}/push/koha-refs\`);
+    _s7KohaRefs = await window.api('GET', `/projects/${p.id}/push/koha-refs`);
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Koha data loaded.</span>';
     s7RenderSetupGrid();
   } catch (e) {
-    statusEl.innerHTML = \`<span class="text-red" style="font-size:12px">Failed: \${e.message}</span>\`;
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${e.message}</span>`;
   }
 }
 
@@ -5368,7 +5421,7 @@ async function s7FetchNeededRefs() {
   const statusEl = document.getElementById('s7-setup-status');
   if (!statusEl) return;
   try {
-    _s7NeededRefs = await window.api('GET', \`/projects/\${p.id}/push/needed-refs\`);
+    _s7NeededRefs = await window.api('GET', `/projects/${p.id}/push/needed-refs`);
     s7RenderSetupGrid();
   } catch (e) {
     console.error('Failed to load needed refs:', e);
@@ -5409,20 +5462,18 @@ function s7RenderSetupGrid() {
     const missingItems = needed.filter(n => !kohaValues.has(n.value));
     const existCount = needed.length - missingItems.length;
 
-    html += \`<div class="card" style="margin-bottom:16px">
-      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-        <span class="card-title">\${cat.label}</span>
-        <span style="font-size:11px;color:var(--text-dim)">
-          \${needed.length} needed\${_s7KohaRefs ? \` · \${existCount} exist · \${missingItems.length} missing\` : ''}
-        </span>
-      </div>\`;
+    html += '<div class="card" style="margin-bottom:16px">'
+      + '<div class="card-header" style="display:flex;justify-content:space-between;align-items:center">'
+      + '<span class="card-title">' + esc(cat.label) + '</span>'
+      + '<span style="font-size:11px;color:var(--text-dim)">'
+      + needed.length + ' needed' + (_s7KohaRefs ? ' &middot; ' + existCount + ' exist &middot; ' + missingItems.length + ' missing' : '')
+      + '</span></div>';
 
     if (!needed.length) {
       html += '<p class="text-dim" style="font-size:12px;padding:8px 0">No values found in project data. Run Stage 5/6 scans first.</p>';
     } else {
-      html += \`<table class="data-table" style="font-size:12px;width:100%">
-        <thead><tr><th>Value</th><th>Records</th>\${_s7KohaRefs ? '<th>Status</th>' : ''}</tr></thead>
-        <tbody>\`;
+      html += '<table class="data-table" style="font-size:12px;width:100%">'
+        + '<thead><tr><th>Value</th><th>Records</th>' + (_s7KohaRefs ? '<th>Status</th>' : '') + '</tr></thead><tbody>';
       for (const n of needed) {
         const exists = kohaValues.has(n.value);
         const statusBadge = _s7KohaRefs
@@ -5430,25 +5481,22 @@ function s7RenderSetupGrid() {
             ? '<span class="badge badge-green">exists</span>'
             : '<span class="badge badge-red">MISSING</span>')
           : '';
-        html += \`<tr>
-          <td class="mono">\${esc(n.value)}</td>
-          <td class="mono">\${n.record_count.toLocaleString()}</td>
-          \${_s7KohaRefs ? \`<td>\${statusBadge}</td>\` : ''}
-        </tr>\`;
+        html += '<tr><td class="mono">' + esc(n.value) + '</td>'
+          + '<td class="mono">' + n.record_count.toLocaleString() + '</td>'
+          + (_s7KohaRefs ? '<td>' + statusBadge + '</td>' : '')
+          + '</tr>';
       }
       html += '</tbody></table>';
     }
 
     // Action buttons
     if (cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
-      html += \`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-        <button class="btn btn-primary btn-sm" onclick="s7PushMissingLibraries()">Push \${missingItems.length} Missing Libraries</button>
-        <div id="s7-push-libs-status" style="margin-top:8px"></div>
-      </div>\`;
+      html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">'
+        + '<button class="btn btn-primary btn-sm" onclick="s7PushMissingLibraries()">Push ' + missingItems.length + ' Missing Libraries</button>'
+        + '<div id="s7-push-libs-status" style="margin-top:8px"></div></div>';
     } else if (!cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
-      html += \`<div style="margin-top:8px;padding:8px;background:var(--surface-dim);border-radius:4px;font-size:11px;color:var(--text-secondary)">
-        These must be created manually in Koha Staff UI → Administration → \${esc(cat.label)}
-      </div>\`;
+      html += '<div style="margin-top:8px;padding:8px;background:var(--surface-dim);border-radius:4px;font-size:11px;color:var(--text-secondary)">'
+        + 'These must be created manually in Koha Staff UI &rarr; Administration &rarr; ' + esc(cat.label) + '</div>';
     }
 
     html += '</div>';
@@ -5480,16 +5528,16 @@ async function s7PushMissingLibraries() {
     return;
   }
 
-  statusEl.innerHTML = \`<div class="spinner"></div> Pushing \${missing.length} libraries…\`;
+  statusEl.innerHTML = '<div class="spinner"></div> Pushing ' + missing.length + ' libraries…';
   try {
-    const r = await window.api('POST', \`/projects/\${p.id}/push/libraries\`, { libraries: missing });
-    statusEl.innerHTML = \`<span class="text-green" style="font-size:12px">\${r.success_count} created, \${r.failed_count} failed.</span>\`;
+    const r = await window.api('POST', '/projects/' + p.id + '/push/libraries', { libraries: missing });
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + r.success_count + ' created, ' + r.failed_count + ' failed.</span>';
     if (r.success_count > 0) {
       // Refresh Koha data
       await s7FetchKohaRefs();
     }
   } catch (e) {
-    statusEl.innerHTML = \`<span class="text-red" style="font-size:12px">Failed: \${e.message}</span>\`;
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + e.message + '</span>';
   }
 }
 
@@ -6005,23 +6053,119 @@ function renderProgressBar(opts = {}) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Global background task tracker
+// Global background task tracker — expandable multi-task panel
 // ══════════════════════════════════════════════════════════════════
-window._bgTasks = {}; // { key: { projectId, taskId, label, stageType, onComplete, status } }
+window._bgTasks = {}; // { key: { projectId, taskId, label, stageType, onComplete, status, _cancel, _lastProgress } }
 
-function _showGlobalBar(key, label, progressHtml, detail, actions) {
+function toggleTaskPanel() {
   const bar = document.getElementById('global-task-bar');
-  if (!bar) return;
-  bar.classList.add('visible');
-  document.getElementById('gtb-label').textContent = label;
-  document.getElementById('gtb-progress').innerHTML = progressHtml;
-  document.getElementById('gtb-detail').textContent = detail || '';
-  document.getElementById('gtb-actions').innerHTML = actions || '';
+  if (bar) bar.classList.toggle('expanded');
 }
 
-function _hideGlobalBar() {
+function _renderTaskPanel() {
   const bar = document.getElementById('global-task-bar');
-  if (bar) bar.classList.remove('visible');
+  if (!bar) return;
+  const keys = Object.keys(window._bgTasks);
+
+  if (keys.length === 0) {
+    bar.classList.remove('visible', 'expanded');
+    return;
+  }
+  bar.classList.add('visible');
+
+  // Badge count
+  document.getElementById('gtb-badge').textContent = keys.length;
+
+  // Collapsed bar: show most recent task summary
+  const lastKey = keys[keys.length - 1];
+  const lastTask = window._bgTasks[lastKey];
+  const lp = lastTask._lastProgress || {};
+  document.getElementById('gtb-label').textContent = lastTask.label;
+  document.getElementById('gtb-progress').innerHTML =
+    `<div class="progress-bar-wrap" style="height:16px"><div class="progress-bar-fill ${lp.statusType || (lp.pct == null ? 'indeterminate' : '')}" style="width:${lp.pct != null ? lp.pct : 100}%"></div></div>`;
+  document.getElementById('gtb-detail').textContent = lp.detail || '';
+
+  // Expanded panel: all tasks
+  const expanded = document.getElementById('gtb-expanded');
+  expanded.innerHTML = keys.map(key => {
+    const t = window._bgTasks[key];
+    const p = t._lastProgress || {};
+    const isPaused = t.status === 'paused';
+    const isRunning = t.status === 'running';
+    let actions = '';
+    if (isRunning) {
+      actions = `<button onclick="event.stopPropagation(); pauseTask('${key}')">Pause</button>` +
+                `<button class="btn-cancel" onclick="event.stopPropagation(); cancelTask('${key}')">Cancel</button>`;
+    } else if (isPaused) {
+      actions = `<button onclick="event.stopPropagation(); resumeTask('${key}')">Resume</button>` +
+                `<button class="btn-cancel" onclick="event.stopPropagation(); cancelTask('${key}')">Cancel</button>`;
+    }
+    return `<div class="gtb-task-row">
+      <span class="gtb-task-label">${esc(t.label)}</span>
+      <div class="gtb-task-bar">
+        <div class="progress-bar-wrap" style="height:14px"><div class="progress-bar-fill ${p.statusType || (p.pct == null ? 'indeterminate' : '')}" style="width:${p.pct != null ? p.pct : 100}%"></div></div>
+      </div>
+      <span class="gtb-task-detail">${esc(p.detail || '')}</span>
+      <div class="gtb-task-actions">${actions}</div>
+    </div>`;
+  }).join('');
+}
+
+async function pauseTask(taskKey) {
+  const t = window._bgTasks[taskKey];
+  if (!t) return;
+  try {
+    await window.api('POST', `/projects/${t.projectId}/tasks/${t.taskId}/pause`);
+    t.status = 'paused';
+    _renderTaskPanel();
+  } catch (e) { console.warn('pause error:', e); }
+}
+
+async function resumeTask(taskKey) {
+  const t = window._bgTasks[taskKey];
+  if (!t) return;
+  try {
+    await window.api('POST', `/projects/${t.projectId}/tasks/${t.taskId}/resume`);
+    t.status = 'running';
+    _renderTaskPanel();
+  } catch (e) { console.warn('resume error:', e); }
+}
+
+async function cancelTask(taskKey) {
+  const t = window._bgTasks[taskKey];
+  if (!t) return;
+  if (!confirm(`Cancel "${t.label}"? This will terminate the task.`)) return;
+  try {
+    await window.api('POST', `/projects/${t.projectId}/tasks/${t.taskId}/cancel`);
+    if (t._cancel) t._cancel();
+    delete window._bgTasks[taskKey];
+    toast(`${t.label} cancelled`, 'info');
+    _renderTaskPanel();
+    try { if (t.onComplete) t.onComplete(); } catch(e) { console.warn('onComplete error:', e); }
+  } catch (e) { console.warn('cancel error:', e); }
+}
+
+async function restoreActiveTasks(projectId) {
+  try {
+    const tasks = await window.api('GET', `/projects/${projectId}/tasks/active`);
+    if (!tasks || !tasks.length) return;
+    const _TASK_LABELS = {
+      transform: 'Transform', merge: 'Merge',
+      preflight: 'Preflight', bulkmarc: 'Push Bibs',
+      patrons: 'Push Patrons', holds: 'Push Holds',
+      circ: 'Push Circ', reindex: 'Reindex',
+    };
+    for (const t of tasks) {
+      if (!t.task_id) continue;
+      // Build a stageType from task_type
+      let stageType = t.task_type;
+      if (['preflight','bulkmarc','patrons','holds','circ','reindex'].includes(t.task_type)) stageType = 'push';
+      const taskKey = `${stageType}-${projectId}`;
+      if (window._bgTasks[taskKey]) continue; // already tracking
+      const label = _TASK_LABELS[t.task_type] || t.task_type;
+      pollTaskStatus(projectId, t.task_id, null, label, stageType, null);
+    }
+  } catch (e) { console.warn('restoreActiveTasks error:', e); }
 }
 
 function _parseProgress(r, label) {
@@ -6081,7 +6225,9 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
   window._bgTasks[taskKey] = {
     projectId, taskId, label, stageType, onComplete, status: 'running',
     _cancel: () => { cancelled = true; },
+    _lastProgress: {},
   };
+  _renderTaskPanel();
 
   const statusEndpoints = {
     transform:       `/projects/${projectId}/transform/status?task_id=${taskId}`,
@@ -6104,31 +6250,36 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
       if (!r || cancelled) return;
       const p = _parseProgress(r, label);
 
-      // Update inline element if it still exists on page
-      const el = document.getElementById(statusElId);
-      if (el) {
-        el.innerHTML = renderProgressBar({ percent: p.pct, label: p.barLabel, status: p.statusType, detail: p.detail });
+      // Store latest progress for panel rendering
+      if (window._bgTasks[taskKey]) {
+        window._bgTasks[taskKey]._lastProgress = p;
+        // Sync paused state from backend
+        if (p.state === 'PAUSED') window._bgTasks[taskKey].status = 'paused';
+        else if (p.state === 'PROGRESS' || p.state === 'STARTED') window._bgTasks[taskKey].status = 'running';
       }
 
-      // Always update global bar
-      _showGlobalBar(taskKey, label,
-        `<div class="progress-bar-wrap" style="height:16px"><div class="progress-bar-fill ${p.statusType || (p.pct == null ? 'indeterminate' : '')}" style="width:${p.pct != null ? p.pct : 100}%"></div></div>`,
-        p.detail
-      );
+      // Update inline element if it still exists on page
+      if (statusElId) {
+        const el = document.getElementById(statusElId);
+        if (el) {
+          el.innerHTML = renderProgressBar({ percent: p.pct, label: p.barLabel, status: p.statusType, detail: p.detail });
+        }
+      }
+
+      // Always update the panel
+      _renderTaskPanel();
 
       if (p.state === 'SUCCESS') {
         finished = true;
         toast(`${label} complete`, 'success');
-        window._bgTasks[taskKey].status = 'complete';
-        setTimeout(_hideGlobalBar, 5000);
         delete window._bgTasks[taskKey];
+        _renderTaskPanel();
         try { if (onComplete) onComplete(); } catch(e) { console.warn('onComplete error:', e); }
       } else if (p.state === 'FAILURE') {
         finished = true;
         toast(`${label} failed`, 'error');
-        window._bgTasks[taskKey].status = 'error';
-        setTimeout(_hideGlobalBar, 8000);
         delete window._bgTasks[taskKey];
+        _renderTaskPanel();
         try { if (onComplete) onComplete(); } catch(e) { console.warn('onComplete error:', e); }
       }
     } catch (e) { console.warn('poll error:', e); }
@@ -6172,6 +6323,11 @@ window.navigate = function(view, params = {}) {
   const renderer = renders[view];
   if (renderer) renderer(viewEl);
   updateBreadcrumb(view);
+
+  // Restore active tasks for the current project on any navigation
+  if (state.currentProject && state.currentProject.id) {
+    restoreActiveTasks(state.currentProject.id);
+  }
 };
 
 // ── Init ─────────────────────────────────────────────────────────────

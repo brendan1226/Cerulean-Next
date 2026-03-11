@@ -26,6 +26,7 @@ from cerulean.core.config import get_settings
 from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.helpers import check_paused as _check_paused
 from cerulean.tasks.push import _find_marc_paths
 
 settings = get_settings()
@@ -124,6 +125,7 @@ def dedup_scan_task(self, project_id: str, rule_id: str) -> dict:
 
                 record_index += 1
                 if record_index % _PROGRESS_INTERVAL == 0:
+                    _check_paused(project_id, self)
                     self.update_state(
                         state="PROGRESS",
                         meta={"records_scanned": record_index},
@@ -314,6 +316,7 @@ def dedup_apply_task(self, project_id: str, rule_id: str) -> dict:
                 out_fh.write(record.as_marc())
                 records_out += 1
                 if records_out % _PROGRESS_INTERVAL == 0:
+                    _check_paused(project_id, self)
                     self.update_state(
                         state="PROGRESS",
                         meta={"records_written": records_out, "records_total": len(all_records)},

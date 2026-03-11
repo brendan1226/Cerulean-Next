@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.helpers import check_paused as _check_paused
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -490,6 +491,7 @@ def patron_scan_task(self, project_id: str) -> dict:
                         value_counts[(koha_hdr, val)] += 1
 
                 if rows_scanned % _PROGRESS_INTERVAL == 0:
+                    _check_paused(project_id, self)
                     self.update_state(state="PROGRESS", meta={
                         "rows_scanned": rows_scanned,
                     })
@@ -696,6 +698,7 @@ def patron_apply_task(self, project_id: str) -> dict:
                     rows_out += 1
 
                     if rows_in % _PROGRESS_INTERVAL == 0:
+                        _check_paused(project_id, self)
                         self.update_state(state="PROGRESS", meta={
                             "rows_processed": rows_in,
                             "rules_applied": rules_applied,

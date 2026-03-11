@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.helpers import check_paused as _check_paused
 from cerulean.utils.marc import iter_marc as _iter_marc
 
 settings = get_settings()
@@ -259,6 +260,7 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                     total += 1
                     success += 1
                     if total % _PROGRESS_INTERVAL == 0:
+                        _check_paused(project_id, self)
                         self.update_state(state="PROGRESS", meta={
                             "records_done": total, "dry_run": True,
                         })
@@ -317,6 +319,7 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                                 log.warn(f"Record {total} HTTP error: {exc}")
 
                         if total % _PROGRESS_INTERVAL == 0:
+                            _check_paused(project_id, self)
                             self.update_state(state="PROGRESS", meta={
                                 "records_done": total,
                                 "records_success": success,
@@ -451,6 +454,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                     else:
                         failed += 1
                     if total % _PROGRESS_INTERVAL == 0:
+                        _check_paused(project_id, self)
                         self.update_state(state="PROGRESS", meta={
                             "records_done": total, "dry_run": True,
                         })
@@ -483,6 +487,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                                 log.warn(f"Patron {total} HTTP error: {exc}")
 
                         if total % _PROGRESS_INTERVAL == 0:
+                            _check_paused(project_id, self)
                             self.update_state(state="PROGRESS", meta={
                                 "records_done": total,
                                 "records_success": success,
@@ -580,6 +585,7 @@ def push_holds_task(self, project_id: str, manifest_id: str, dry_run: bool = Tru
                     else:
                         failed += 1
                     if total % _PROGRESS_INTERVAL == 0:
+                        _check_paused(project_id, self)
                         self.update_state(state="PROGRESS", meta={
                             "records_done": total, "dry_run": True,
                         })
@@ -612,6 +618,7 @@ def push_holds_task(self, project_id: str, manifest_id: str, dry_run: bool = Tru
                                 log.warn(f"Hold {total} HTTP error: {exc}")
 
                         if total % _PROGRESS_INTERVAL == 0:
+                            _check_paused(project_id, self)
                             self.update_state(state="PROGRESS", meta={
                                 "records_done": total,
                                 "records_success": success,

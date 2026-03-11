@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.helpers import check_paused as _check_paused
 from cerulean.utils.marc import iter_marc as _iter_marc
 
 settings = get_settings()
@@ -117,6 +118,7 @@ def reconciliation_scan_task(self, project_id: str) -> dict:
                                 value_counts[(cat, val)] += 1
 
             if records_scanned % _PROGRESS_INTERVAL == 0:
+                _check_paused(project_id, self)
                 self.update_state(state="PROGRESS", meta={
                     "records_scanned": records_scanned,
                 })
@@ -263,6 +265,7 @@ def reconciliation_apply_task(self, project_id: str) -> dict:
                 records_out += 1
 
                 if records_in % _PROGRESS_INTERVAL == 0:
+                    _check_paused(project_id, self)
                     self.update_state(state="PROGRESS", meta={
                         "records_processed": records_in,
                         "rules_applied": rules_applied,

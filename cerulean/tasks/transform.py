@@ -22,7 +22,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pymarc
-import redis
 from pymarc import Subfield
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
@@ -30,21 +29,12 @@ from sqlalchemy.orm import Session
 from cerulean.core.config import get_settings
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
+from cerulean.tasks.helpers import check_paused as _check_paused
 from cerulean.utils.marc import iter_marc as _iter_marc, get_001 as _get_001, write_marc as _write_marc
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
 _engine = create_engine(_sync_url, pool_pre_ping=True)
-_redis = redis.from_url(settings.redis_url)
-
-
-def _check_paused(project_id: str, self=None) -> None:
-    """Block while the project's pause flag is set in Redis."""
-    key = f"cerulean:pause:{project_id}"
-    while _redis.exists(key):
-        if self:
-            self.update_state(state="PAUSED", meta={"paused": True})
-        time.sleep(1)
 
 _PROGRESS_INTERVAL = 500
 
