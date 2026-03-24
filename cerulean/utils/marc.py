@@ -81,11 +81,12 @@ def sanitize_record(record: pymarc.Record) -> pymarc.Record:
             if field.data:
                 field.data = _XML_ILLEGAL_CHARS.sub('', field.data)
         else:
-            for sf in field.subfields:
-                if sf.value:
-                    cleaned = _XML_ILLEGAL_CHARS.sub('', sf.value)
-                    if cleaned != sf.value:
-                        sf.value = cleaned
+            field.subfields = [
+                sf._replace(value=_XML_ILLEGAL_CHARS.sub('', sf.value))
+                if sf.value and _XML_ILLEGAL_CHARS.search(sf.value)
+                else sf
+                for sf in field.subfields
+            ]
     return record
 
 

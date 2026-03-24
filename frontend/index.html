@@ -1461,6 +1461,24 @@ async function renderStage1(el) {
       </div>
       <div class="card">
         <div class="card-header">
+          <span class="card-title">Upload Item/Holdings CSV</span>
+        </div>
+        <div class="alert alert-info">Item data CSV (separate from MARC). Mapped to 952 in Stage 2.</div>
+        <div id="drop-zone-items" style="border:2px dashed var(--border-mid);border-radius:var(--radius-lg);padding:32px;text-align:center;cursor:pointer;transition:all 0.2s"
+          onclick="document.getElementById('items-file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--amber)'"
+          ondragleave="this.style.borderColor='var(--border-mid)'"
+          ondrop="handleItemsFileDrop(event)">
+          <div style="font-size:28px;margin-bottom:8px;opacity:0.4">⊞</div>
+          <div class="mono" style="font-size:12px;color:var(--text-secondary)">Drop items CSV here or click to browse</div>
+        </div>
+        <input type="file" id="items-file-input" style="display:none" accept=".csv,.tsv,.txt"
+          onchange="uploadItemsFiles(this.files)">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div class="card">
+        <div class="card-header">
           <span class="card-title">ILS Detection</span>
         </div>
         <div id="ils-result">
@@ -1471,6 +1489,10 @@ async function renderStage1(el) {
           }
         </div>
       </div>
+      <div class="card" id="items-csv-summary-card" style="display:none">
+        <div class="card-header"><span class="card-title">Item CSV Summary</span></div>
+        <div id="items-csv-summary"></div>
+      </div>
     </div>
     <div class="card">
       <div class="card-header">
@@ -1478,6 +1500,16 @@ async function renderStage1(el) {
         <button class="btn btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
       </div>
       <div id="file-table-wrap"><div class="spinner"></div></div>
+    </div>
+    <div class="card" id="items-csv-detail-card" style="display:none">
+      <div class="card-header">
+        <span class="card-title">Item CSV — Columns &amp; Preview</span>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm s1-items-tab active" onclick="s1SwitchItemsTab('columns', this)">Columns</button>
+          <button class="btn btn-ghost btn-sm s1-items-tab" onclick="s1SwitchItemsTab('preview', this)">Data Preview</button>
+        </div>
+      </div>
+      <div id="items-csv-detail-body"><div class="spinner"></div></div>
     </div>`;
 
   loadFiles();
@@ -1489,28 +1521,75 @@ async function loadFiles() {
   if (!wrap) return;
   try {
     const files = await api('GET', `/projects/${p.id}/files`);
+    const marcFiles = files.filter(f => f.file_category !== 'items_csv');
+    const itemsFiles = files.filter(f => f.file_category === 'items_csv');
+
     if (!files.length) {
       wrap.innerHTML = `<div class="empty-state" style="padding:24px">
         <div class="empty-title">No files uploaded yet</div>
       </div>`;
       return;
     }
-    wrap.innerHTML = `<table class="data-table">
-      <thead><tr>
-        <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th><th></th>
-      </tr></thead>
-      <tbody>
-        ${files.map(f => `<tr>
-          <td class="mono">${esc(f.filename)}</td>
-          <td><span class="badge badge-dim">${f.file_format || '—'}</span></td>
-          <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
-          <td class="text-secondary">${f.ils_signal || '—'}</td>
-          <td>${statusBadge(f.status)}</td>
-          <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
-          <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+
+    let html = '';
+    if (marcFiles.length) {
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">MARC Files</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${marcFiles.map(f => `<tr>
+            <td class="mono">${esc(f.filename)}</td>
+            <td><span class="badge badge-dim">${f.file_format || '—'}</span></td>
+            <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
+            <td class="text-secondary">${f.ils_signal || '—'}</td>
+            <td>${statusBadge(f.status)}</td>
+            <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
+            <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+    }
+
+    if (itemsFiles.length) {
+      html += `<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin:16px 0 4px;text-transform:uppercase;letter-spacing:0.05em">Item CSV Files</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Filename</th><th>Columns</th><th>Rows</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${itemsFiles.map(f => `<tr>
+            <td class="mono">${esc(f.filename)}</td>
+            <td class="mono">${f.column_headers ? f.column_headers.length : '—'}</td>
+            <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
+            <td>${statusBadge(f.status)}</td>
+            <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+
+      // Update items CSV summary card + detail panel
+      const summaryCard = document.getElementById('items-csv-summary-card');
+      const summaryEl = document.getElementById('items-csv-summary');
+      if (summaryCard && summaryEl && itemsFiles[0].status === 'indexed') {
+        summaryCard.style.display = '';
+        const f = itemsFiles[0];
+        summaryEl.innerHTML = `
+          <div style="font-size:12px;color:var(--text-secondary)">
+            <strong>${f.column_headers ? f.column_headers.length : 0}</strong> columns,
+            <strong>${f.record_count ? f.record_count.toLocaleString() : 0}</strong> rows
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text-dim)">
+            ${(f.column_headers || []).slice(0, 8).map(h => `<span class="badge badge-dim" style="margin:2px">${esc(h)}</span>`).join('')}
+            ${f.column_headers && f.column_headers.length > 8 ? `<span class="text-dim">+${f.column_headers.length - 8} more</span>` : ''}
+          </div>`;
+        // Show detail panel with columns + preview
+        s1ShowItemsCsvDetail(f);
+      }
+    }
+
+    wrap.innerHTML = html || `<div class="empty-state" style="padding:24px"><div class="empty-title">No files uploaded yet</div></div>`;
   } catch (e) { console.error(e); }
 }
 
@@ -1522,6 +1601,148 @@ async function uploadFiles(fileList) {
   }
   // Poll file list until all are indexed
   pollFileStatus();
+}
+
+function handleItemsFileDrop(event) {
+  event.preventDefault();
+  event.currentTarget.style.borderColor = 'var(--border-mid)';
+  if (event.dataTransfer.files.length) uploadItemsFiles(event.dataTransfer.files);
+}
+
+async function uploadItemsFiles(fileList) {
+  const p = state.currentProject;
+  const wrap = document.getElementById('file-table-wrap');
+  for (const file of fileList) {
+    await _uploadSingleItemFile(p, file, wrap);
+  }
+  pollFileStatus();
+}
+
+async function _uploadSingleItemFile(project, file, wrap) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const uploadId = 'upload-item-' + Date.now();
+  if (wrap) {
+    const div = document.createElement('div');
+    div.id = uploadId;
+    div.style.marginBottom = '8px';
+    div.innerHTML = renderProgressBar({ label: `Uploading items CSV ${file.name}…` });
+    wrap.prepend(div);
+  }
+  try {
+    const url = `${API_BASE}/projects/${project.id}/files?mode=replace&category=items_csv`;
+    const res = await fetch(url, { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
+      throw new Error(err.detail?.message || err.detail || `HTTP ${res.status}`);
+    }
+    const el = document.getElementById(uploadId);
+    if (el) el.innerHTML = renderProgressBar({ percent: 100, label: `${file.name} — indexing…`, detail: 'Processing…' });
+    toast(`${file.name} uploaded — indexing columns`, 'success');
+  } catch (e) {
+    const el = document.getElementById(uploadId);
+    if (el) el.innerHTML = renderProgressBar({ percent: 100, label: `${file.name} failed`, status: 'error', detail: e.message });
+    toast(`Upload failed (${file.name}): ${e.message}`, 'error');
+  }
+}
+
+// ── Stage 1: Items CSV Detail Panel ─────────────────────────────────
+
+let _s1ItemsFile = null;
+
+function s1ShowItemsCsvDetail(itemsFile) {
+  _s1ItemsFile = itemsFile;
+  const card = document.getElementById('items-csv-detail-card');
+  if (card) card.style.display = '';
+  s1RenderItemsColumns();
+}
+
+function s1SwitchItemsTab(tab, btn) {
+  document.querySelectorAll('.s1-items-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (tab === 'columns') s1RenderItemsColumns();
+  else s1RenderItemsPreview();
+}
+
+function s1RenderItemsColumns() {
+  const body = document.getElementById('items-csv-detail-body');
+  if (!body || !_s1ItemsFile) return;
+
+  const f = _s1ItemsFile;
+  const headers = f.column_headers || [];
+  const tagFreq = f.tag_frequency || {};
+  const subFreq = f.subfield_frequency || {};
+  const totalRows = f.record_count || 0;
+  const isGenerated = headers.length > 0 && headers[0].startsWith('col_');
+
+  let html = '';
+  if (isGenerated) {
+    html += `<div class="alert alert-warn" style="font-size:12px;margin-bottom:12px">
+      No header row detected in this CSV. Click any column name below to rename it based on the sample values shown.
+    </div>`;
+  }
+
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:8px">`;
+
+  for (let idx = 0; idx < headers.length; idx++) {
+    const col = headers[idx];
+    const pop = tagFreq[col] || 0;
+    const info = subFreq[col] || {};
+    const uniq = info.unique || 0;
+    const samples = (info.samples || []).slice(0, 5);
+    const pct = totalRows > 0 ? Math.round((pop / totalRows) * 100) : 0;
+
+    html += `<div style="padding:10px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--bg-secondary)">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span class="text-dim" style="font-size:10px;min-width:18px">#${idx + 1}</span>
+        <span class="mono" style="font-weight:600;font-size:12px;cursor:pointer;border-bottom:1px dashed var(--border-mid)"
+          onclick="startRenameColumn('${esc(col)}', this)" title="Click to rename">${esc(col)}</span>
+        <span class="text-dim" style="font-size:10px;margin-left:auto">${pct}% · ${uniq.toLocaleString()} uniq</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px">
+        ${samples.map(s => `<span class="badge badge-dim" style="font-size:10px;font-family:var(--font-mono);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s)}">${esc(s.length > 24 ? s.slice(0, 21) + '…' : s)}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+  body.innerHTML = html;
+}
+
+async function s1RenderItemsPreview() {
+  const body = document.getElementById('items-csv-detail-body');
+  if (!body || !_s1ItemsFile) return;
+
+  body.innerHTML = '<div class="spinner" style="padding:20px"></div>';
+  const p = state.currentProject;
+
+  try {
+    const preview = await api('GET', `/projects/${p.id}/items/preview?limit=25`);
+    if (!preview || !preview.rows.length) {
+      body.innerHTML = '<div class="text-dim" style="padding:20px;font-size:12px">No data to preview.</div>';
+      return;
+    }
+
+    const cols = preview.columns || [];
+    let html = `<div style="overflow:auto;max-height:calc(100vh - 400px)">
+      <table class="data-table" style="font-size:11px;white-space:nowrap">
+        <thead><tr>${cols.map(c => `<th class="mono" style="cursor:pointer;border-bottom:2px solid var(--cerulean)" onclick="startRenameColumn('${esc(c)}', this)" title="Click to rename">${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>`;
+
+    for (const row of preview.rows) {
+      html += '<tr>';
+      for (const c of cols) {
+        const val = row[c] || '';
+        const display = val === 'NULL' ? '<span class="text-dim">NULL</span>' : esc(val.length > 40 ? val.slice(0, 37) + '…' : val);
+        html += `<td title="${esc(val)}">${display}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += `</tbody></table></div>
+      <div class="text-dim" style="font-size:11px;margin-top:8px">Showing ${preview.rows.length} of ${preview.total_rows.toLocaleString()} rows</div>`;
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<div class="alert alert-error" style="font-size:12px">Failed to load preview: ${esc(e.message)}</div>`;
+  }
 }
 
 async function _uploadSingleFile(project, file, wrap, mode) {
@@ -1658,6 +1879,9 @@ function statusBadge(status) {
 const s2 = {
   files: [],
   selectedFile: null,
+  selectedItemsCsv: null,
+  itemsCsvFiles: [],
+  itemMaps: [],
   tagData: null,
   subfieldData: null,
   selectedTag: null,
@@ -1728,28 +1952,46 @@ async function s2LoadFiles() {
   const p = state.currentProject;
   try {
     const allFiles = await api('GET', `/projects/${p.id}/files`);
-    const files = (allFiles || []).filter(f => f.filename && f.filename.toLowerCase().endsWith('.mrc'));
-    s2.files = files;
+    const marcFiles = (allFiles || []).filter(f => f.file_category !== 'items_csv' && f.filename);
+    const itemsCsvFiles = (allFiles || []).filter(f => f.file_category === 'items_csv');
+    s2.files = marcFiles;
+    s2.itemsCsvFiles = itemsCsvFiles;
     const left = document.getElementById('s2-left');
     if (!left) return;
 
-    if (!files.length) {
+    if (!marcFiles.length && !itemsCsvFiles.length) {
       left.innerHTML = `<div class="text-dim" style="font-size:12px;text-align:center;padding:20px">No files uploaded. Go to Stage 1 to upload MARC files.</div>`;
       return;
     }
 
-    left.innerHTML = `
-      <div style="margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Files</div>
-      ${files.map(f => `
-        <div class="s2-file-item ${s2.selectedFile?.id === f.id ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectFile(${JSON.stringify(f).replace(/"/g,'&quot;')})">
+    let html = '';
+    if (marcFiles.length) {
+      html += `<div style="margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">MARC Files</div>
+      ${marcFiles.map(f => `
+        <div class="s2-file-item ${s2.selectedFile?.id === f.id && !s2.selectedItemsCsv ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectFile(${JSON.stringify(f).replace(/"/g,'&quot;')})">
           <span class="mono" style="font-size:11px">${esc(f.filename)}</span>
           <span class="text-dim mono" style="font-size:10px">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</span>
-        </div>`).join('')}
-      <div id="s2-tag-section"></div>`;
+        </div>`).join('')}`;
+    }
+
+    if (itemsCsvFiles.length) {
+      html += `<div style="margin:12px 0 8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Item CSV Files</div>
+      ${itemsCsvFiles.map(f => `
+        <div class="s2-file-item ${s2.selectedItemsCsv?.id === f.id ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectItemsCsv(${JSON.stringify(f).replace(/"/g,'&quot;')})">
+          <span class="mono" style="font-size:11px">${esc(f.filename)}</span>
+          <span class="text-dim mono" style="font-size:10px">${f.record_count != null ? f.record_count.toLocaleString() + ' rows' : '—'}</span>
+        </div>`).join('')}`;
+    }
+
+    html += `<div id="s2-tag-section"></div>`;
+    left.innerHTML = html;
 
     // Auto-select first file if none selected
-    if (!s2.selectedFile && files.length) {
-      s2SelectFile(files[0]);
+    if (!s2.selectedFile && !s2.selectedItemsCsv && marcFiles.length) {
+      s2SelectFile(marcFiles[0]);
+    } else if (s2.selectedItemsCsv) {
+      s2RenderItemsCsvCenter();
+      s2RenderItemsMappingPanel();
     } else if (s2.selectedFile) {
       s2RenderTags();
     }
@@ -1758,6 +2000,7 @@ async function s2LoadFiles() {
 
 async function s2SelectFile(file) {
   s2.selectedFile = file;
+  s2.selectedItemsCsv = null;
   s2.recordIndex = 0;
   s2.selectedTag = null;
 
@@ -1765,6 +2008,14 @@ async function s2SelectFile(file) {
   document.querySelectorAll('.s2-file-item').forEach(el => {
     el.classList.toggle('active', el.dataset.fid === file.id);
   });
+
+  // Restore MARC panels
+  const centerHeader = document.querySelector('.s2-panel:nth-child(2) .s2-panel-header');
+  if (centerHeader) centerHeader.textContent = 'Record Inspector';
+  const recNav = document.getElementById('s2-record-nav');
+  if (recNav) recNav.style.display = '';
+  const rightHeader = document.querySelector('.s2-panel:nth-child(3) .s2-panel-header');
+  if (rightHeader) rightHeader.innerHTML = 'Field Mapper <button class="btn btn-ghost btn-sm" onclick="openNewMapModal()">+ Add</button>';
 
   // Load tag frequency
   try {
@@ -1779,6 +2030,410 @@ async function s2SelectFile(file) {
 
   // Load first record
   s2LoadRecord(0);
+}
+
+async function s2SelectItemsCsv(file) {
+  s2.selectedItemsCsv = file;
+  s2.selectedFile = null;
+  s2.selectedTag = null;
+
+  // Highlight active file
+  document.querySelectorAll('.s2-file-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.fid === file.id);
+  });
+
+  // Update panel headers
+  const centerHeader = document.querySelector('.s2-panel:nth-child(2) .s2-panel-header');
+  if (centerHeader) centerHeader.innerHTML = `
+    <span style="display:flex;gap:4px">
+      <button class="btn btn-ghost btn-sm s2-items-tab active" onclick="s2SwitchItemsTab('columns', this)" style="font-size:10px;padding:3px 8px">Columns</button>
+      <button class="btn btn-ghost btn-sm s2-items-tab" onclick="s2SwitchItemsTab('preview', this)" style="font-size:10px;padding:3px 8px">Data Preview</button>
+    </span>`;
+  const recNav = document.getElementById('s2-record-nav');
+  if (recNav) recNav.style.display = 'none';
+
+  const rightHeader = document.querySelector('.s2-panel:nth-child(3) .s2-panel-header');
+  if (rightHeader) rightHeader.innerHTML = 'Item Column Mapping <button class="btn btn-ghost btn-sm" onclick="openNewItemMapModal()">+ Add</button>';
+
+  s2.itemsCsvTab = 'columns';
+  s2RenderItemsCsvCenter();
+  s2RenderItemsMappingPanel();
+}
+
+async function s2RenderItemsCsvCenter() {
+  const center = document.getElementById('s2-center');
+  if (!center || !s2.selectedItemsCsv) return;
+
+  const f = s2.selectedItemsCsv;
+  const p = state.currentProject;
+
+  // Column stats from tag_frequency (populated count) and subfield_frequency (unique + samples)
+  const headers = f.column_headers || [];
+  const tagFreq = f.tag_frequency || {};
+  const subFreq = f.subfield_frequency || {};
+  const totalRows = f.record_count || 0;
+  const isGenerated = headers.length > 0 && headers[0].startsWith('col_');
+
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">
+      ${headers.length} Columns · ${totalRows.toLocaleString()} Rows
+    </div>
+    ${isGenerated ? '<div style="font-size:10px;color:var(--amber)">No header row detected — click column names to rename</div>' : ''}
+  </div>
+  <div style="max-height:calc(100vh - 320px);overflow:auto">`;
+
+  for (let idx = 0; idx < headers.length; idx++) {
+    const col = headers[idx];
+    const pop = tagFreq[col] || 0;
+    const info = subFreq[col] || {};
+    const uniq = info.unique || 0;
+    const samples = (info.samples || []).slice(0, 6);
+    const pct = totalRows > 0 ? Math.round((pop / totalRows) * 100) : 0;
+
+    html += `<div style="padding:8px 10px;border-bottom:1px solid var(--border);${idx % 2 === 0 ? 'background:var(--bg-secondary);' : ''}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span class="mono" style="font-size:10px;color:var(--text-dim);min-width:20px">#${idx + 1}</span>
+        <span class="mono items-col-name" style="font-weight:600;font-size:12px;cursor:pointer;border-bottom:1px dashed var(--border-mid);padding-bottom:1px"
+          onclick="startRenameColumn('${esc(col)}', this)" title="Click to rename">${esc(col)}</span>
+        <span class="text-dim" style="font-size:10px;margin-left:auto">${pop.toLocaleString()} populated (${pct}%) · ${uniq.toLocaleString()} unique</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:28px">
+        ${samples.map(s => `<span class="badge badge-dim" style="font-size:10px;font-family:var(--font-mono);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s)}">${esc(s.length > 30 ? s.slice(0, 27) + '…' : s)}</span>`).join('')}
+        ${info.unique > 6 ? `<span class="text-dim" style="font-size:10px">+${(info.unique - 6).toLocaleString()} more</span>` : ''}
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // Match key config
+  html += `<div style="margin-top:12px;padding:12px;background:var(--bg-secondary);border-radius:var(--radius-lg);border:1px solid var(--border)">
+    <div style="font-size:11px;font-weight:600;margin-bottom:8px;color:var(--text-secondary)">Match Key Configuration</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>
+        <label class="form-label" style="font-size:11px">CSV Key Column</label>
+        <select class="form-input" id="items-key-col-select" onchange="updateItemMatchConfig()" style="font-size:11px">
+          <option value="">— select —</option>
+          ${headers.map(h => `<option value="${esc(h)}" ${p.items_csv_key_column === h ? 'selected' : ''}>${esc(h)}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="form-label" style="font-size:11px">MARC Match Tag</label>
+        <select class="form-input" id="items-match-tag-select" onchange="updateItemMatchConfig()" style="font-size:11px">
+          <option value="001" ${(!p.items_csv_match_tag || p.items_csv_match_tag === '001') ? 'selected' : ''}>001</option>
+          <option value="035" ${p.items_csv_match_tag === '035' ? 'selected' : ''}>035</option>
+          <option value="090" ${p.items_csv_match_tag === '090' ? 'selected' : ''}>090</option>
+          <option value="999" ${p.items_csv_match_tag === '999' ? 'selected' : ''}>999</option>
+        </select>
+      </div>
+    </div>
+  </div>`;
+
+  center.innerHTML = html;
+}
+
+function startRenameColumn(oldName, spanEl) {
+  // Replace the span with an inline input
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = oldName;
+  input.className = 'form-input mono';
+  input.style.cssText = 'font-size:12px;font-weight:600;padding:2px 6px;width:160px;height:22px;margin:0';
+
+  const commit = () => {
+    const newName = input.value.trim();
+    if (newName && newName !== oldName) {
+      doRenameColumn(oldName, newName);
+    } else {
+      // Revert — put the span back
+      input.replaceWith(spanEl || _makeColSpan(oldName));
+    }
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { input.replaceWith(spanEl || _makeColSpan(oldName)); }
+  });
+  input.addEventListener('blur', commit);
+
+  if (spanEl) {
+    spanEl.replaceWith(input);
+  }
+  input.focus();
+  input.select();
+}
+
+function _makeColSpan(name) {
+  const span = document.createElement('span');
+  span.className = 'mono items-col-name';
+  span.style.cssText = 'font-weight:600;font-size:12px;cursor:pointer;border-bottom:1px dashed var(--border-mid);padding-bottom:1px';
+  span.title = 'Click to rename';
+  span.textContent = name;
+  span.onclick = function() { startRenameColumn(name, this); };
+  return span;
+}
+
+async function doRenameColumn(oldName, newName) {
+  const p = state.currentProject;
+  if (!newName || newName === oldName) return;
+  try {
+    const r = await api('POST', `/projects/${p.id}/items/rename-column`, {
+      old_name: oldName,
+      new_name: newName,
+    });
+    toast(r.message || `Renamed to ${newName}`, 'success');
+
+    // Re-fetch files to get updated headers/frequencies
+    const allFiles = await api('GET', `/projects/${p.id}/files`);
+    const proj = await api('GET', `/projects/${p.id}`);
+    if (proj) state.currentProject = proj;
+
+    // Refresh Stage 1 detail panel if visible
+    const updatedForS1 = (allFiles || []).find(f => f.file_category === 'items_csv' && f.id === _s1ItemsFile?.id);
+    if (updatedForS1) {
+      _s1ItemsFile = updatedForS1;
+      s1RenderItemsColumns();
+      loadFiles(); // refresh file list
+    }
+
+    // Refresh Stage 2 panels if active
+    const updatedForS2 = (allFiles || []).find(f => f.file_category === 'items_csv' && f.id === s2.selectedItemsCsv?.id);
+    if (updatedForS2) {
+      s2.selectedItemsCsv = updatedForS2;
+      s2RenderItemsCsvCenter();
+      s2RenderItemsMappingPanel();
+      s2LoadFiles();
+    }
+  } catch (e) {
+    toast(`Rename failed: ${e.message}`, 'error');
+  }
+}
+
+async function updateItemMatchConfig() {
+  const p = state.currentProject;
+  const keyCol = document.getElementById('items-key-col-select')?.value || null;
+  const matchTag = document.getElementById('items-match-tag-select')?.value || '001';
+  try {
+    const result = await api('PUT', `/projects/${p.id}/items/match-config`, {
+      items_csv_key_column: keyCol,
+      items_csv_match_tag: matchTag,
+    });
+    if (result) {
+      p.items_csv_key_column = result.items_csv_key_column;
+      p.items_csv_match_tag = result.items_csv_match_tag;
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function s2RenderItemsMappingPanel() {
+  const right = document.getElementById('s2-right');
+  if (!right) return;
+  right.innerHTML = '<div class="spinner"></div>';
+
+  const p = state.currentProject;
+  try {
+    const maps = await api('GET', `/projects/${p.id}/items/maps`);
+    s2.itemMaps = maps || [];
+
+    if (!maps.length) {
+      right.innerHTML = `
+        <div class="text-dim" style="font-size:12px;text-align:center;padding:20px">
+          No column mappings yet.
+          <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="runItemsAISuggest()">✦ AI Suggest Mappings</button>
+        </div>`;
+      return;
+    }
+
+    let html = `
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="runItemsAISuggest()">✦ AI Suggest</button>
+        <button class="btn btn-ghost btn-sm" onclick="approveAllItemMaps()">✓ Approve All</button>
+      </div>
+      <div id="items-ai-progress"></div>
+      <div style="max-height:calc(100vh - 280px);overflow:auto">`;
+
+    for (const m of maps) {
+      const confBadge = m.ai_confidence != null
+        ? `<span class="badge ${m.ai_confidence >= 0.85 ? 'badge-cerulean' : m.ai_confidence >= 0.5 ? 'badge-blue' : 'badge-amber'}" style="font-size:9px">${Math.round(m.ai_confidence * 100)}%</span>`
+        : '';
+      const approvedBadge = m.approved ? '<span class="badge badge-cerulean" style="font-size:9px">approved</span>' : '';
+      const ignoredBadge = m.ignored ? '<span class="badge badge-dim" style="font-size:9px">ignored</span>' : '';
+
+      html += `
+        <div style="padding:8px;border-bottom:1px solid var(--border);font-size:11px">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <span class="mono" style="font-weight:600">${esc(m.source_column)}</span>
+            <span class="text-dim">→</span>
+            <span class="mono ${m.target_subfield ? 'text-cerulean' : 'text-dim'}">${m.target_subfield ? '952$' + esc(m.target_subfield) : 'unmapped'}</span>
+            ${confBadge} ${approvedBadge} ${ignoredBadge}
+          </div>
+          ${m.ai_reasoning ? `<div class="text-dim" style="font-size:10px;margin-bottom:4px">${esc(m.ai_reasoning)}</div>` : ''}
+          <div style="display:flex;gap:4px">
+            ${!m.approved ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 6px" onclick="approveItemMap('${esc(m.id)}')">✓</button>` : ''}
+            <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 6px" onclick="editItemMap('${esc(m.id)}')">✎</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="deleteItemMap('${esc(m.id)}')">✕</button>
+          </div>
+        </div>`;
+    }
+    html += '</div>';
+    right.innerHTML = html;
+  } catch (e) {
+    console.error(e);
+    right.innerHTML = '<div class="text-dim" style="font-size:12px;padding:20px">Error loading mappings</div>';
+  }
+}
+
+async function runItemsAISuggest() {
+  const p = state.currentProject;
+  try {
+    const r = await api('POST', `/projects/${p.id}/items/maps/ai-suggest`);
+    if (!r) return;
+    toast('AI column mapping started', 'success');
+    const progEl = document.getElementById('items-ai-progress');
+    if (progEl) progEl.innerHTML = renderProgressBar({ label: 'AI analyzing columns…' });
+    _pollItemsAI(p.id, r.task_id);
+  } catch (e) {
+    toast(`AI suggest failed: ${e.message}`, 'error');
+  }
+}
+
+async function _pollItemsAI(projectId, taskId) {
+  const poll = async () => {
+    try {
+      const s = await api('GET', `/projects/${projectId}/items/maps/ai-suggest/status?task_id=${taskId}`);
+      if (s.state === 'SUCCESS') {
+        toast('AI mapping complete — review suggestions', 'success');
+        const progEl = document.getElementById('items-ai-progress');
+        if (progEl) progEl.innerHTML = '';
+        s2RenderItemsMappingPanel();
+        // Refresh project to get updated match config
+        const proj = await api('GET', `/projects/${projectId}`);
+        if (proj) { state.currentProject = proj; s2RenderItemsCsvCenter(); }
+        return;
+      }
+      if (s.state === 'FAILURE') {
+        toast('AI mapping failed', 'error');
+        const progEl = document.getElementById('items-ai-progress');
+        if (progEl) progEl.innerHTML = `<div class="alert alert-error" style="font-size:11px">${esc(s.error || 'Unknown error')}</div>`;
+        return;
+      }
+      setTimeout(poll, 2000);
+    } catch (e) { console.error(e); }
+  };
+  poll();
+}
+
+async function approveItemMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await api('POST', `/projects/${p.id}/items/maps/${mapId}/approve`);
+    s2RenderItemsMappingPanel();
+  } catch (e) { toast('Approve failed', 'error'); }
+}
+
+async function approveAllItemMaps() {
+  const p = state.currentProject;
+  try {
+    const r = await api('POST', `/projects/${p.id}/items/maps/approve-all`, {});
+    toast(r.message || `Approved ${r.approved_count} maps`, 'success');
+    s2RenderItemsMappingPanel();
+  } catch (e) { toast('Approve all failed', 'error'); }
+}
+
+async function deleteItemMap(mapId) {
+  const p = state.currentProject;
+  try {
+    await fetch(`${API_BASE}/projects/${p.id}/items/maps/${mapId}`, { method: 'DELETE' });
+    s2RenderItemsMappingPanel();
+  } catch (e) { toast('Delete failed', 'error'); }
+}
+
+async function editItemMap(mapId) {
+  const p = state.currentProject;
+  const maps = s2.itemMaps || [];
+  const m = maps.find(x => x.id === mapId);
+  if (!m) return;
+
+  const subfields = ['a','b','c','d','e','g','h','l','o','p','t','v','y','z','0','1','2','4','7','8'];
+  const labels = {a:'homebranch',b:'holdingbranch',c:'location',d:'date_accessioned',e:'booksellerid',g:'purchase_price',h:'enumchron',l:'issues',o:'callnumber',p:'barcode',t:'copynumber',v:'replacementpricedate',y:'itype',z:'itemnotes','0':'withdrawn','1':'itemlost','2':'classification_source','4':'damaged','7':'notforloan','8':'ccode'};
+
+  const html = `<div class="modal-overlay" id="edit-item-map-modal" onclick="if(event.target===this)this.remove()">
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header"><span class="modal-title">Edit: ${esc(m.source_column)}</span></div>
+      <div class="form-group">
+        <label class="form-label">Target 952 Subfield</label>
+        <select class="form-input" id="edit-item-sub">
+          <option value="">— none (ignore) —</option>
+          ${subfields.map(s => `<option value="${s}" ${m.target_subfield === s ? 'selected' : ''}>$${s} — ${labels[s] || s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="document.getElementById('edit-item-map-modal').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditItemMap('${esc(mapId)}')">Save</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function saveEditItemMap(mapId) {
+  const p = state.currentProject;
+  const sub = document.getElementById('edit-item-sub')?.value || null;
+  try {
+    await api('PATCH', `/projects/${p.id}/items/maps/${mapId}`, {
+      target_subfield: sub || null,
+      ignored: !sub,
+    });
+    document.getElementById('edit-item-map-modal')?.remove();
+    s2RenderItemsMappingPanel();
+  } catch (e) { toast('Save failed', 'error'); }
+}
+
+function openNewItemMapModal() {
+  const f = s2.selectedItemsCsv;
+  if (!f) return;
+  const headers = f.column_headers || [];
+  const subfields = ['a','b','c','d','e','g','h','l','o','p','t','v','y','z','0','1','2','4','7','8'];
+  const labels = {a:'homebranch',b:'holdingbranch',c:'location',d:'date_accessioned',e:'booksellerid',g:'purchase_price',h:'enumchron',l:'issues',o:'callnumber',p:'barcode',t:'copynumber',v:'replacementpricedate',y:'itype',z:'itemnotes','0':'withdrawn','1':'itemlost','2':'classification_source','4':'damaged','7':'notforloan','8':'ccode'};
+
+  const html = `<div class="modal-overlay" id="new-item-map-modal" onclick="if(event.target===this)this.remove()">
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header"><span class="modal-title">Add Item Column Mapping</span></div>
+      <div class="form-group">
+        <label class="form-label">CSV Column</label>
+        <select class="form-input" id="new-item-src">
+          ${headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Target 952 Subfield</label>
+        <select class="form-input" id="new-item-sub">
+          <option value="">— none (ignore) —</option>
+          ${subfields.map(s => `<option value="${s}">$${s} — ${labels[s] || s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="document.getElementById('new-item-map-modal').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveNewItemMap()">Create</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function saveNewItemMap() {
+  const p = state.currentProject;
+  const src = document.getElementById('new-item-src')?.value;
+  const sub = document.getElementById('new-item-sub')?.value || null;
+  if (!src) return;
+  try {
+    await api('POST', `/projects/${p.id}/items/maps`, {
+      source_column: src,
+      target_subfield: sub,
+      ignored: !sub,
+    });
+    document.getElementById('new-item-map-modal')?.remove();
+    s2RenderItemsMappingPanel();
+  } catch (e) { toast('Create failed', 'error'); }
 }
 
 function s2RenderTags() {
@@ -3171,15 +3826,28 @@ async function renderS3Merge() {
   el.innerHTML = '<div class="spinner"></div>';
 
   let files = [];
+  let itemsCsvFile = null;
+  let itemMaps = [];
   try {
     const allFiles = await window.api('GET', `/projects/${p.id}/files`);
-    files = (allFiles || []).filter(f => f.filename && f.filename.toLowerCase().endsWith('.mrc'));
+    files = (allFiles || []).filter(f => f.file_category !== 'items_csv' && f.filename);
+    itemsCsvFile = (allFiles || []).find(f => f.file_category === 'items_csv' && f.status === 'indexed');
   } catch (e) { console.error(e); }
+
+  try {
+    itemMaps = await window.api('GET', `/projects/${p.id}/items/maps`) || [];
+  } catch (e) { /* no maps */ }
+
+  const approvedMaps = itemMaps.filter(m => m.approved && !m.ignored && m.target_subfield);
+  const hasItemsCsv = !!itemsCsvFile;
+  const csvPath = hasItemsCsv ? itemsCsvFile.storage_path || '' : '';
+  const keyCol = p.items_csv_key_column || 'biblionumber';
+  const matchTag = p.items_csv_match_tag || '001';
 
   el.innerHTML = `
     <div class="alert alert-info">
       Merge combines all transformed files into a single merged.mrc.
-      Optionally join an items CSV to embed 952 fields.
+      ${hasItemsCsv ? 'An items CSV is configured — items will be joined as 952 fields.' : 'Optionally join an items CSV to embed 952 fields.'}
     </div>
     <div class="card" style="max-width:560px">
       <div class="card-header"><span class="card-title">Merge Files</span></div>
@@ -3195,13 +3863,30 @@ async function renderS3Merge() {
           `).join('') : '<span class="text-dim" style="font-size:12px">No MARC files found. Upload files in Stage 1.</span>'}
         </div>
       </div>
+      ${hasItemsCsv ? `
+        <div style="padding:10px;background:var(--bg-secondary);border-radius:var(--radius-lg);border:1px solid var(--border);margin-bottom:12px">
+          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Item CSV Configured</div>
+          <div style="font-size:11px;color:var(--text-dim)">
+            <span class="mono">${esc(itemsCsvFile.filename)}</span> —
+            ${itemsCsvFile.record_count ? itemsCsvFile.record_count.toLocaleString() + ' rows' : ''},
+            match: CSV <span class="mono">${esc(keyCol)}</span> ↔ MARC <span class="mono">${esc(matchTag)}</span>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:4px">
+            ${approvedMaps.length} approved mapping${approvedMaps.length !== 1 ? 's' : ''}:
+            ${approvedMaps.slice(0, 5).map(m => `<span class="badge badge-dim" style="font-size:9px">${esc(m.source_column)}→952$${esc(m.target_subfield)}</span>`).join(' ')}
+            ${approvedMaps.length > 5 ? `<span class="text-dim">+${approvedMaps.length - 5} more</span>` : ''}
+            ${!approvedMaps.length ? '<span class="badge badge-amber" style="font-size:9px">no approved mappings — will use defaults</span>' : ''}
+          </div>
+        </div>
+      ` : `
+        <div class="form-group">
+          <label class="form-label">Items CSV Path (optional)</label>
+          <input class="form-input" id="merge-csv" placeholder="/data/projects/${p.id}/items.csv">
+        </div>
+      `}
       <div class="form-group">
-        <label class="form-label">Items CSV Path (optional)</label>
-        <input class="form-input" id="merge-csv" placeholder="/data/projects/${p.id}/items.csv">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Items CSV key column (matches bib 001)</label>
-        <input class="form-input" id="merge-bib-key" value="biblionumber">
+        <label class="form-label">Items CSV key column (matches bib ${esc(matchTag)})</label>
+        <input class="form-input" id="merge-bib-key" value="${esc(keyCol)}">
       </div>
       <button class="btn btn-primary" onclick="runMerge()" ${!files.length ? 'disabled' : ''}>▶ Start Merge</button>
       <div id="merge-status" style="margin-top:12px"></div>
@@ -3212,11 +3897,16 @@ async function runMerge() {
   const p = state.currentProject;
   const ids = [...document.querySelectorAll('.merge-file-check:checked')].map(cb => cb.value);
   if (!ids.length) { toast('Select at least one file to merge', 'warn'); return; }
+  const csvPathEl = document.getElementById('merge-csv');
+  const csvPath = csvPathEl ? csvPathEl.value.trim() || null : null;
+  const keyCol = document.getElementById('merge-bib-key')?.value.trim() || p.items_csv_key_column || 'biblionumber';
+  const matchTag = p.items_csv_match_tag || '001';
   try {
     const r = await window.api('POST', `/projects/${p.id}/transform/merge`, {
       file_ids: ids,
-      items_csv_path: document.getElementById('merge-csv').value.trim() || null,
-      items_csv_key_column: document.getElementById('merge-bib-key').value.trim() || 'biblionumber',
+      items_csv_path: csvPath,
+      items_csv_key_column: keyCol,
+      items_csv_match_tag: matchTag,
     });
     if (!r) return;
     document.getElementById('merge-status').innerHTML = renderProgressBar({ label: `Merging ${ids.length} file${ids.length === 1 ? '' : 's'}…` });

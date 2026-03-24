@@ -10,6 +10,7 @@ Stage 1 Celery tasks:
 All tasks write AuditEvent rows via AuditLogger.
 """
 
+import csv
 import os
 from collections import Counter, defaultdict
 from collections.abc import Callable, Generator
@@ -100,6 +101,126 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
 
     except Exception as exc:
         log.error(f"Ingest failed: {exc}")
+        _set_file_status(file_id, "error", str(exc))
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# INGEST ITEMS CSV TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(bind=True, name="cerulean.tasks.ingest.ingest_items_csv_task")
+def ingest_items_csv_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
+    """Parse an items CSV file — detect delimiter, read headers, count rows, collect samples.
+
+    Stores column_headers, record_count, tag_frequency (as populated counts),
+    and subfield_frequency (as unique counts + samples) on the MARCFile row.
+
+    Args:
+        project_id: UUID of the owning project.
+        file_id: UUID of the MARCFile row.
+        storage_path: Absolute path to the uploaded CSV file.
+
+    Returns:
+        dict with record_count, column_count, columns.
+    """
+    from cerulean.models import MARCFile
+
+    log = AuditLogger(project_id=project_id, stage=1, tag="[ingest]")
+    log.info(f"Parsing items CSV: {Path(storage_path).name}")
+
+    try:
+        _set_file_status(file_id, "indexing")
+
+        # Increase CSV field size limit for large fields (e.g. notes, URLs)
+        csv.field_size_limit(10 * 1024 * 1024)  # 10 MB
+
+        # Read and detect delimiter
+        with open(storage_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            sample = fh.read(8192)
+
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",\t|;")
+            delimiter = dialect.delimiter
+        except csv.Error:
+            delimiter = ","
+
+        # Detect whether the file has a header row
+        has_header = _detect_csv_header(sample, delimiter)
+
+        # Parse CSV: headers, row count, samples, populated counts, unique counts
+        headers: list[str] = []
+        row_count = 0
+        samples: dict[str, list[str]] = defaultdict(list)
+        populated_count: Counter[str] = Counter()
+        unique_values: dict[str, set] = defaultdict(set)
+
+        with open(storage_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+            if has_header:
+                reader = csv.DictReader(fh, delimiter=delimiter)
+                headers = list(reader.fieldnames or [])
+            else:
+                # No header row — generate column names col_1..col_N
+                raw_reader = csv.reader(fh, delimiter=delimiter)
+                first_row = next(raw_reader, None)
+                if first_row:
+                    ncols = len(first_row)
+                    headers = [f"col_{i+1}" for i in range(ncols)]
+                    # Process first row as data
+                    row_dict = dict(zip(headers, first_row))
+                    row_count = 1
+                    for col in headers:
+                        val = (row_dict.get(col) or "").strip()
+                        if val and val != "NULL":
+                            populated_count[col] += 1
+                            unique_values[col].add(val)
+                            samples[col].append(val)
+                # Wrap remaining rows
+                reader = csv.DictReader(fh, fieldnames=headers, delimiter=delimiter)
+
+            for row in reader:
+                row_count += 1
+                for col in headers:
+                    val = (row.get(col) or "").strip()
+                    if val and val != "NULL":
+                        populated_count[col] += 1
+                        unique_values[col].add(val)
+                        if len(samples[col]) < 20:
+                            samples[col].append(val)
+
+        # Build tag_frequency as {column: populated_count}
+        tag_freq = {col: populated_count.get(col, 0) for col in headers}
+
+        # Build subfield_frequency as {column: {unique: N, samples: [...]}}
+        sub_freq = {
+            col: {
+                "unique": len(unique_values.get(col, set())),
+                "samples": samples.get(col, []),
+            }
+            for col in headers
+        }
+
+        with Session(_engine) as db:
+            db.execute(
+                update(MARCFile)
+                .where(MARCFile.id == file_id)
+                .values(
+                    file_format="csv",
+                    column_headers=headers,
+                    record_count=row_count,
+                    tag_frequency=tag_freq,
+                    subfield_frequency=sub_freq,
+                    status="indexed",
+                )
+            )
+            db.commit()
+
+        log.complete(f"Items CSV indexed — {row_count:,} rows, {len(headers)} columns")
+        return {"record_count": row_count, "column_count": len(headers), "columns": headers}
+
+    except Exception as exc:
+        log.error(f"Items CSV ingest failed: {exc}")
         _set_file_status(file_id, "error", str(exc))
         raise
 
@@ -370,6 +491,56 @@ def _read_sample(path: str, max_records: int = 200) -> list[pymarc.Record]:
         if len(sample) >= max_records:
             break
     return sample
+
+
+def _detect_csv_header(sample: str, delimiter: str = ",") -> bool:
+    """Heuristic: does the first line of a CSV look like column headers?
+
+    Checks whether the first row contains unique, identifier-like strings
+    (not data values like numbers, dates, barcodes, NULLs, or short codes).
+    """
+    import re
+
+    lines = sample.strip().split("\n")
+    if not lines:
+        return False
+
+    first_line = lines[0]
+    try:
+        fields = next(csv.reader([first_line], delimiter=delimiter))
+    except StopIteration:
+        return False
+
+    if not fields:
+        return False
+
+    stripped = [f.strip() for f in fields]
+
+    # Headers must be unique — duplicate values means it's data
+    non_empty = [f for f in stripped if f]
+    if len(non_empty) != len(set(non_empty)):
+        return False
+
+    # Count how many first-row fields look like headers
+    header_like = 0
+    for f in stripped:
+        if not f:
+            continue
+        # Disqualify: NULL, numbers, dates, barcodes (long digits), single chars
+        if f.upper() == "NULL":
+            continue
+        if re.match(r"^\d+$", f):  # pure numbers
+            continue
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", f):  # dates
+            continue
+        if len(f) <= 2:  # single/double char codes are likely data
+            continue
+        # Headers are typically 3+ char alphabetic words with underscores/spaces/hashes
+        if re.match(r"^[A-Za-z_#][A-Za-z0-9_# ]*$", f) and len(f) >= 3:
+            header_like += 1
+
+    # Need a strong majority to call it a header row
+    return header_like / max(len(fields), 1) > 0.5
 
 
 def _set_file_status(

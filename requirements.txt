@@ -44,6 +44,7 @@ sse-starlette==2.1.0
 python-dotenv==1.0.1
 structlog==24.1.0            # structured logging
 tenacity==8.3.0              # retry logic
+pymysql==1.1.1               # direct MySQL connection to Koha DB
 
 # Dev / test
 pytest==8.2.0

@@ -48,6 +48,8 @@ class ProjectOut(BaseModel):
     stage_6_complete: bool
     stage_7_complete: bool
     stage_8_complete: bool
+    items_csv_match_tag: str | None
+    items_csv_key_column: str | None
     archived: bool
     bib_count_ingested: int | None
     bib_count_post_dedup: int | None
@@ -67,10 +69,12 @@ class MARCFileOut(BaseModel):
     project_id: str
     filename: str
     file_format: str | None
+    file_category: str
     file_size_bytes: int | None
     record_count: int | None
     ils_signal: str | None
     tag_frequency: dict | None
+    column_headers: list | None
     status: str
     error_message: str | None
     sort_order: int

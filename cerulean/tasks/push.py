@@ -1087,6 +1087,105 @@ def push_circ_task(self, project_id: str, manifest_id: str, dry_run: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# PATRON CATEGORIES SQL PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _koha_mysql_conn(project_id: str):
+    """Open a pymysql connection to the Koha MariaDB database.
+
+    Detects the KTD database container hostname from SandboxInstance or
+    falls back to 'kohadev-db-1'. Uses default KTD credentials.
+    """
+    import pymysql
+
+    from cerulean.models import SandboxInstance
+
+    db_host = "kohadev-db-1"  # default KTD DB container hostname
+
+    with Session(_engine) as db:
+        instance = db.query(SandboxInstance).filter_by(
+            project_id=project_id, status="running"
+        ).first()
+        if instance and instance.container_name:
+            # Derive DB container name from app container: kohadev-koha-1 → kohadev-db-1
+            parts = instance.container_name.rsplit("-", 2)
+            if len(parts) >= 2:
+                db_host = f"{parts[0]}-db-1"
+
+    return pymysql.connect(
+        host=db_host,
+        user="koha_kohadev",
+        password="password",
+        database="koha_kohadev",
+        port=3306,
+        connect_timeout=10,
+    )
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_patron_categories_sql_task",
+    max_retries=0,
+    queue="push",
+)
+def push_patron_categories_sql_task(self, project_id: str, categories: list[dict]) -> dict:
+    """Insert patron categories into Koha MariaDB via direct SQL connection.
+
+    Used as fallback when Koha REST API doesn't support POST /patron_categories.
+    """
+    log = AuditLogger(project_id=project_id, stage=7, tag="[setup]")
+    log.info(f"Pushing {len(categories)} patron categories via SQL")
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    try:
+        conn = _koha_mysql_conn(project_id)
+    except Exception as exc:
+        log.error(f"Failed to connect to Koha DB: {exc}")
+        return {
+            "success_count": 0,
+            "failed_count": len(categories),
+            "results": [
+                {"category_id": c["category_id"], "success": False, "error": f"DB connection failed: {exc}"}
+                for c in categories
+            ],
+        }
+
+    try:
+        cursor = conn.cursor()
+        for cat in categories:
+            cid = cat["category_id"]
+            name = cat.get("name", cid)
+            ep = cat.get("enrolmentperiod", 99)
+            try:
+                cursor.execute(
+                    "INSERT IGNORE INTO categories "
+                    "(categorycode, description, enrolmentperiod, category_type) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (cid, name, ep, "A"),
+                )
+                conn.commit()
+                success_count += 1
+                results.append({"category_id": cid, "success": True})
+            except Exception as exc:
+                conn.rollback()
+                failed_count += 1
+                results.append({"category_id": cid, "success": False, "error": str(exc)[:200]})
+    finally:
+        conn.close()
+
+    log.info(f"Patron categories SQL push: {success_count} created, {failed_count} failed")
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ELASTICSEARCH REINDEX TASK
 # ══════════════════════════════════════════════════════════════════════════
 

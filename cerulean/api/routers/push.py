@@ -518,7 +518,14 @@ async def push_patron_categories(
     body: PushPatronCategoriesRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Push missing patron categories to Koha via POST /api/v1/patron_categories."""
+    """Push missing patron categories to Koha.
+
+    Tries REST API first (POST /api/v1/patron_categories).
+    Falls back to SQL via docker exec koha-mysql if REST returns 404.
+    """
+    import asyncio
+    import subprocess
+
     project = await require_project(project_id, db)
     if not project.koha_url:
         raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
@@ -527,37 +534,96 @@ async def push_patron_categories(
     results = []
     success_count = 0
     failed_count = 0
+    use_sql = False
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for cat in body.categories:
+    # Try REST API first with the first category
+    if body.categories:
+        first = body.categories[0]
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 resp = await client.post(
                     f"{base_url}/api/v1/patron_categories",
                     json={
-                        "patron_category_id": cat.category_id,
-                        "name": cat.name,
-                        "enrolmentperiod": cat.enrolmentperiod,
+                        "patron_category_id": first.category_id,
+                        "name": first.name,
+                        "enrolmentperiod": first.enrolmentperiod,
                     },
                     headers=headers,
                 )
-                if resp.status_code < 300:
+                if resp.status_code == 404:
+                    use_sql = True  # endpoint doesn't exist, fall back to SQL
+                elif resp.status_code < 300:
                     success_count += 1
-                    results.append(PushPatronCategoryResult(category_id=cat.category_id, success=True))
+                    results.append(PushPatronCategoryResult(category_id=first.category_id, success=True))
                 else:
                     failed_count += 1
-                    error_text = resp.text[:200]
                     results.append(PushPatronCategoryResult(
-                        category_id=cat.category_id, success=False,
-                        error=f"HTTP {resp.status_code}: {error_text}",
+                        category_id=first.category_id, success=False,
+                        error=f"HTTP {resp.status_code}: {resp.text[:200]}",
                     ))
-            except httpx.HTTPError as exc:
-                failed_count += 1
-                results.append(PushPatronCategoryResult(
-                    category_id=cat.category_id, success=False, error=str(exc),
-                ))
+            except httpx.HTTPError:
+                use_sql = True
 
+    if use_sql:
+        # Fall back to SQL via docker exec — must run on the worker (has docker CLI)
+        from cerulean.tasks.push import push_patron_categories_sql_task
+        categories_data = [
+            {"category_id": cat.category_id, "name": cat.name, "enrolmentperiod": cat.enrolmentperiod}
+            for cat in body.categories
+        ]
+        celery_result = push_patron_categories_sql_task.apply_async(
+            args=[project_id, categories_data],
+            queue="push",
+        )
+        try:
+            task_result = celery_result.get(timeout=60)  # wait up to 60s
+        except Exception as exc:
+            raise HTTPException(500, detail={
+                "error": "TASK_FAILED",
+                "message": f"SQL push failed: {exc}",
+            })
+
+        success_count = task_result.get("success_count", 0)
+        failed_count = task_result.get("failed_count", 0)
+        results = [
+            PushPatronCategoryResult(
+                category_id=r["category_id"], success=r["success"],
+                error=r.get("error"),
+            )
+            for r in task_result.get("results", [])
+        ]
+    elif len(body.categories) > 1:
+        # REST API worked for the first one, continue with the rest
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for cat in body.categories[1:]:
+                try:
+                    resp = await client.post(
+                        f"{base_url}/api/v1/patron_categories",
+                        json={
+                            "patron_category_id": cat.category_id,
+                            "name": cat.name,
+                            "enrolmentperiod": cat.enrolmentperiod,
+                        },
+                        headers=headers,
+                    )
+                    if resp.status_code < 300:
+                        success_count += 1
+                        results.append(PushPatronCategoryResult(category_id=cat.category_id, success=True))
+                    else:
+                        failed_count += 1
+                        results.append(PushPatronCategoryResult(
+                            category_id=cat.category_id, success=False,
+                            error=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                        ))
+                except httpx.HTTPError as exc:
+                    failed_count += 1
+                    results.append(PushPatronCategoryResult(
+                        category_id=cat.category_id, success=False, error=str(exc),
+                    ))
+
+    method = "SQL (docker exec)" if use_sql else "REST API"
     await audit_log(db, project_id, stage=7, level="info", tag="[setup]",
-                    message=f"Pushed {success_count}/{len(body.categories)} patron categories to Koha")
+                    message=f"Pushed {success_count}/{len(body.categories)} patron categories to Koha via {method}")
 
     return PushPatronCategoriesResponse(
         total=len(body.categories),

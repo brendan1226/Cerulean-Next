@@ -22,7 +22,7 @@ from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
 from cerulean.models import MARCFile, Project
 from cerulean.schemas.projects import MARCFileOut, MARCFileUploadResponse, TagFrequencyOut
-from cerulean.tasks.ingest import ingest_marc_task
+from cerulean.tasks.ingest import ingest_items_csv_task, ingest_marc_task
 from cerulean.utils.marc import record_to_dict
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ async def upload_file(
     project_id: str,
     file: UploadFile,
     mode: str = Query("auto", description="Duplicate handling: auto|replace|add"),
+    category: str = Query("marc", description="File category: marc|items_csv"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a MARC or CSV file. Spawns ingest_marc_task immediately.
@@ -112,6 +113,7 @@ async def upload_file(
         project_id=project_id,
         filename=filename,
         file_format=file_format,
+        file_category=category,
         storage_path=storage_path,
         file_size_bytes=len(content),
         status="uploaded",
@@ -119,11 +121,17 @@ async def upload_file(
     db.add(marc_file)
     await db.flush()
 
-    # Dispatch ingest task
-    task = ingest_marc_task.apply_async(
-        args=[project_id, file_id, storage_path],
-        queue="ingest",
-    )
+    # Dispatch ingest task — items CSV gets its own task
+    if category == "items_csv":
+        task = ingest_items_csv_task.apply_async(
+            args=[project_id, file_id, storage_path],
+            queue="ingest",
+        )
+    else:
+        task = ingest_marc_task.apply_async(
+            args=[project_id, file_id, storage_path],
+            queue="ingest",
+        )
 
     replaced = len(existing) if existing and mode == "replace" else 0
     msg = f"File uploaded (replaced {replaced} existing). Indexing started." if replaced else "File uploaded. Indexing started."
@@ -137,16 +145,20 @@ async def upload_file(
 
 
 @router.get("/{project_id}/files", response_model=list[MARCFileOut])
-async def list_files(project_id: str, db: AsyncSession = Depends(get_db)):
+async def list_files(
+    project_id: str,
+    category: str | None = Query(None, description="Filter by file_category: marc|items_csv"),
+    db: AsyncSession = Depends(get_db),
+):
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
 
-    result = await db.execute(
-        select(MARCFile)
-        .where(MARCFile.project_id == project_id)
-        .order_by(MARCFile.sort_order, MARCFile.created_at)
-    )
+    q = select(MARCFile).where(MARCFile.project_id == project_id)
+    if category:
+        q = q.where(MARCFile.file_category == category)
+    q = q.order_by(MARCFile.sort_order, MARCFile.created_at)
+    result = await db.execute(q)
     return result.scalars().all()
 
 

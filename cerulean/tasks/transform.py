@@ -282,15 +282,56 @@ def merge_pipeline_task(
     Returns:
         dict with total_records, items_joined, duplicate_001s, output_path.
     """
-    from cerulean.models import MARCFile, Project, TransformManifest
+    from cerulean.models import ItemColumnMap, MARCFile, Project, TransformManifest
 
     log = AuditLogger(project_id=project_id, stage=3, tag="[merge]")
     log.info("Merge pipeline starting")
 
     try:
+        # 0. Load dynamic item column map + project config
+        dynamic_column_map: dict[str, str] | None = None
+        with Session(_engine) as db:
+            project = db.get(Project, project_id)
+
+            # Auto-detect items CSV path from MARCFile if not provided
+            if not items_csv_path and project:
+                items_csv_file = db.execute(
+                    select(MARCFile).where(
+                        MARCFile.project_id == project_id,
+                        MARCFile.file_category == "items_csv",
+                        MARCFile.status == "indexed",
+                    ).limit(1)
+                ).scalar_one_or_none()
+                if items_csv_file:
+                    items_csv_path = items_csv_file.storage_path
+                    log.info(f"Auto-detected items CSV: {Path(items_csv_path).name}")
+
+            # Read match config from project if not in task args
+            if project:
+                if items_csv_match_tag == "001" and project.items_csv_match_tag:
+                    items_csv_match_tag = project.items_csv_match_tag
+                if items_csv_key_column == "biblionumber" and project.items_csv_key_column:
+                    items_csv_key_column = project.items_csv_key_column
+
+            # Load approved ItemColumnMap rows → build {source_col: subfield_code}
+            approved_maps = db.execute(
+                select(ItemColumnMap).where(
+                    ItemColumnMap.project_id == project_id,
+                    ItemColumnMap.approved == True,  # noqa: E712
+                    ItemColumnMap.ignored == False,  # noqa: E712
+                    ItemColumnMap.target_subfield.isnot(None),
+                )
+            ).scalars().all()
+            if approved_maps:
+                dynamic_column_map = {m.source_column: m.target_subfield for m in approved_maps}
+                log.info(f"Using {len(dynamic_column_map)} approved item column mappings")
+
         # 1. Load file metadata
         with Session(_engine) as db:
-            files_q = select(MARCFile).where(MARCFile.project_id == project_id)
+            files_q = select(MARCFile).where(
+                MARCFile.project_id == project_id,
+                MARCFile.file_category == "marc",
+            )
             if file_ids:
                 files_q = files_q.where(MARCFile.id.in_(file_ids))
             else:
@@ -357,7 +398,7 @@ def merge_pipeline_task(
                         match_values = _extract_values(record, items_csv_match_tag, None)
                         for mv in match_values:
                             for item_row in items_lookup.get(mv, []):
-                                _add_952_from_csv(record, item_row)
+                                _add_952_from_csv(record, item_row, dynamic_column_map)
                                 items_joined += 1
 
                     _sort_record(record)
@@ -871,13 +912,22 @@ _ITEMS_CSV_TO_952 = {
 }
 
 
-def _add_952_from_csv(record: pymarc.Record, item_row: dict) -> None:
-    """Add a 952 item field to a MARC record from a CSV row."""
+def _add_952_from_csv(record: pymarc.Record, item_row: dict, column_map: dict | None = None) -> None:
+    """Add a 952 item field to a MARC record from a CSV row.
+
+    Args:
+        record: The MARC record to add the 952 field to.
+        item_row: Dict of CSV column → value for this item row.
+        column_map: Optional {source_column: subfield_code} dict from ItemColumnMap.
+                    Falls back to _ITEMS_CSV_TO_952 if None.
+    """
+    mapping = column_map or _ITEMS_CSV_TO_952
     subfields: list[Subfield] = []
     for col_name, value in item_row.items():
         if not value or not value.strip():
             continue
-        sub_code = _ITEMS_CSV_TO_952.get(col_name.lower().strip())
+        # Dynamic map uses exact column names; fallback uses lowered names
+        sub_code = mapping.get(col_name) if column_map else mapping.get(col_name.lower().strip())
         if sub_code:
             subfields.append(Subfield(code=sub_code, value=value.strip()))
 

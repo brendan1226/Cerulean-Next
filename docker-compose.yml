@@ -49,6 +49,7 @@ services:
     volumes:
       - .:/app
       - cerulean-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DATABASE_URL=postgresql+asyncpg://cerulean:cerulean@postgres:5432/cerulean
       - REDIS_URL=redis://redis:6379/0

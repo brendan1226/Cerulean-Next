@@ -93,6 +93,10 @@ class Project(Base):
     reconcile_scan_task_id: Mapped[str | None] = mapped_column(String(200))
     reconcile_apply_task_id: Mapped[str | None] = mapped_column(String(200))
 
+    # Stage 2/3 — Item CSV match config
+    items_csv_match_tag: Mapped[str | None] = mapped_column(String(10))   # MARC tag, e.g. "001"
+    items_csv_key_column: Mapped[str | None] = mapped_column(String(200)) # CSV column name
+
     # Stage 6 — Patron Data Transformation
     patron_scan_task_id: Mapped[str | None] = mapped_column(String(200))
     patron_apply_task_id: Mapped[str | None] = mapped_column(String(200))
@@ -118,6 +122,7 @@ class Project(Base):
     reconciliation_rules: Mapped[list["ReconciliationRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     reconciliation_scan_results: Mapped[list["ReconciliationScanResult"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_files: Mapped[list["PatronFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    item_column_maps: Mapped[list["ItemColumnMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_column_maps: Mapped[list["PatronColumnMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_value_rules: Mapped[list["PatronValueRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_scan_results: Mapped[list["PatronScanResult"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -141,6 +146,7 @@ class MARCFile(Base):
 
     filename: Mapped[str] = mapped_column(String(300), nullable=False)
     file_format: Mapped[str] = mapped_column(String(20))   # "iso2709" | "mrk" | "csv"
+    file_category: Mapped[str] = mapped_column(String(20), default="marc")  # "marc" | "items_csv"
     file_size_bytes: Mapped[int | None] = mapped_column(Integer)
     storage_path: Mapped[str] = mapped_column(Text)        # absolute path or S3 key
 
@@ -151,7 +157,11 @@ class MARCFile(Base):
     tag_frequency: Mapped[dict | None] = mapped_column(JSONB)
 
     # Subfield frequency — {"245": {"a": 6182, "b": 3421}, ...}
+    # For items_csv: {"col": {"unique": N, "samples": [...]}}
     subfield_frequency: Mapped[dict | None] = mapped_column(JSONB)
+
+    # CSV column headers (items_csv files only)
+    column_headers: Mapped[list | None] = mapped_column(JSONB)
 
     # Status: "uploaded" | "indexing" | "indexed" | "error"
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
@@ -418,6 +428,47 @@ class ReconciliationScanResult(Base):
     scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     project: Mapped["Project"] = relationship(back_populates="reconciliation_scan_results")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ITEM COLUMN MAP
+# ══════════════════════════════════════════════════════════════════════════
+
+class ItemColumnMap(Base):
+    """
+    CSV column → Koha 952 subfield mapping for item CSV files.
+
+    Mirrors the PatronColumnMap pattern for item/holdings data.
+    """
+
+    __tablename__ = "item_column_maps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    source_column: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_subfield: Mapped[str | None] = mapped_column(String(5))  # 952 subfield code: "a", "o", "p", etc.
+    ignored: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Transform
+    transform_type: Mapped[str | None] = mapped_column(String(20))  # copy|regex|const|lookup
+    transform_config: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Approval
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # AI origin
+    ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_confidence: Mapped[float | None] = mapped_column(Float)
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)
+    source_label: Mapped[str] = mapped_column(String(50), default="manual")
+
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="item_column_maps")
 
 
 # ══════════════════════════════════════════════════════════════════════════
