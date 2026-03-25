@@ -46,7 +46,7 @@ _PROGRESS_INTERVAL = 500
 def _find_marc_paths(project_id: str) -> list[Path]:
     """Find best available MARC output files in priority order.
 
-    Priority: Biblios-mapped-items.mrc > merged_deduped.mrc > merged.mrc > transformed/*.mrc
+    Priority: Biblios-mapped-items.mrc > merged_deduped.mrc > output.mrc > merged.mrc > transformed/*.mrc
     """
     project_dir = Path(settings.data_root) / project_id
     reconciled = project_dir / "Biblios-mapped-items.mrc"
@@ -55,6 +55,9 @@ def _find_marc_paths(project_id: str) -> list[Path]:
     deduped = project_dir / "merged_deduped.mrc"
     if deduped.is_file():
         return [deduped]
+    output = project_dir / "output.mrc"
+    if output.is_file():
+        return [output]
     merged = project_dir / "merged.mrc"
     if merged.is_file():
         return [merged]

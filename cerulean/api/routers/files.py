@@ -22,7 +22,12 @@ from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
 from cerulean.models import MARCFile, Project
 from cerulean.schemas.projects import MARCFileOut, MARCFileUploadResponse, TagFrequencyOut
-from cerulean.tasks.ingest import ingest_items_csv_task, ingest_marc_task
+from cerulean.tasks.ingest import (
+    ingest_items_csv_task,
+    ingest_items_json_task,
+    ingest_items_mrc_task,
+    ingest_marc_task,
+)
 from cerulean.utils.marc import record_to_dict
 
 logger = logging.getLogger(__name__)
@@ -38,7 +43,7 @@ async def upload_file(
     project_id: str,
     file: UploadFile,
     mode: str = Query("auto", description="Duplicate handling: auto|replace|add"),
-    category: str = Query("marc", description="File category: marc|items_csv"),
+    category: str = Query("marc", description="File category: marc|items|items_csv"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a MARC or CSV file. Spawns ingest_marc_task immediately.
@@ -121,12 +126,23 @@ async def upload_file(
     db.add(marc_file)
     await db.flush()
 
-    # Dispatch ingest task — items CSV gets its own task
-    if category == "items_csv":
-        task = ingest_items_csv_task.apply_async(
-            args=[project_id, file_id, storage_path],
-            queue="ingest",
-        )
+    # Dispatch ingest task — items get format-specific tasks
+    if category in ("items", "items_csv"):
+        if file_format == "json":
+            task = ingest_items_json_task.apply_async(
+                args=[project_id, file_id, storage_path],
+                queue="ingest",
+            )
+        elif file_format == "iso2709":
+            task = ingest_items_mrc_task.apply_async(
+                args=[project_id, file_id, storage_path],
+                queue="ingest",
+            )
+        else:
+            task = ingest_items_csv_task.apply_async(
+                args=[project_id, file_id, storage_path],
+                queue="ingest",
+            )
     else:
         task = ingest_marc_task.apply_async(
             args=[project_id, file_id, storage_path],

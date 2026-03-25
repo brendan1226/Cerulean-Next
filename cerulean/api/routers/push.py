@@ -128,6 +128,7 @@ async def start_push(
     has_output = (
         (project_dir / "Biblios-mapped-items.mrc").is_file()
         or (project_dir / "merged_deduped.mrc").is_file()
+        or (project_dir / "output.mrc").is_file()
         or (project_dir / "merged.mrc").is_file()
         or (
             (project_dir / "transformed").is_dir()
@@ -645,10 +646,11 @@ def _list_push_files(project_id: str) -> list[dict]:
     source_labels = {
         "Biblios-mapped-items.mrc": "Items",
         "merged_deduped.mrc": "Deduped",
+        "output.mrc": "Build Output",
         "merged.mrc": "Merged",
     }
     best_marc = None
-    for name in ["Biblios-mapped-items.mrc", "merged_deduped.mrc", "merged.mrc"]:
+    for name in ["Biblios-mapped-items.mrc", "merged_deduped.mrc", "output.mrc", "merged.mrc"]:
         candidate = project_dir / name
         if candidate.is_file():
             best_marc = candidate

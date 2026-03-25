@@ -294,17 +294,30 @@ def merge_pipeline_task(
             project = db.get(Project, project_id)
 
             # Auto-detect items CSV path from MARCFile if not provided
+            items_csv_headers: list[str] | None = None
             if not items_csv_path and project:
                 items_csv_file = db.execute(
                     select(MARCFile).where(
                         MARCFile.project_id == project_id,
-                        MARCFile.file_category == "items_csv",
+                        MARCFile.file_category.in_(["items", "items_csv"]),
                         MARCFile.status == "indexed",
                     ).limit(1)
                 ).scalar_one_or_none()
                 if items_csv_file:
                     items_csv_path = items_csv_file.storage_path
+                    items_csv_headers = items_csv_file.column_headers
                     log.info(f"Auto-detected items CSV: {Path(items_csv_path).name}")
+            else:
+                # Explicit path — still look up headers from DB
+                if items_csv_path:
+                    items_csv_file = db.execute(
+                        select(MARCFile).where(
+                            MARCFile.project_id == project_id,
+                            MARCFile.file_category.in_(["items", "items_csv"]),
+                        ).limit(1)
+                    ).scalar_one_or_none()
+                    if items_csv_file:
+                        items_csv_headers = items_csv_file.column_headers
 
             # Read match config from project if not in task args
             if project:
@@ -314,6 +327,8 @@ def merge_pipeline_task(
                     items_csv_key_column = project.items_csv_key_column
 
             # Load approved ItemColumnMap rows → build {source_col: subfield_code}
+            # and constant maps {subfield_code: value}
+            constant_subfields: dict[str, str] = {}
             approved_maps = db.execute(
                 select(ItemColumnMap).where(
                     ItemColumnMap.project_id == project_id,
@@ -323,8 +338,16 @@ def merge_pipeline_task(
                 )
             ).scalars().all()
             if approved_maps:
-                dynamic_column_map = {m.source_column: m.target_subfield for m in approved_maps}
-                log.info(f"Using {len(dynamic_column_map)} approved item column mappings")
+                dynamic_column_map = {}
+                for m in approved_maps:
+                    if m.transform_type == "const" and m.transform_config:
+                        constant_subfields[m.target_subfield] = m.transform_config.get("value", "")
+                    else:
+                        dynamic_column_map[m.source_column] = m.target_subfield
+                if dynamic_column_map:
+                    log.info(f"Using {len(dynamic_column_map)} approved item column mappings")
+                if constant_subfields:
+                    log.info(f"Using {len(constant_subfields)} constant 952 subfield(s)")
 
         # 1. Load file metadata
         with Session(_engine) as db:
@@ -355,11 +378,25 @@ def merge_pipeline_task(
             id_order = {fid: i for i, fid in enumerate(file_ids)}
             files_data.sort(key=lambda f: id_order.get(f["id"], 0))
 
-        # 2. Load items CSV if provided
+        # 2. Load items data if provided (CSV, JSON, or MRC)
         items_lookup: dict[str, list[dict]] | None = None
+        items_file_format = "csv"
         if items_csv_path and os.path.isfile(items_csv_path):
-            items_lookup = _load_items_csv(items_csv_path, items_csv_key_column)
-            log.info(f"Loaded items CSV: {len(items_lookup)} unique bib keys")
+            # Detect format from the items file DB row
+            with Session(_engine) as db2:
+                items_file_row = db2.execute(
+                    select(MARCFile).where(
+                        MARCFile.project_id == project_id,
+                        MARCFile.file_category.in_(["items", "items_csv"]),
+                        MARCFile.storage_path == items_csv_path,
+                    ).limit(1)
+                ).scalar_one_or_none()
+                if items_file_row:
+                    items_file_format = items_file_row.file_format or "csv"
+            items_lookup = _load_items_data(
+                items_csv_path, items_csv_key_column, items_csv_headers, items_file_format,
+            )
+            log.info(f"Loaded items ({items_file_format}): {len(items_lookup)} unique bib keys")
 
         # 3. Resolve file paths — prefer transformed/ versions
         project_dir = Path(settings.data_root) / project_id
@@ -398,7 +435,7 @@ def merge_pipeline_task(
                         match_values = _extract_values(record, items_csv_match_tag, None)
                         for mv in match_values:
                             for item_row in items_lookup.get(mv, []):
-                                _add_952_from_csv(record, item_row, dynamic_column_map)
+                                _add_952_from_csv(record, item_row, dynamic_column_map, constant_subfields)
                                 items_joined += 1
 
                     _sort_record(record)
@@ -465,6 +502,266 @@ def merge_pipeline_task(
 
     except Exception as exc:
         log.error(f"Merge pipeline failed: {exc}")
+        with Session(_engine) as db:
+            _update_manifest_error(db, manifest_id, str(exc))
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BUILD OUTPUT TASK (combined transform + merge)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(bind=True, name="cerulean.tasks.transform.build_output_task")
+def build_output_task(
+    self,
+    project_id: str,
+    manifest_id: str,
+    file_ids: list[str],
+    include_items: bool = False,
+    items_match_tag: str = "001",
+    items_key_column: str = "biblionumber",
+) -> dict:
+    """Single-pass pipeline: apply field maps + join items → output.mrc.
+
+    Field maps are optional — if none are approved, records pass through unchanged.
+    Items join is optional — controlled by include_items flag.
+
+    Args:
+        project_id: UUID of the project.
+        manifest_id: UUID of the TransformManifest row.
+        file_ids: Ordered list of MARC file UUIDs to include.
+        include_items: Whether to join items data as 952 fields.
+        items_match_tag: MARC tag to match against items key (default "001").
+        items_key_column: Items column name for bib key (default "biblionumber").
+
+    Returns:
+        dict with total_records, items_joined, duplicate_001s, map_stats, output_path.
+    """
+    from cerulean.models import FieldMap, ItemColumnMap, MARCFile, Project, TransformManifest
+
+    log = AuditLogger(project_id=project_id, stage=3, tag="[build]")
+    log.info("Build output starting")
+
+    try:
+        # 1. Load approved field maps (may be empty — that's OK)
+        maps_data: list[dict] = []
+        dynamic_column_map: dict[str, str] | None = None
+        constant_subfields: dict[str, str] = {}
+        items_lookup: dict[str, list[dict]] | None = None
+
+        with Session(_engine) as db:
+            project = db.get(Project, project_id)
+
+            # Field maps
+            field_maps = db.execute(
+                select(FieldMap)
+                .where(FieldMap.project_id == project_id, FieldMap.approved == True)  # noqa: E712
+                .order_by(FieldMap.sort_order, FieldMap.created_at)
+            ).scalars().all()
+
+            if field_maps:
+                all_maps = [
+                    {
+                        "source_tag": m.source_tag, "source_sub": m.source_sub,
+                        "target_tag": m.target_tag, "target_sub": m.target_sub,
+                        "transform_type": m.transform_type, "transform_fn": m.transform_fn,
+                        "preset_key": m.preset_key, "delete_source": m.delete_source,
+                    }
+                    for m in field_maps
+                ]
+                for md in all_maps:
+                    valid, reason = _validate_map(md)
+                    if valid:
+                        maps_data.append(md)
+                    else:
+                        label = f"{md.get('source_tag','?')}{md.get('source_sub','')}->{md.get('target_tag','?')}{md.get('target_sub','')}"
+                        log.warn(f"Skipping invalid map {label}: {reason}")
+
+            # Items data
+            if include_items:
+                # Read match config from project if defaults
+                if project:
+                    if items_match_tag == "001" and project.items_csv_match_tag:
+                        items_match_tag = project.items_csv_match_tag
+                    if items_key_column == "biblionumber" and project.items_csv_key_column:
+                        items_key_column = project.items_csv_key_column
+
+                # Load approved ItemColumnMap rows
+                approved_maps = db.execute(
+                    select(ItemColumnMap).where(
+                        ItemColumnMap.project_id == project_id,
+                        ItemColumnMap.approved == True,  # noqa: E712
+                        ItemColumnMap.ignored == False,  # noqa: E712
+                        ItemColumnMap.target_subfield.isnot(None),
+                    )
+                ).scalars().all()
+                if approved_maps:
+                    dynamic_column_map = {}
+                    for m in approved_maps:
+                        if m.transform_type == "const" and m.transform_config:
+                            constant_subfields[m.target_subfield] = m.transform_config.get("value", "")
+                        else:
+                            dynamic_column_map[m.source_column] = m.target_subfield
+
+                # Find items file
+                items_file = db.execute(
+                    select(MARCFile).where(
+                        MARCFile.project_id == project_id,
+                        MARCFile.file_category.in_(["items", "items_csv"]),
+                        MARCFile.status == "indexed",
+                    ).limit(1)
+                ).scalar_one_or_none()
+                if items_file:
+                    items_lookup = _load_items_data(
+                        items_file.storage_path,
+                        items_key_column,
+                        items_file.column_headers,
+                        items_file.file_format or "csv",
+                    )
+                    log.info(f"Loaded items ({items_file.file_format}): {len(items_lookup)} unique bib keys")
+
+            # Load MARC files
+            files_q = (
+                select(MARCFile)
+                .where(
+                    MARCFile.project_id == project_id,
+                    MARCFile.id.in_(file_ids),
+                    MARCFile.file_category == "marc",
+                )
+                .order_by(MARCFile.sort_order, MARCFile.created_at)
+            )
+            marc_files = db.execute(files_q).scalars().all()
+
+            if not marc_files:
+                log.error("No MARC files found for build")
+                _update_manifest_error(db, manifest_id, "No MARC files found")
+                return {"error": "no_files"}
+
+            files_data = [
+                {"id": f.id, "storage_path": f.storage_path, "filename": f.filename,
+                 "file_format": f.file_format or "iso2709"}
+                for f in marc_files
+            ]
+
+        # Re-sort by caller's file_ids order
+        id_order = {fid: i for i, fid in enumerate(file_ids)}
+        files_data.sort(key=lambda f: id_order.get(f["id"], 0))
+
+        log.info(
+            f"Building output: {len(files_data)} file(s), "
+            f"{len(maps_data)} map(s), items={'yes' if items_lookup else 'no'}"
+        )
+
+        # 2. Single-pass: transform + items join → output.mrc
+        project_dir = Path(settings.data_root) / project_id
+        output_path = project_dir / "output.mrc"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        total_records = 0
+        items_joined = 0
+        seen_001: Counter = Counter()
+        aggregate_stats: dict[str, dict[str, int]] = {}
+
+        with open(str(output_path), "wb") as out_fh:
+            for file_idx, file_info in enumerate(files_data):
+                path = file_info["storage_path"]
+                fmt = file_info["file_format"]
+                log.info(f"Processing file {file_idx + 1}/{len(files_data)}: {file_info['filename']}")
+
+                for record in _iter_marc(path, fmt):
+                    if record is None:
+                        continue
+                    total_records += 1
+
+                    # Apply field maps if any
+                    if maps_data:
+                        try:
+                            _apply_maps_to_record(record, maps_data, aggregate_stats)
+                        except Exception as exc:
+                            record_id = _get_001(record)
+                            log.warn(f"Map error on record {total_records} (001={record_id}): {exc}")
+
+                    # Items join
+                    record_001 = _get_001(record)
+                    if record_001:
+                        seen_001[record_001] += 1
+
+                    if items_lookup and record_001:
+                        match_values = _extract_values(record, items_match_tag, None)
+                        for mv in match_values:
+                            for item_row in items_lookup.get(mv, []):
+                                _add_952_from_csv(record, item_row, dynamic_column_map, constant_subfields)
+                                items_joined += 1
+
+                    _sort_record(record)
+                    out_fh.write(record.as_marc())
+
+                    if total_records % _PROGRESS_INTERVAL == 0:
+                        self.update_state(
+                            state="PROGRESS",
+                            meta={
+                                "files_done": file_idx,
+                                "files_total": len(files_data),
+                                "records_done": total_records,
+                                "items_joined": items_joined,
+                            },
+                        )
+
+        # 3. Detect duplicate 001s
+        duplicate_001s = [
+            {"value": k, "count": v}
+            for k, v in seen_001.items()
+            if v > 1
+        ]
+        if duplicate_001s:
+            log.warn(f"Detected {len(duplicate_001s)} duplicate 001 values")
+
+        # 4. Build map stats
+        map_stats_list = [
+            {"map": label, **counts}
+            for label, counts in aggregate_stats.items()
+        ]
+
+        # 5. Update manifest + project
+        with Session(_engine) as db:
+            project = db.get(Project, project_id)
+            if project:
+                project.stage_3_complete = True
+                project.current_stage = max(project.current_stage or 0, 4)
+                project.bib_count_ingested = total_records
+
+            db.execute(
+                update(TransformManifest)
+                .where(TransformManifest.id == manifest_id)
+                .values(
+                    status="complete",
+                    output_path=str(output_path),
+                    files_processed=len(files_data),
+                    total_records=total_records,
+                    records_skipped=0,
+                    items_joined=items_joined,
+                    duplicate_001s=duplicate_001s,
+                    file_ids=[f["id"] for f in files_data],
+                    completed_at=datetime.utcnow(),
+                )
+            )
+            db.commit()
+
+        log.complete(
+            f"Build complete — {total_records:,} records, "
+            f"{len(maps_data)} maps applied, {items_joined} items joined"
+        )
+        return {
+            "total_records": total_records,
+            "items_joined": items_joined,
+            "duplicate_001s": duplicate_001s,
+            "map_stats": map_stats_list,
+            "output_path": str(output_path),
+        }
+
+    except Exception as exc:
+        log.error(f"Build output failed: {exc}")
         with Session(_engine) as db:
             _update_manifest_error(db, manifest_id, str(exc))
         raise
@@ -878,18 +1175,79 @@ def _update_manifest_error(db: Session, manifest_id: str, error_msg: str) -> Non
     db.commit()
 
 
-# ── Items CSV ─────────────────────────────────────────────────────────
+# ── Items Data Loader ─────────────────────────────────────────────────
 
-def _load_items_csv(csv_path: str, key_column: str) -> dict[str, list[dict]]:
+def _load_items_data(
+    path: str,
+    key_column: str,
+    stored_headers: list[str] | None = None,
+    file_format: str = "csv",
+) -> dict[str, list[dict]]:
+    """Load an items file (CSV, JSON, or MRC) into a lookup dict keyed by bib identifier."""
+    if file_format == "json":
+        return _load_items_json(path, key_column)
+    elif file_format == "iso2709":
+        return _load_items_mrc(path, key_column)
+    else:
+        return _load_items_csv(path, key_column, stored_headers)
+
+
+def _load_items_csv(csv_path: str, key_column: str, stored_headers: list[str] | None = None) -> dict[str, list[dict]]:
     """Load an items CSV into a lookup dict keyed by bib identifier."""
     csv.field_size_limit(10 * 1024 * 1024)  # 10 MB
+    has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
     lookup: dict[str, list[dict]] = {}
     with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-        reader = csv.DictReader(fh)
+        reader = csv.DictReader(fh, fieldnames=stored_headers) if has_generated else csv.DictReader(fh)
         for row in reader:
             key = row.get(key_column, "").strip()
             if key:
                 lookup.setdefault(key, []).append(row)
+    return lookup
+
+
+def _load_items_json(json_path: str, key_column: str) -> dict[str, list[dict]]:
+    """Load an items JSON file into a lookup dict keyed by bib identifier."""
+    with open(json_path, "r", encoding="utf-8", errors="replace") as fh:
+        data = json.load(fh)
+
+    # Unwrap if dict with a known collection key
+    if isinstance(data, dict):
+        for k in ("items", "records", "data", "rows"):
+            if k in data and isinstance(data[k], list):
+                data = data[k]
+                break
+        else:
+            if isinstance(data, dict):
+                data = [data]
+
+    lookup: dict[str, list[dict]] = {}
+    for record in data:
+        if not isinstance(record, dict):
+            continue
+        key = str(record.get(key_column, "")).strip()
+        if key:
+            lookup.setdefault(key, []).append({k: str(v) for k, v in record.items()})
+    return lookup
+
+
+def _load_items_mrc(mrc_path: str, key_column: str) -> dict[str, list[dict]]:
+    """Load items from a MARC file, flattened to TAG$sub keys, keyed by bib identifier."""
+    lookup: dict[str, list[dict]] = {}
+    for record in _iter_marc(mrc_path):
+        if record is None:
+            continue
+        flat: dict[str, str] = {}
+        for field in record.fields:
+            if field.is_control_field():
+                flat[field.tag] = field.data or ""
+            else:
+                for sf in field.subfields:
+                    key_name = f"{field.tag}${sf.code}"
+                    flat[key_name] = sf.value or ""
+        bib_key = flat.get(key_column, "").strip()
+        if bib_key:
+            lookup.setdefault(bib_key, []).append(flat)
     return lookup
 
 
@@ -913,7 +1271,12 @@ _ITEMS_CSV_TO_952 = {
 }
 
 
-def _add_952_from_csv(record: pymarc.Record, item_row: dict, column_map: dict | None = None) -> None:
+def _add_952_from_csv(
+    record: pymarc.Record,
+    item_row: dict,
+    column_map: dict | None = None,
+    constant_subfields: dict[str, str] | None = None,
+) -> None:
     """Add a 952 item field to a MARC record from a CSV row.
 
     Args:
@@ -921,6 +1284,8 @@ def _add_952_from_csv(record: pymarc.Record, item_row: dict, column_map: dict | 
         item_row: Dict of CSV column → value for this item row.
         column_map: Optional {source_column: subfield_code} dict from ItemColumnMap.
                     Falls back to _ITEMS_CSV_TO_952 if None.
+        constant_subfields: Optional {subfield_code: value} for constant values
+                            added to every 952 regardless of CSV data.
     """
     mapping = column_map or _ITEMS_CSV_TO_952
     subfields: list[Subfield] = []
@@ -931,6 +1296,12 @@ def _add_952_from_csv(record: pymarc.Record, item_row: dict, column_map: dict | 
         sub_code = mapping.get(col_name) if column_map else mapping.get(col_name.lower().strip())
         if sub_code:
             subfields.append(Subfield(code=sub_code, value=value.strip()))
+
+    # Add constant subfields (e.g. homebranch = "MAIN" for every item)
+    if constant_subfields:
+        for sub_code, value in constant_subfields.items():
+            if value:
+                subfields.append(Subfield(code=sub_code, value=value))
 
     if subfields:
         record.add_field(pymarc.Field(

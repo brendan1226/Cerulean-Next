@@ -22,6 +22,7 @@ from cerulean.core.database import get_db
 from cerulean.models import FieldMap, Project
 from cerulean.schemas.maps import (
     AIMapSuggestResponse,
+    AISuggestRequest,
     ApproveAllRequest,
     ApproveAllResponse,
     FieldMapCreate,
@@ -150,21 +151,25 @@ async def delete_map(
 @router.post("/{project_id}/maps/ai-suggest", response_model=AIMapSuggestResponse)
 async def ai_suggest_maps(
     project_id: str,
+    body: AISuggestRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Trigger Claude API analysis for field map suggestions.
     Creates FieldMap rows with approved=False, ai_suggested=True.
     Does NOT approve any map — engineer must review.
+    Optionally accepts file_ids to analyze only selected files.
     """
     await require_project(project_id, db)
 
     # Get files with tag frequency data
     from cerulean.models import MARCFile
-    result = await db.execute(
-        select(MARCFile)
-        .where(MARCFile.project_id == project_id, MARCFile.tag_frequency != None)  # noqa: E711
+    q = select(MARCFile).where(
+        MARCFile.project_id == project_id, MARCFile.tag_frequency != None  # noqa: E711
     )
+    if body and body.file_ids:
+        q = q.where(MARCFile.id.in_(body.file_ids))
+    result = await db.execute(q)
     files = result.scalars().all()
 
     if not files:

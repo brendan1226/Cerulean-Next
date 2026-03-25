@@ -59,11 +59,14 @@ router = APIRouter(prefix="/projects", tags=["items"])
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
-async def _get_items_csv_file(project_id: str, db: AsyncSession) -> MARCFile | None:
-    """Return the first items_csv file for a project (if any)."""
+async def _get_items_file(project_id: str, db: AsyncSession) -> MARCFile | None:
+    """Return the first items file for a project (any format)."""
     result = await db.execute(
         select(MARCFile)
-        .where(MARCFile.project_id == project_id, MARCFile.file_category == "items_csv")
+        .where(
+            MARCFile.project_id == project_id,
+            MARCFile.file_category.in_(["items", "items_csv"]),
+        )
         .order_by(MARCFile.created_at)
         .limit(1)
     )
@@ -218,11 +221,11 @@ async def ai_suggest_item_maps(
     """Dispatch AI column mapping task for items CSV."""
     await require_project(project_id, db)
 
-    items_file = await _get_items_csv_file(project_id, db)
+    items_file = await _get_items_file(project_id, db)
     if not items_file:
         raise HTTPException(409, detail={
-            "error": "NO_ITEMS_CSV",
-            "message": "Upload an items CSV file first.",
+            "error": "NO_ITEMS_FILE",
+            "message": "Upload an items file first.",
         })
 
     await audit_log(db, project_id, stage=2, level="info", tag="[items-ai]",
@@ -279,9 +282,9 @@ async def preview_items_csv(
     """Return sample rows from the items CSV file."""
     await require_project(project_id, db)
 
-    items_file = await _get_items_csv_file(project_id, db)
+    items_file = await _get_items_file(project_id, db)
     if not items_file:
-        raise HTTPException(404, detail={"error": "NO_ITEMS_CSV", "message": "No items CSV file found."})
+        raise HTTPException(404, detail={"error": "NO_ITEMS_FILE", "message": "No items file found."})
 
     rows: list[dict] = []
     columns: list[str] = []
@@ -291,8 +294,9 @@ async def preview_items_csv(
         csv.field_size_limit(10 * 1024 * 1024)
         stored_headers = items_file.column_headers or []
         with open(items_file.storage_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-            # If headers are col_1..col_N, the file has no header row — use fieldnames param
-            if stored_headers and stored_headers[0].startswith("col_"):
+            # If any headers are col_N, file had no header row — use fieldnames param
+            has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
+            if has_generated:
                 reader = csv.DictReader(fh, fieldnames=stored_headers)
             else:
                 reader = csv.DictReader(fh)
@@ -327,9 +331,9 @@ async def rename_column(
     """
     await require_project(project_id, db)
 
-    items_file = await _get_items_csv_file(project_id, db)
+    items_file = await _get_items_file(project_id, db)
     if not items_file:
-        raise HTTPException(404, detail={"error": "NO_ITEMS_CSV", "message": "No items CSV file found."})
+        raise HTTPException(404, detail={"error": "NO_ITEMS_FILE", "message": "No items file found."})
 
     headers = items_file.column_headers or []
     if body.old_name not in headers:

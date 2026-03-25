@@ -226,6 +226,197 @@ def ingest_items_csv_task(self, project_id: str, file_id: str, storage_path: str
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# INGEST ITEMS JSON TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(bind=True, name="cerulean.tasks.ingest.ingest_items_json_task")
+def ingest_items_json_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
+    """Parse an items JSON file — detect structure, read keys, count records, collect samples.
+
+    Stores column_headers, record_count, tag_frequency (as populated counts),
+    and subfield_frequency (as unique counts + samples) on the MARCFile row.
+    """
+    import json as _json
+    from cerulean.models import MARCFile
+
+    log = AuditLogger(project_id=project_id, stage=1, tag="[ingest]")
+    log.info(f"Parsing items JSON: {Path(storage_path).name}")
+
+    try:
+        _set_file_status(file_id, "indexing")
+
+        with open(storage_path, "r", encoding="utf-8", errors="replace") as fh:
+            data = _json.load(fh)
+
+        # Unwrap if dict with a known collection key
+        if isinstance(data, dict):
+            for key in ("items", "records", "data", "rows"):
+                if key in data and isinstance(data[key], list):
+                    data = data[key]
+                    break
+            else:
+                # If still a dict, wrap single object
+                if isinstance(data, dict):
+                    data = [data]
+
+        if not isinstance(data, list):
+            raise ValueError(f"Expected JSON array, got {type(data).__name__}")
+
+        # Extract unique keys as column_headers
+        all_keys: list[str] = []
+        seen_keys: set[str] = set()
+        for record in data:
+            if isinstance(record, dict):
+                for k in record:
+                    if k not in seen_keys:
+                        seen_keys.add(k)
+                        all_keys.append(k)
+
+        headers = all_keys
+        row_count = len(data)
+
+        # Collect stats
+        populated_count: Counter[str] = Counter()
+        unique_values: dict[str, set] = defaultdict(set)
+        samples: dict[str, list[str]] = defaultdict(list)
+
+        for record in data:
+            if not isinstance(record, dict):
+                continue
+            for col in headers:
+                val = str(record.get(col, "")).strip()
+                if val and val != "None" and val != "NULL":
+                    populated_count[col] += 1
+                    unique_values[col].add(val)
+                    if len(samples[col]) < 20:
+                        samples[col].append(val)
+
+        tag_freq = {col: populated_count.get(col, 0) for col in headers}
+        sub_freq = {
+            col: {
+                "unique": len(unique_values.get(col, set())),
+                "samples": samples.get(col, []),
+            }
+            for col in headers
+        }
+
+        with Session(_engine) as db:
+            db.execute(
+                update(MARCFile)
+                .where(MARCFile.id == file_id)
+                .values(
+                    file_format="json",
+                    column_headers=headers,
+                    record_count=row_count,
+                    tag_frequency=tag_freq,
+                    subfield_frequency=sub_freq,
+                    status="indexed",
+                )
+            )
+            db.commit()
+
+        log.complete(f"Items JSON indexed — {row_count:,} records, {len(headers)} columns")
+        return {"record_count": row_count, "column_count": len(headers), "columns": headers}
+
+    except Exception as exc:
+        log.error(f"Items JSON ingest failed: {exc}")
+        _set_file_status(file_id, "error", str(exc))
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# INGEST ITEMS MRC TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(bind=True, name="cerulean.tasks.ingest.ingest_items_mrc_task")
+def ingest_items_mrc_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
+    """Parse a MARC file as items data — flatten fields to TAG$subcode keys.
+
+    Each record is flattened: control fields → "TAG" key, data fields → "TAG$subcode" keys.
+    All unique keys become column_headers (e.g. ["001", "852$a", "852$b"]).
+    """
+    from cerulean.models import MARCFile
+
+    log = AuditLogger(project_id=project_id, stage=1, tag="[ingest]")
+    log.info(f"Parsing items MRC: {Path(storage_path).name}")
+
+    try:
+        _set_file_status(file_id, "indexing")
+
+        all_keys: list[str] = []
+        seen_keys: set[str] = set()
+        row_count = 0
+        populated_count: Counter[str] = Counter()
+        unique_values: dict[str, set] = defaultdict(set)
+        samples: dict[str, list[str]] = defaultdict(list)
+
+        for record in _iter_marc(storage_path):
+            if record is None:
+                continue
+            row_count += 1
+
+            for field in record.fields:
+                if field.is_control_field():
+                    key = field.tag
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        all_keys.append(key)
+                    val = (field.data or "").strip()
+                    if val:
+                        populated_count[key] += 1
+                        unique_values[key].add(val)
+                        if len(samples[key]) < 20:
+                            samples[key].append(val)
+                else:
+                    for sf in field.subfields:
+                        key = f"{field.tag}${sf.code}"
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            all_keys.append(key)
+                        val = (sf.value or "").strip()
+                        if val:
+                            populated_count[key] += 1
+                            unique_values[key].add(val)
+                            if len(samples[key]) < 20:
+                                samples[key].append(val)
+
+        headers = all_keys
+        tag_freq = {col: populated_count.get(col, 0) for col in headers}
+        sub_freq = {
+            col: {
+                "unique": len(unique_values.get(col, set())),
+                "samples": samples.get(col, []),
+            }
+            for col in headers
+        }
+
+        with Session(_engine) as db:
+            db.execute(
+                update(MARCFile)
+                .where(MARCFile.id == file_id)
+                .values(
+                    file_format="iso2709",
+                    column_headers=headers,
+                    record_count=row_count,
+                    tag_frequency=tag_freq,
+                    subfield_frequency=sub_freq,
+                    status="indexed",
+                )
+            )
+            db.commit()
+
+        log.complete(f"Items MRC indexed — {row_count:,} records, {len(headers)} columns")
+        return {"record_count": row_count, "column_count": len(headers), "columns": headers}
+
+    except Exception as exc:
+        log.error(f"Items MRC ingest failed: {exc}")
+        _set_file_status(file_id, "error", str(exc))
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ILS DETECTION TASK
 # ══════════════════════════════════════════════════════════════════════════
 

@@ -37,6 +37,21 @@ class MergeStartResponse(BaseModel):
     message: str
 
 
+# ── Build ─────────────────────────────────────────────────────────────
+
+class BuildStartRequest(BaseModel):
+    file_ids: list[str]
+    include_items: bool = False
+    items_match_tag: str = "001"
+    items_key_column: str = "biblionumber"
+
+
+class BuildStartResponse(BaseModel):
+    task_id: str
+    manifest_id: str
+    message: str
+
+
 # ── Status ────────────────────────────────────────────────────────────
 
 class TransformStatusResponse(BaseModel):

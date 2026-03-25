@@ -112,7 +112,7 @@ def items_ai_map_task(self, project_id: str) -> dict:
             items_file = db.execute(
                 select(MARCFile).where(
                     MARCFile.project_id == project_id,
-                    MARCFile.file_category == "items_csv",
+                    MARCFile.file_category.in_(["items", "items_csv"]),
                 ).limit(1)
             ).scalar_one_or_none()
 
@@ -126,8 +126,10 @@ def items_ai_map_task(self, project_id: str) -> dict:
         csv.field_size_limit(10 * 1024 * 1024)
         headers: list[str] = []
         sample_rows: list[dict] = []
+        stored_headers = items_file.column_headers or []
+        has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
         with open(storage_path, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(f, fieldnames=stored_headers) if has_generated else csv.DictReader(f)
             headers = list(reader.fieldnames or [])
             for i, row in enumerate(reader):
                 if i >= 20:

@@ -63,6 +63,10 @@ class FieldMapOut(BaseModel):
 
 # ── AI Suggestions ─────────────────────────────────────────────────────
 
+class AISuggestRequest(BaseModel):
+    file_ids: list[str] | None = None
+
+
 class AISuggestion(BaseModel):
     """One AI-proposed field mapping returned by /maps/ai-suggest."""
     source_tag: str

@@ -23,6 +23,8 @@ from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
 from cerulean.models import FieldMap, MARCFile, TransformManifest
 from cerulean.schemas.transform import (
+    BuildStartRequest,
+    BuildStartResponse,
     MergeStartRequest,
     MergeStartResponse,
     TransformManifestOut,
@@ -31,7 +33,7 @@ from cerulean.schemas.transform import (
     TransformStatusResponse,
 )
 from cerulean.tasks.celery_app import celery_app
-from cerulean.tasks.transform import merge_pipeline_task, transform_pipeline_task
+from cerulean.tasks.transform import build_output_task, merge_pipeline_task, transform_pipeline_task
 from cerulean.utils.marc import record_to_dict
 
 settings = get_settings()
@@ -145,6 +147,72 @@ async def start_merge(
     return MergeStartResponse(
         task_id=task.id, manifest_id=manifest_id,
         message="Merge pipeline started.",
+    )
+
+
+@router.post("/{project_id}/build", response_model=BuildStartResponse, status_code=202)
+async def start_build(
+    project_id: str,
+    body: BuildStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Combined build: apply field maps + join items → single output.mrc.
+
+    Field maps are optional (if none approved, records pass through unchanged).
+    Items join is optional (controlled by include_items flag).
+    """
+    await require_project(project_id, db)
+
+    if not body.file_ids:
+        raise HTTPException(400, detail={
+            "error": "NO_FILES_SELECTED",
+            "message": "Select at least one MARC file to build.",
+        })
+
+    # Verify at least one selected file exists and is indexed
+    result = await db.execute(
+        select(MARCFile).where(
+            MARCFile.project_id == project_id,
+            MARCFile.id.in_(body.file_ids),
+            MARCFile.status == "indexed",
+            MARCFile.file_category == "marc",
+        ).limit(1)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(409, detail={
+            "error": "NO_INDEXED_FILES",
+            "message": "No indexed MARC files found among selected files.",
+        })
+
+    manifest_id = str(uuid.uuid4())
+    manifest = TransformManifest(
+        id=manifest_id,
+        project_id=project_id,
+        task_type="build",
+        status="running",
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await audit_log(db, project_id, stage=3, level="info", tag="[build]",
+                    message=f"Build output dispatched: {len(body.file_ids)} file(s), items={'yes' if body.include_items else 'no'}")
+    await db.flush()
+
+    task = build_output_task.apply_async(
+        args=[project_id, manifest_id, body.file_ids],
+        kwargs={
+            "include_items": body.include_items,
+            "items_match_tag": body.items_match_tag,
+            "items_key_column": body.items_key_column,
+        },
+        queue="transform",
+    )
+    manifest.celery_task_id = task.id
+    await db.flush()
+
+    return BuildStartResponse(
+        task_id=task.id,
+        manifest_id=manifest_id,
+        message="Build output started.",
     )
 
 
@@ -320,11 +388,12 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
             f.unlink()
             deleted_files += 1
 
-    # Also delete merged.mrc if present
-    merged = Path(settings.data_root) / project_id / "merged.mrc"
-    if merged.is_file():
-        merged.unlink()
-        deleted_files += 1
+    # Also delete merged.mrc and output.mrc if present
+    for fname in ("merged.mrc", "output.mrc"):
+        fpath = Path(settings.data_root) / project_id / fname
+        if fpath.is_file():
+            fpath.unlink()
+            deleted_files += 1
 
     # Delete transform/merge manifests
     result = await db.execute(

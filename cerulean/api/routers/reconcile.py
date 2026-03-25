@@ -83,7 +83,7 @@ async def confirm_source(
         if candidate.is_file():
             source_file = str(candidate)
     if not source_file:
-        for name in ["merged_deduped.mrc", "merged.mrc"]:
+        for name in ["merged_deduped.mrc", "output.mrc", "merged.mrc"]:
             candidate = project_dir / name
             if candidate.is_file():
                 source_file = str(candidate)
