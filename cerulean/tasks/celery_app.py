@@ -30,6 +30,7 @@ celery_app = Celery(
         "cerulean.tasks.ingest",
         "cerulean.tasks.analyze",
         "cerulean.tasks.transform",
+        "cerulean.tasks.items",
         "cerulean.tasks.dedup",
         "cerulean.tasks.reconcile",
         "cerulean.tasks.patrons",
@@ -42,6 +43,7 @@ celery_app.conf.update(
     # Routing: tasks → queues
     task_routes={
         "cerulean.tasks.ingest.*": {"queue": "ingest"},
+        "cerulean.tasks.items.*": {"queue": "ingest"},
         "cerulean.tasks.analyze.*": {"queue": "analyze"},
         "cerulean.tasks.transform.*": {"queue": "transform"},
         "cerulean.tasks.dedup.*": {"queue": "dedup"},

@@ -423,7 +423,7 @@ class ReconciliationScanResult(Base):
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
 
     vocab_category: Mapped[str] = mapped_column(String(50), nullable=False)
-    source_value: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_value: Mapped[str] = mapped_column(Text, nullable=False)
     record_count: Mapped[int] = mapped_column(Integer, nullable=False)
     scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
@@ -602,7 +602,7 @@ class PatronScanResult(Base):
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
 
     koha_header: Mapped[str] = mapped_column(String(50), nullable=False)
-    source_value: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_value: Mapped[str] = mapped_column(Text, nullable=False)
     record_count: Mapped[int] = mapped_column(Integer, nullable=False)
     scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 

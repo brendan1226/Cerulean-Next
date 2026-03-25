@@ -1922,9 +1922,9 @@ async function renderStage2(el) {
         <div class="s2-panel-header">Record Inspector</div>
         <div class="s2-record-nav" id="s2-record-nav">
           <button class="btn btn-ghost btn-sm" onclick="s2PrevRecord()">◀</button>
-          <span class="mono text-secondary" style="font-size:11px">Record <span id="s2-rec-idx">0</span></span>
+          <span class="mono text-secondary" style="font-size:11px">Record</span>
+          <input type="number" id="s2-rec-jump" class="form-input mono" min="0" value="0" style="width:60px;padding:2px 4px;font-size:11px;text-align:center" onchange="s2JumpRecord(parseInt(this.value)||0)" onkeydown="if(event.key==='Enter'){event.preventDefault();s2JumpRecord(parseInt(this.value)||0)}">
           <button class="btn btn-ghost btn-sm" onclick="s2NextRecord()">▶</button>
-          <input class="form-input" id="s2-rec-jump" type="number" value="0" min="0" style="width:70px;padding:4px 6px;font-size:11px" onchange="s2JumpRecord(parseInt(this.value)||0)">
         </div>
         <div class="s2-panel-body" id="s2-center">
           <div class="text-dim" style="font-size:12px;padding:20px;text-align:center">Select a file to inspect records</div>
@@ -2574,8 +2574,8 @@ async function s2LoadRecord(index) {
     const record = await api('GET', `/projects/${p.id}/files/${f.id}/records/${index}`);
     s2.currentRecord = record;
     s2.recordIndex = index;
-    document.getElementById('s2-rec-idx').textContent = index;
-    document.getElementById('s2-rec-jump').value = index;
+    const s2JumpEl = document.getElementById('s2-rec-jump');
+    if (s2JumpEl) s2JumpEl.value = index;
 
     center.innerHTML = `
       <div style="margin-bottom:8px">
@@ -3717,19 +3717,38 @@ function switchS3Tab(tab, btn) {
   ({ transform: renderS3Transform, merge: renderS3Merge, manifest: renderS3Manifest })[tab]();
 }
 
-function renderS3Transform() {
-  document.getElementById('s3-tab').innerHTML = `
+async function renderS3Transform() {
+  const p = state.currentProject;
+  const el = document.getElementById('s3-tab');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  let files = [];
+  try {
+    const allFiles = await window.api('GET', `/projects/${p.id}/files`);
+    files = (allFiles || []).filter(f => f.filename);
+  } catch (e) { console.error(e); }
+
+  el.innerHTML = `
     <div class="alert alert-info">
-      Transform applies your approved field maps to every indexed MARC file.
+      Transform applies your approved field maps to the selected MARC files.
       Transformed files are saved alongside originals as {name}_transformed.mrc.
     </div>
     <div class="card" style="max-width:480px">
       <div class="card-header"><span class="card-title">Run Transform</span></div>
-      <p class="text-secondary" style="font-size:12px;margin-bottom:16px">
-        Applies all approved maps to all indexed files.
-      </p>
+      <div class="form-group">
+        <label class="form-label">Select files to transform</label>
+        <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:200px;overflow:auto;background:var(--bg-secondary)">
+          ${files.length ? files.map(f => `
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer">
+              <input type="checkbox" class="transform-file-check" value="${esc(f.id)}">
+              <span class="mono">${esc(f.filename)}</span>
+              <span class="text-dim" style="margin-left:auto;font-size:11px">${f.record_count != null ? f.record_count.toLocaleString() + ' records' : ''}</span>
+            </label>
+          `).join('') : '<span class="text-dim" style="font-size:12px">No MARC files found. Upload files in Stage 1.</span>'}
+        </div>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="runTransform()" id="btn-transform-start">▶ Start Transform</button>
+        <button class="btn btn-primary" onclick="runTransform()" id="btn-transform-start" ${!files.length ? 'disabled' : ''}>▶ Start Transform</button>
         <button class="btn btn-amber" onclick="pauseTransform()" id="btn-transform-pause" style="display:none">⏸ Pause</button>
         <button class="btn btn-primary" onclick="resumeTransform()" id="btn-transform-resume" style="display:none">▶ Resume</button>
         <button class="btn" onclick="clearTransformResults()" id="btn-transform-clear" style="margin-left:auto" title="Delete transformed files and manifests">🗑 Clear Previous Results</button>
@@ -3741,6 +3760,8 @@ function renderS3Transform() {
 async function runTransform() {
   const p = state.currentProject;
   const statusEl = document.getElementById('transform-status');
+  const ids = [...document.querySelectorAll('.transform-file-check:checked')].map(cb => cb.value);
+  if (!ids.length) { toast('Select at least one file to transform', 'warn'); return; }
   try {
     // Validate maps before starting
     statusEl.innerHTML = '<span class="text-secondary" style="font-size:12px">Validating maps…</span>';
@@ -3757,7 +3778,11 @@ async function runTransform() {
         html += `<div style="margin-top:8px"><strong>${v.valid_count}</strong> valid map(s) will still run.
           <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="runTransformConfirmed()">Continue anyway</button></div>`;
       } else {
-        html += `<div style="margin-top:8px;color:var(--red)">No valid maps to run. Fix the issues above first.</div>`;
+        html += `<div style="margin-top:8px">
+          <div class="alert alert-info" style="margin-bottom:0">No approved field maps found. You can still merge files without transforming.
+            <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="switchS3Tab('merge', document.querySelectorAll('.tab-btn')[1])">Skip to Merge</button>
+          </div>
+        </div>`;
       }
       html += `</div>`;
       statusEl.innerHTML = html;
@@ -3770,8 +3795,10 @@ async function runTransform() {
 async function runTransformConfirmed() {
   const p = state.currentProject;
   const statusEl = document.getElementById('transform-status');
+  const ids = [...document.querySelectorAll('.transform-file-check:checked')].map(cb => cb.value);
+  if (!ids.length) { toast('Select at least one file to transform', 'warn'); return; }
   try {
-    const r = await window.api('POST', `/projects/${p.id}/transform/start`, {});
+    const r = await window.api('POST', `/projects/${p.id}/transform/start`, { file_ids: ids });
     if (!r) return;
     document.getElementById('btn-transform-start').style.display = 'none';
     document.getElementById('btn-transform-pause').style.display = '';
@@ -3830,7 +3857,7 @@ async function renderS3Merge() {
   let itemMaps = [];
   try {
     const allFiles = await window.api('GET', `/projects/${p.id}/files`);
-    files = (allFiles || []).filter(f => f.file_category !== 'items_csv' && f.filename);
+    files = (allFiles || []).filter(f => f.filename);
     itemsCsvFile = (allFiles || []).find(f => f.file_category === 'items_csv' && f.status === 'indexed');
   } catch (e) { console.error(e); }
 
@@ -3856,27 +3883,28 @@ async function renderS3Merge() {
         <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:200px;overflow:auto;background:var(--bg-secondary)">
           ${files.length ? files.map(f => `
             <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer">
-              <input type="checkbox" class="merge-file-check" value="${esc(f.id)}" checked>
+              <input type="checkbox" class="merge-file-check" value="${esc(f.id)}">
               <span class="mono">${esc(f.filename)}</span>
               <span class="text-dim" style="margin-left:auto;font-size:11px">${f.record_count != null ? f.record_count.toLocaleString() + ' records' : ''}</span>
             </label>
           `).join('') : '<span class="text-dim" style="font-size:12px">No MARC files found. Upload files in Stage 1.</span>'}
+          ${hasItemsCsv ? `
+            <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;cursor:pointer;border-top:1px solid var(--border);margin-top:4px;padding-top:8px">
+              <input type="checkbox" id="merge-include-csv" ${approvedMaps.length ? 'checked' : ''}>
+              <span class="mono">${esc(itemsCsvFile.filename)}</span>
+              <span class="badge badge-dim" style="font-size:9px;margin-left:4px">items CSV</span>
+              <span class="text-dim" style="margin-left:auto;font-size:11px">${itemsCsvFile.record_count ? itemsCsvFile.record_count.toLocaleString() + ' rows' : ''}</span>
+            </label>
+          ` : ''}
         </div>
       </div>
       ${hasItemsCsv ? `
-        <div style="padding:10px;background:var(--bg-secondary);border-radius:var(--radius-lg);border:1px solid var(--border);margin-bottom:12px">
-          <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Item CSV Configured</div>
-          <div style="font-size:11px;color:var(--text-dim)">
-            <span class="mono">${esc(itemsCsvFile.filename)}</span> —
-            ${itemsCsvFile.record_count ? itemsCsvFile.record_count.toLocaleString() + ' rows' : ''},
-            match: CSV <span class="mono">${esc(keyCol)}</span> ↔ MARC <span class="mono">${esc(matchTag)}</span>
-          </div>
-          <div style="font-size:10px;color:var(--text-dim);margin-top:4px">
-            ${approvedMaps.length} approved mapping${approvedMaps.length !== 1 ? 's' : ''}:
-            ${approvedMaps.slice(0, 5).map(m => `<span class="badge badge-dim" style="font-size:9px">${esc(m.source_column)}→952$${esc(m.target_subfield)}</span>`).join(' ')}
-            ${approvedMaps.length > 5 ? `<span class="text-dim">+${approvedMaps.length - 5} more</span>` : ''}
-            ${!approvedMaps.length ? '<span class="badge badge-amber" style="font-size:9px">no approved mappings — will use defaults</span>' : ''}
-          </div>
+        <div style="padding:8px 10px;background:var(--bg-secondary);border-radius:var(--radius-lg);border:1px solid var(--border);margin-bottom:12px;font-size:10px;color:var(--text-dim)">
+          Match: CSV <span class="mono">${esc(keyCol)}</span> ↔ MARC <span class="mono">${esc(matchTag)}</span> —
+          ${approvedMaps.length} approved mapping${approvedMaps.length !== 1 ? 's' : ''}
+          ${approvedMaps.slice(0, 5).map(m => `<span class="badge badge-dim" style="font-size:9px">${esc(m.source_column)}→952$${esc(m.target_subfield)}</span>`).join(' ')}
+          ${approvedMaps.length > 5 ? `<span class="text-dim">+${approvedMaps.length - 5} more</span>` : ''}
+          ${!approvedMaps.length ? '<span class="badge badge-amber" style="font-size:9px">no approved mappings — will use defaults</span>' : ''}
         </div>
       ` : `
         <div class="form-group">
@@ -3897,17 +3925,17 @@ async function runMerge() {
   const p = state.currentProject;
   const ids = [...document.querySelectorAll('.merge-file-check:checked')].map(cb => cb.value);
   if (!ids.length) { toast('Select at least one file to merge', 'warn'); return; }
+  const includeCsvEl = document.getElementById('merge-include-csv');
+  const includeCsv = includeCsvEl ? includeCsvEl.checked : false;
   const csvPathEl = document.getElementById('merge-csv');
-  const csvPath = csvPathEl ? csvPathEl.value.trim() || null : null;
-  const keyCol = document.getElementById('merge-bib-key')?.value.trim() || p.items_csv_key_column || 'biblionumber';
-  const matchTag = p.items_csv_match_tag || '001';
+  const body = { file_ids: ids };
+  if (includeCsv) {
+    body.items_csv_path = csvPathEl ? csvPathEl.value.trim() || null : null;
+    body.items_csv_key_column = document.getElementById('merge-bib-key')?.value.trim() || p.items_csv_key_column || 'biblionumber';
+    body.items_csv_match_tag = p.items_csv_match_tag || '001';
+  }
   try {
-    const r = await window.api('POST', `/projects/${p.id}/transform/merge`, {
-      file_ids: ids,
-      items_csv_path: csvPath,
-      items_csv_key_column: keyCol,
-      items_csv_match_tag: matchTag,
-    });
+    const r = await window.api('POST', `/projects/${p.id}/transform/merge`, body);
     if (!r) return;
     document.getElementById('merge-status').innerHTML = renderProgressBar({ label: `Merging ${ids.length} file${ids.length === 1 ? '' : 's'}…` });
     pollTaskStatus(p.id, r.task_id, 'merge-status', 'merge', 'transform');
@@ -3996,7 +4024,8 @@ async function renderS3Manifest() {
           <span class="card-title">Review Transformed Records</span>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn btn-sm" onclick="s3PreviewNav(-1)">← Prev</button>
-            <span id="s3-preview-index" class="mono" style="font-size:12px">0 / ${m.total_records||0}</span>
+            <input type="number" id="s3-preview-jump" class="form-input mono" min="1" max="${m.total_records||1}" value="1" style="width:60px;padding:2px 4px;font-size:11px;text-align:center" onchange="s3PreviewJump()" onkeydown="if(event.key==='Enter'){event.preventDefault();s3PreviewJump()}">
+            <span class="mono text-dim" style="font-size:11px">/ ${m.total_records||0}</span>
             <button class="btn btn-sm" onclick="s3PreviewNav(1)">Next →</button>
           </div>
         </div>
@@ -4024,16 +4053,25 @@ function s3PreviewNav(dir) {
   s3LoadPreview(next);
 }
 
+function s3PreviewJump() {
+  const v = parseInt(document.getElementById('s3-preview-jump')?.value);
+  if (isNaN(v) || v < 1) return;
+  const idx = v - 1;
+  if (idx >= (window._s3TotalRecords || 1)) return;
+  window._s3PreviewIdx = idx;
+  s3LoadPreview(idx);
+}
+
 async function s3LoadPreview(idx) {
   const p = state.currentProject;
   const el = document.getElementById('s3-preview');
-  const idxEl = document.getElementById('s3-preview-index');
   if (!el) return;
   el.innerHTML = `<div class="spinner"></div>`;
   try {
     const r = await window.api('GET', `/projects/${p.id}/transform/preview?record_index=${idx}`);
     if (!r) { el.innerHTML = `<div class="text-secondary">Could not load preview.</div>`; return; }
-    if (idxEl) idxEl.textContent = `${idx + 1} / ${r.total_records}`;
+    const jumpEl = document.getElementById('s3-preview-jump');
+    if (jumpEl) jumpEl.value = idx + 1;
 
     const orig = r.original;
     const trans = r.transformed;
@@ -6347,7 +6385,8 @@ async function renderS7Bibs() {
         <span class="card-title">Record Preview</span>
         <div style="display:flex;gap:8px;align-items:center">
           <button class="btn btn-sm" onclick="s7PreviewNav(-1)">← Prev</button>
-          <span id="s7-preview-index" class="mono" style="font-size:12px">—</span>
+          <input type="number" id="s7-preview-jump" class="form-input mono" min="1" value="1" style="width:60px;padding:2px 4px;font-size:11px;text-align:center" onchange="s7PreviewJump()" onkeydown="if(event.key==='Enter'){event.preventDefault();s7PreviewJump()}">
+          <span id="s7-preview-index" class="mono text-dim" style="font-size:11px"></span>
           <button class="btn btn-sm" onclick="s7PreviewNav(1)">Next →</button>
         </div>
       </div>
@@ -6432,6 +6471,15 @@ function s7PreviewNav(dir) {
   s7LoadPreview(next);
 }
 
+function s7PreviewJump() {
+  const v = parseInt(document.getElementById('s7-preview-jump')?.value);
+  if (isNaN(v) || v < 1) return;
+  const idx = v - 1;
+  if (idx >= (window._s7PreviewTotal || 1)) return;
+  window._s7PreviewIdx = idx;
+  s7LoadPreview(idx);
+}
+
 async function s7LoadPreview(idx) {
   const p = state.currentProject;
   const el = document.getElementById('s7-preview');
@@ -6442,7 +6490,9 @@ async function s7LoadPreview(idx) {
     const r = await window.api('GET', `/projects/${p.id}/push/files/preview?filename=${encodeURIComponent(window._s7PreviewFile)}&record_index=${idx}`);
     if (!r || !r.record) { el.innerHTML = '<span class="text-dim">Could not load record.</span>'; return; }
     window._s7PreviewTotal = r.total_records;
-    if (idxEl) idxEl.textContent = `${idx + 1} / ${r.total_records}`;
+    const jumpEl7 = document.getElementById('s7-preview-jump');
+    if (jumpEl7) jumpEl7.value = idx + 1;
+    if (idxEl) idxEl.textContent = `/ ${r.total_records}`;
     const rec = r.record;
     el.innerHTML = `
       <div style="margin-bottom:6px;font-size:12px;color:var(--text-secondary)">

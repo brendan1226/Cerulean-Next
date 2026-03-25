@@ -882,6 +882,7 @@ def _update_manifest_error(db: Session, manifest_id: str, error_msg: str) -> Non
 
 def _load_items_csv(csv_path: str, key_column: str) -> dict[str, list[dict]]:
     """Load an items CSV into a lookup dict keyed by bib identifier."""
+    csv.field_size_limit(10 * 1024 * 1024)  # 10 MB
     lookup: dict[str, list[dict]] = {}
     with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
         reader = csv.DictReader(fh)
