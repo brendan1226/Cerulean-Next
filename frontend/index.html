@@ -1463,16 +1463,16 @@ async function renderStage1(el) {
         <div class="card-header">
           <span class="card-title">Upload Item/Holdings CSV</span>
         </div>
-        <div class="alert alert-info">Item data CSV (separate from MARC). Mapped to 952 in Stage 2.</div>
+        <div class="alert alert-info">Item/holdings data (CSV, JSON, or MARC). Mapped to 952 in Stage 2.</div>
         <div id="drop-zone-items" style="border:2px dashed var(--border-mid);border-radius:var(--radius-lg);padding:32px;text-align:center;cursor:pointer;transition:all 0.2s"
           onclick="document.getElementById('items-file-input').click()"
           ondragover="event.preventDefault();this.style.borderColor='var(--amber)'"
           ondragleave="this.style.borderColor='var(--border-mid)'"
           ondrop="handleItemsFileDrop(event)">
           <div style="font-size:28px;margin-bottom:8px;opacity:0.4">⊞</div>
-          <div class="mono" style="font-size:12px;color:var(--text-secondary)">Drop items CSV here or click to browse</div>
+          <div class="mono" style="font-size:12px;color:var(--text-secondary)">Drop items file here or click to browse</div>
         </div>
-        <input type="file" id="items-file-input" style="display:none" accept=".csv,.tsv,.txt"
+        <input type="file" id="items-file-input" style="display:none" accept=".csv,.tsv,.txt,.json,.mrc,.marc"
           onchange="uploadItemsFiles(this.files)">
       </div>
     </div>
@@ -1521,8 +1521,8 @@ async function loadFiles() {
   if (!wrap) return;
   try {
     const files = await api('GET', `/projects/${p.id}/files`);
-    const marcFiles = files.filter(f => f.file_category !== 'items_csv');
-    const itemsFiles = files.filter(f => f.file_category === 'items_csv');
+    const marcFiles = files.filter(f => f.file_category === 'marc');
+    const itemsFiles = files.filter(f => f.file_category === 'items_csv' || f.file_category === 'items');
 
     if (!files.length) {
       wrap.innerHTML = `<div class="empty-state" style="padding:24px">
@@ -1546,7 +1546,10 @@ async function loadFiles() {
             <td class="text-secondary">${f.ils_signal || '—'}</td>
             <td>${statusBadge(f.status)}</td>
             <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
-            <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button></td>
+            <td style="white-space:nowrap">
+              ${f.status === 'not_marc' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--amber)" onclick="recategorizeFile('${esc(f.id)}','items')" title="Re-categorize as items file">→ Items</button>` : ''}
+              <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button>
+            </td>
           </tr>`).join('')}
         </tbody>
       </table>`;
@@ -1630,7 +1633,7 @@ async function _uploadSingleItemFile(project, file, wrap) {
     wrap.prepend(div);
   }
   try {
-    const url = `${API_BASE}/projects/${project.id}/files?mode=replace&category=items_csv`;
+    const url = `${API_BASE}/projects/${project.id}/files?mode=replace&category=items`;
     const res = await fetch(url, { method: 'POST', body: fd });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
@@ -1644,6 +1647,17 @@ async function _uploadSingleItemFile(project, file, wrap) {
     if (el) el.innerHTML = renderProgressBar({ percent: 100, label: `${file.name} failed`, status: 'error', detail: e.message });
     toast(`Upload failed (${file.name}): ${e.message}`, 'error');
   }
+}
+
+async function recategorizeFile(fileId, newCategory) {
+  const p = state.currentProject;
+  try {
+    const r = await api('POST', `/projects/${p.id}/files/${fileId}/recategorize?category=${newCategory}`);
+    if (r) {
+      toast(r.message, 'success');
+      pollFileStatus();
+    }
+  } catch (e) { console.error(e); }
 }
 
 // ── Stage 1: Items CSV Detail Panel ─────────────────────────────────
@@ -1961,8 +1975,8 @@ async function s2LoadFiles() {
   const p = state.currentProject;
   try {
     const allFiles = await api('GET', `/projects/${p.id}/files`);
-    const marcFiles = (allFiles || []).filter(f => f.file_category !== 'items_csv' && f.file_category !== 'items' && f.filename);
-    const itemsCsvFiles = (allFiles || []).filter(f => f.file_category === 'items_csv' || f.file_category === 'items');
+    const marcFiles = (allFiles || []).filter(f => f.file_category === 'marc' && f.status === 'indexed' && f.filename);
+    const itemsCsvFiles = (allFiles || []).filter(f => (f.file_category === 'items_csv' || f.file_category === 'items') && f.status === 'indexed');
     s2.files = marcFiles;
     s2.itemsCsvFiles = itemsCsvFiles;
     const left = document.getElementById('s2-left');
@@ -1973,29 +1987,26 @@ async function s2LoadFiles() {
       return;
     }
 
-    let html = '';
+    let html = '<div id="s2-file-list" style="margin-bottom:8px">';
     if (marcFiles.length) {
-      html += `<div style="margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">MARC Files</div>
+      html += `<div style="margin-bottom:6px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">MARC Files</div>
       ${marcFiles.map(f => `
         <div class="s2-file-item ${s2.selectedFile?.id === f.id && !s2.selectedItemsCsv ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectFile(${JSON.stringify(f).replace(/"/g,'&quot;')})">
-          <label onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;margin-right:6px;cursor:pointer">
-            <input type="checkbox" class="s2-file-check" value="${esc(f.id)}" checked onclick="event.stopPropagation()">
-          </label>
           <span class="mono" style="font-size:11px">${esc(f.filename)}</span>
           <span class="text-dim mono" style="font-size:10px">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</span>
         </div>`).join('')}`;
     }
 
     if (itemsCsvFiles.length) {
-      html += `<div style="margin:12px 0 8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Item Files</div>
+      html += `<div style="margin:10px 0 6px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">Item Files</div>
       ${itemsCsvFiles.map(f => `
         <div class="s2-file-item ${s2.selectedItemsCsv?.id === f.id ? 'active' : ''}" data-fid="${esc(f.id)}" onclick="s2SelectItemsCsv(${JSON.stringify(f).replace(/"/g,'&quot;')})">
           <span class="mono" style="font-size:11px">${esc(f.filename)}</span>
           <span class="text-dim mono" style="font-size:10px">${f.record_count != null ? f.record_count.toLocaleString() + ' rows' : '—'}</span>
         </div>`).join('')}`;
     }
-
-    html += `<div id="s2-tag-section"></div>`;
+    html += '</div>';
+    html += `<div id="s2-tag-section" style="border-top:1px solid var(--border);padding-top:8px"></div>`;
     left.innerHTML = html;
 
     // Auto-select first file if none selected
@@ -2150,20 +2161,28 @@ function startRenameColumn(oldName, spanEl) {
   input.value = oldName;
   input.className = 'form-input mono';
   input.style.cssText = 'font-size:12px;font-weight:600;padding:2px 6px;width:160px;height:22px;margin:0';
+  let committed = false;
 
   const commit = () => {
+    if (committed) return;
+    committed = true;
     const newName = input.value.trim();
     if (newName && newName !== oldName) {
       doRenameColumn(oldName, newName);
     } else {
-      // Revert — put the span back
-      input.replaceWith(spanEl || _makeColSpan(oldName));
+      // Revert — put the span back (only if still in DOM)
+      if (input.parentNode) {
+        input.replaceWith(spanEl || _makeColSpan(oldName));
+      }
     }
   };
 
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    if (e.key === 'Escape') { input.replaceWith(spanEl || _makeColSpan(oldName)); }
+    if (e.key === 'Escape') {
+      committed = true;
+      if (input.parentNode) input.replaceWith(spanEl || _makeColSpan(oldName));
+    }
   });
   input.addEventListener('blur', commit);
 
@@ -2200,7 +2219,7 @@ async function doRenameColumn(oldName, newName) {
     if (proj) state.currentProject = proj;
 
     // Refresh Stage 1 detail panel if visible
-    const updatedForS1 = (allFiles || []).find(f => f.file_category === 'items_csv' && f.id === _s1ItemsFile?.id);
+    const updatedForS1 = (allFiles || []).find(f => (f.file_category === 'items_csv' || f.file_category === 'items') && f.id === _s1ItemsFile?.id);
     if (updatedForS1) {
       _s1ItemsFile = updatedForS1;
       if (_s1ItemsTab === 'preview') s1RenderItemsPreview();
@@ -2209,7 +2228,7 @@ async function doRenameColumn(oldName, newName) {
     }
 
     // Refresh Stage 2 panels if active
-    const updatedForS2 = (allFiles || []).find(f => f.file_category === 'items_csv' && f.id === s2.selectedItemsCsv?.id);
+    const updatedForS2 = (allFiles || []).find(f => (f.file_category === 'items_csv' || f.file_category === 'items') && f.id === s2.selectedItemsCsv?.id);
     if (updatedForS2) {
       s2.selectedItemsCsv = updatedForS2;
       s2RenderItemsCsvCenter();
@@ -2500,11 +2519,11 @@ function s2RenderTags() {
   const topTags = sortedTags.slice(0, 20);
 
   section.innerHTML = `
-    <div style="margin-top:16px;margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">
+    <div style="margin-top:8px;margin-bottom:8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em">
       Tag Frequency (${Object.keys(tags).length} tags)
     </div>
     <div class="s2-chart-wrap"><canvas id="s2-tag-chart" height="180"></canvas></div>
-    <div class="s2-tag-list" id="s2-tag-list">
+    <div class="s2-tag-list" id="s2-tag-list" style="max-height:200px;overflow:auto">
       ${sortedTags.map(([tag, count]) => `
         <div class="s2-tag-row ${s2.selectedTag === tag ? 'active' : ''}" onclick="s2SelectTag('${esc(tag)}')">
           <span>${esc(tag)}</span>
@@ -3211,15 +3230,15 @@ async function runAISuggest() {
   const progEl = document.getElementById('ai-suggest-progress');
   const btnEl = document.getElementById('btn-ai-suggest');
   try {
-    // Collect selected file IDs from checkboxes
-    const checkedIds = [...document.querySelectorAll('.s2-file-check:checked')].map(cb => cb.value);
-    if (!checkedIds.length) { toast('Check at least one MARC file for AI analysis', 'warn'); return; }
+    // Use all MARC files for AI analysis
+    const fileIds = (s2.files || []).map(f => f.id);
+    if (!fileIds.length) { toast('No MARC files available for AI analysis', 'warn'); return; }
 
     // Snapshot current map count to detect new AI maps
     const before = await api('GET', `/projects/${p.id}/maps`);
     const beforeCount = (before || []).length;
 
-    const res = await api('POST', `/projects/${p.id}/maps/ai-suggest`, { file_ids: checkedIds });
+    const res = await api('POST', `/projects/${p.id}/maps/ai-suggest`, { file_ids: fileIds });
     if (btnEl) btnEl.style.display = 'none';
     if (progEl) { progEl.style.display = ''; progEl.innerHTML = renderProgressBar({ label: 'AI analyzing…' }); }
 
@@ -5968,7 +5987,16 @@ async function renderPatronApply() {
             <div><span class="text-dim">Excluded:</span> <strong class="text-red">${(r.rows_excluded||0).toLocaleString()}</strong></div>
             <div><span class="text-dim">Rules Applied:</span> <strong>${(r.rules_applied||0).toLocaleString()}</strong></div>
           </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-header">
+            <span class="card-title">Transformed Patron Preview</span>
+            <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/patrons/output-files/patrons_transformed.csv/download" download="patrons_transformed.csv">Download Full CSV</a>
+          </div>
+          <div id="patron-transform-preview"><div class="spinner"></div></div>
         </div>`;
+      // Auto-load preview of transformed patrons
+      _loadTransformedPatronPreview(p.id);
     }
   } catch(e) {}
 
@@ -6040,6 +6068,32 @@ async function previewPatronFile(filename) {
         </table>
       </div>`;
   } catch(e) { el.innerHTML = '<span class="text-dim">Failed to load preview.</span>'; }
+}
+
+async function _loadTransformedPatronPreview(projectId) {
+  const el = document.getElementById('patron-transform-preview');
+  if (!el) return;
+  try {
+    const r = await window.api('GET', `/projects/${projectId}/patrons/output-files/patrons_transformed.csv`);
+    if (!r || !r.rows || !r.rows.length) { el.innerHTML = '<span class="text-dim" style="font-size:12px">No transformed data yet.</span>'; return; }
+    const cols = Object.keys(r.rows[0]);
+    // Filter to columns that have at least one non-empty value in the sample
+    const activeCols = cols.filter(c => r.rows.some(row => row[c] && row[c].trim()));
+    const displayCols = activeCols.length ? activeCols : cols;
+    el.innerHTML = `
+      <div style="margin-bottom:6px;font-size:11px;color:var(--text-dim)">
+        Showing ${Math.min(r.rows.length, 50)} of ${r.total_rows ? r.total_rows.toLocaleString() : r.rows.length} rows · ${displayCols.length} columns with data
+      </div>
+      <div style="max-height:400px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" style="font-size:11px;width:100%;white-space:nowrap">
+          <thead><tr>${displayCols.map(c => `<th style="position:sticky;top:0;background:var(--bg-primary);z-index:1">${esc(c)}</th>`).join('')}</tr></thead>
+          <tbody>${r.rows.slice(0, 50).map(row => `<tr>${displayCols.map(c => {
+            const val = row[c] || '';
+            return `<td class="mono" title="${esc(val)}">${esc(val.length > 30 ? val.slice(0, 27) + '…' : val)}</td>`;
+          }).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  } catch(e) { el.innerHTML = '<span class="text-dim" style="font-size:12px">Preview not available — run Apply first.</span>'; }
 }
 
 async function refreshProject() {

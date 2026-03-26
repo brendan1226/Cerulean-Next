@@ -319,11 +319,11 @@ def merge_pipeline_task(
                     if items_csv_file:
                         items_csv_headers = items_csv_file.column_headers
 
-            # Read match config from project if not in task args
+            # Always prefer project-level match config if set
             if project:
-                if items_csv_match_tag == "001" and project.items_csv_match_tag:
+                if project.items_csv_match_tag:
                     items_csv_match_tag = project.items_csv_match_tag
-                if items_csv_key_column == "biblionumber" and project.items_csv_key_column:
+                if project.items_csv_key_column:
                     items_csv_key_column = project.items_csv_key_column
 
             # Load approved ItemColumnMap rows → build {source_col: subfield_code}
@@ -580,11 +580,11 @@ def build_output_task(
 
             # Items data
             if include_items:
-                # Read match config from project if defaults
+                # Always prefer project-level match config if set
                 if project:
-                    if items_match_tag == "001" and project.items_csv_match_tag:
+                    if project.items_csv_match_tag:
                         items_match_tag = project.items_csv_match_tag
-                    if items_key_column == "biblionumber" and project.items_csv_key_column:
+                    if project.items_csv_key_column:
                         items_key_column = project.items_csv_key_column
 
                 # Load approved ItemColumnMap rows
@@ -1289,13 +1289,16 @@ def _add_952_from_csv(
     """
     mapping = column_map or _ITEMS_CSV_TO_952
     subfields: list[Subfield] = []
-    for col_name, value in item_row.items():
-        if not value or not value.strip():
+    for col_name, raw_value in item_row.items():
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip() if not isinstance(raw_value, str) else raw_value.strip()
+        if not value:
             continue
         # Dynamic map uses exact column names; fallback uses lowered names
         sub_code = mapping.get(col_name) if column_map else mapping.get(col_name.lower().strip())
         if sub_code:
-            subfields.append(Subfield(code=sub_code, value=value.strip()))
+            subfields.append(Subfield(code=sub_code, value=value))
 
     # Add constant subfields (e.g. homebranch = "MAIN" for every item)
     if constant_subfields:

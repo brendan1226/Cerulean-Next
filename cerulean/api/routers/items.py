@@ -24,8 +24,10 @@ Match Config:
 """
 
 import csv
+import json
 import uuid
 
+import pymarc
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -287,28 +289,78 @@ async def preview_items_csv(
         raise HTTPException(404, detail={"error": "NO_ITEMS_FILE", "message": "No items file found."})
 
     rows: list[dict] = []
-    columns: list[str] = []
+    columns: list[str] = items_file.column_headers or []
     total_rows = items_file.record_count or 0
+    fmt = items_file.file_format or "csv"
 
     try:
-        csv.field_size_limit(10 * 1024 * 1024)
-        stored_headers = items_file.column_headers or []
-        with open(items_file.storage_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-            # If any headers are col_N, file had no header row — use fieldnames param
-            has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
-            if has_generated:
-                reader = csv.DictReader(fh, fieldnames=stored_headers)
-            else:
-                reader = csv.DictReader(fh)
-            columns = list(reader.fieldnames or [])
-            for i, row in enumerate(reader):
+        if fmt == "json":
+            with open(items_file.storage_path, "r", encoding="utf-8", errors="replace") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                for k in ("items", "records", "data", "rows"):
+                    if k in data and isinstance(data[k], list):
+                        data = data[k]
+                        break
+                else:
+                    data = [data] if isinstance(data, dict) else []
+            if not columns:
+                seen: set[str] = set()
+                for rec in data:
+                    if isinstance(rec, dict):
+                        for k in rec:
+                            if k not in seen:
+                                seen.add(k)
+                                columns.append(k)
+            for i, rec in enumerate(data):
                 if i < offset:
                     continue
                 if len(rows) >= limit:
                     break
-                rows.append(dict(row))
+                if isinstance(rec, dict):
+                    rows.append({k: str(v) if v is not None else "" for k, v in rec.items()})
+
+        elif fmt == "iso2709":
+            count = 0
+            with open(items_file.storage_path, "rb") as fh:
+                reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                for record in reader:
+                    if record is None:
+                        continue
+                    if count < offset:
+                        count += 1
+                        continue
+                    if len(rows) >= limit:
+                        break
+                    flat: dict[str, str] = {}
+                    for field in record.fields:
+                        if field.is_control_field():
+                            flat[field.tag] = field.data or ""
+                        else:
+                            for sf in field.subfields:
+                                flat[f"{field.tag}${sf.code}"] = sf.value or ""
+                    rows.append(flat)
+                    count += 1
+
+        else:
+            # CSV (default)
+            csv.field_size_limit(10 * 1024 * 1024)
+            stored_headers = items_file.column_headers or []
+            with open(items_file.storage_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+                has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
+                if has_generated:
+                    csv_reader = csv.DictReader(fh, fieldnames=stored_headers)
+                else:
+                    csv_reader = csv.DictReader(fh)
+                columns = list(csv_reader.fieldnames or [])
+                for i, row in enumerate(csv_reader):
+                    if i < offset:
+                        continue
+                    if len(rows) >= limit:
+                        break
+                    rows.append(dict(row))
     except Exception:
-        raise HTTPException(500, detail={"error": "READ_ERROR", "message": "Failed to read items CSV."})
+        raise HTTPException(500, detail={"error": "READ_ERROR", "message": "Failed to read items file."})
 
     return ItemPreviewResponse(rows=rows, total_rows=total_rows, columns=columns)
 

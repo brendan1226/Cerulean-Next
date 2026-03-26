@@ -121,23 +121,74 @@ def items_ai_map_task(self, project_id: str) -> dict:
                 return {"error": "no_items_csv"}
 
             storage_path = items_file.storage_path
+            file_format = items_file.file_format or "csv"
 
-        # Read headers + sample rows
-        csv.field_size_limit(10 * 1024 * 1024)
+        # Read headers + sample rows (format-aware)
         headers: list[str] = []
         sample_rows: list[dict] = []
-        stored_headers = items_file.column_headers or []
-        has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
-        with open(storage_path, "r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.DictReader(f, fieldnames=stored_headers) if has_generated else csv.DictReader(f)
-            headers = list(reader.fieldnames or [])
-            for i, row in enumerate(reader):
-                if i >= 20:
-                    break
-                sample_rows.append(row)
+
+        if file_format == "json":
+            with open(storage_path, "r", encoding="utf-8", errors="replace") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                for k in ("items", "records", "data", "rows"):
+                    if k in data and isinstance(data[k], list):
+                        data = data[k]
+                        break
+                else:
+                    data = [data] if isinstance(data, dict) else []
+            seen: set[str] = set()
+            for rec in data:
+                if isinstance(rec, dict):
+                    for k in rec:
+                        if k not in seen:
+                            seen.add(k)
+                            headers.append(k)
+            for rec in data[:20]:
+                if isinstance(rec, dict):
+                    sample_rows.append({k: str(v) if v is not None else "" for k, v in rec.items()})
+
+        elif file_format == "iso2709":
+            import pymarc
+            seen_keys: set[str] = set()
+            with open(storage_path, "rb") as f:
+                reader = pymarc.MARCReader(f, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                for i, record in enumerate(reader):
+                    if record is None:
+                        continue
+                    flat: dict[str, str] = {}
+                    for field in record.fields:
+                        if field.is_control_field():
+                            key = field.tag
+                            flat[key] = field.data or ""
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                headers.append(key)
+                        else:
+                            for sf in field.subfields:
+                                key = f"{field.tag}${sf.code}"
+                                flat[key] = sf.value or ""
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    headers.append(key)
+                    if i < 20:
+                        sample_rows.append(flat)
+
+        else:
+            # CSV (default)
+            csv.field_size_limit(10 * 1024 * 1024)
+            stored_headers = items_file.column_headers or []
+            has_generated = stored_headers and any(h.startswith("col_") for h in stored_headers)
+            with open(storage_path, "r", encoding="utf-8", errors="replace", newline="") as f:
+                reader = csv.DictReader(f, fieldnames=stored_headers) if has_generated else csv.DictReader(f)
+                headers = list(reader.fieldnames or [])
+                for i, row in enumerate(reader):
+                    if i >= 20:
+                        break
+                    sample_rows.append(row)
 
         if not headers:
-            log.error("No headers found in items CSV")
+            log.error("No headers found in items file")
             return {"error": "no_headers"}
 
         log.info(f"Sending {len(headers)} columns, {len(sample_rows)} sample rows to Claude")

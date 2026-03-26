@@ -201,6 +201,44 @@ async def delete_file(
     await db.flush()
 
 
+@router.post("/{project_id}/files/{file_id}/recategorize")
+async def recategorize_file(
+    project_id: str,
+    file_id: str,
+    category: str = Query(..., description="New category: marc|items|items_csv"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change a file's category and re-dispatch the appropriate ingest task."""
+    marc_file = await _get_marc_file(project_id, file_id, db)
+
+    marc_file.file_category = category
+    marc_file.status = "uploaded"
+    marc_file.error_message = None
+    marc_file.record_count = None
+    marc_file.tag_frequency = None
+    marc_file.subfield_frequency = None
+    marc_file.column_headers = None
+    await db.flush()
+
+    # Dispatch correct ingest task
+    file_format = marc_file.file_format or "csv"
+    if category in ("items", "items_csv"):
+        if file_format == "json":
+            task = ingest_items_json_task.apply_async(
+                args=[project_id, file_id, marc_file.storage_path], queue="ingest")
+        elif file_format == "iso2709":
+            task = ingest_items_mrc_task.apply_async(
+                args=[project_id, file_id, marc_file.storage_path], queue="ingest")
+        else:
+            task = ingest_items_csv_task.apply_async(
+                args=[project_id, file_id, marc_file.storage_path], queue="ingest")
+    else:
+        task = ingest_marc_task.apply_async(
+            args=[project_id, file_id, marc_file.storage_path], queue="ingest")
+
+    return {"file_id": file_id, "category": category, "task_id": task.id, "message": f"Re-categorized as {category}. Re-indexing started."}
+
+
 @router.get("/{project_id}/files/{file_id}/records/{record_index}")
 async def get_record(
     project_id: str,

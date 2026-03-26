@@ -815,7 +815,7 @@ async def patron_koha_list(
     endpoint = f"{base_url}{ctrl['koha_endpoint']}"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
             resp = await client.get(endpoint, headers=headers)
 
         if resp.status_code >= 400:

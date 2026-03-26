@@ -164,7 +164,7 @@ def push_preflight_task(self, project_id: str, manifest_id: str) -> dict:
     try:
         base_url, headers = _koha_client(project_id)
 
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, verify=False) as client:
             resp = client.get(f"{base_url}/api/v1/", headers=headers)
 
         if resp.status_code >= 400:
@@ -279,7 +279,7 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
             _consecutive_same_error = 0
             _aborted = False
 
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=60.0, verify=False) as client:
                 for marc_path in marc_paths:
                     if _aborted:
                         break
@@ -793,7 +793,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                 # Skip Koha's duplicate patron detection during migration
                 headers["x-confirm-not-duplicate"] = "1"
                 skipped = 0
-                with httpx.Client(timeout=30.0) as client:
+                with httpx.Client(timeout=30.0, verify=False) as client:
                     for row in reader:
                         total += 1
                         patron_data = {}
@@ -941,7 +941,7 @@ def push_holds_task(self, project_id: str, manifest_id: str, dry_run: bool = Tru
                         })
             else:
                 base_url, headers = _koha_client(project_id)
-                with httpx.Client(timeout=30.0) as client:
+                with httpx.Client(timeout=30.0, verify=False) as client:
                     for row in reader:
                         total += 1
                         hold_data = {}

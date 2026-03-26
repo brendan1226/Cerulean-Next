@@ -259,7 +259,7 @@ async def koha_vocab_list(
         })
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
             resp = await client.get(endpoint, headers=headers)
 
         if resp.status_code >= 400:

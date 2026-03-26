@@ -497,5 +497,11 @@ def _parse_suggestions(raw: str) -> list[dict]:
 
 
 def _is_valid_suggestion(s: dict) -> bool:
-    """Basic validation — require source_tag and target_tag."""
-    return bool(s.get("source_tag") and s.get("target_tag"))
+    """Validate that source_tag and target_tag are MARC tags (3-digit numeric)."""
+    import re
+    src = s.get("source_tag", "")
+    tgt = s.get("target_tag", "")
+    if not src or not tgt:
+        return False
+    # MARC tags must be 3-digit numeric (000–999)
+    return bool(re.match(r"^\d{3}$", src) and re.match(r"^\d{3}$", tgt))

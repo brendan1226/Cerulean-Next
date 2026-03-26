@@ -292,11 +292,11 @@ async def preview_transformed(
     """Preview a transformed record alongside the original for comparison."""
     await require_project(project_id, db)
 
-    # Find the latest successful transform manifest
+    # Find the latest successful transform or build manifest
     result = await db.execute(
         select(TransformManifest)
         .where(TransformManifest.project_id == project_id,
-               TransformManifest.task_type == "transform",
+               TransformManifest.task_type.in_(["transform", "build"]),
                TransformManifest.status == "complete")
         .order_by(TransformManifest.started_at.desc())
         .limit(1)
@@ -305,11 +305,18 @@ async def preview_transformed(
     if not manifest:
         raise HTTPException(404, detail={"error": "NO_TRANSFORM", "message": "No completed transform found."})
 
-    # Get the first transformed file
-    transformed_dir = Path(settings.data_root) / project_id / "transformed"
-    transformed_files = sorted(transformed_dir.glob("*_transformed.mrc")) if transformed_dir.exists() else []
+    # Get output files — build uses output.mrc, transform uses *_transformed.mrc
+    project_dir = Path(settings.data_root) / project_id
+    transformed_dir = project_dir / "transformed"
+    transformed_files: list[Path] = []
+    if manifest.task_type == "build":
+        output_mrc = project_dir / "output.mrc"
+        if output_mrc.is_file():
+            transformed_files = [output_mrc]
+    else:
+        transformed_files = sorted(transformed_dir.glob("*_transformed.mrc")) if transformed_dir.exists() else []
     if not transformed_files:
-        raise HTTPException(404, detail={"error": "NO_FILES", "message": "No transformed files found."})
+        raise HTTPException(404, detail={"error": "NO_FILES", "message": "No output files found."})
 
     # Also find the original file for comparison
     original_files = []

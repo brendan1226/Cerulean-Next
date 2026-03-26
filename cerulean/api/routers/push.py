@@ -348,7 +348,7 @@ async def get_koha_refs(
 
     base_url, headers = _koha_headers(project)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         # Fire all GETs in parallel
         responses = await _fetch_koha_refs(client, base_url, headers)
 
@@ -478,7 +478,7 @@ async def push_libraries(
     success_count = 0
     failed_count = 0
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
         for lib in body.libraries:
             try:
                 resp = await client.post(
@@ -540,7 +540,7 @@ async def push_patron_categories(
     # Try REST API first with the first category
     if body.categories:
         first = body.categories[0]
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
             try:
                 resp = await client.post(
                     f"{base_url}/api/v1/patron_categories",
@@ -595,7 +595,7 @@ async def push_patron_categories(
         ]
     elif len(body.categories) > 1:
         # REST API worked for the first one, continue with the rest
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
             for cat in body.categories[1:]:
                 try:
                     resp = await client.post(
