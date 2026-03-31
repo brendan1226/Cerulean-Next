@@ -138,7 +138,7 @@ async def start_push(
     if not has_output and body.push_bibs:
         raise HTTPException(409, detail={
             "error": "NO_OUTPUT_FILES",
-            "message": "No transformed or merged MARC files found. Complete Stage 3 first.",
+            "message": "No transformed or merged MARC files found. Complete Stage 6 first.",
         })
 
     # Reject if any of the requested task types are already running

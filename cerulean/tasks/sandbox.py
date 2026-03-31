@@ -1,7 +1,7 @@
 """
 cerulean/tasks/sandbox.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 8 Celery tasks: KTD Sandbox.
+Stage 11 Celery tasks: KTD Sandbox.
 
     ktd_provision_task  — start a KTD Docker container
     ktd_teardown_task   — stop and remove a KTD container
@@ -51,7 +51,7 @@ def ktd_provision_task(
     """
     from cerulean.models import Project, SandboxInstance
 
-    log = AuditLogger(project_id=project_id, stage=8, tag="[sandbox]")
+    log = AuditLogger(project_id=project_id, stage=11, tag="[sandbox]")
     log.info("KTD sandbox provisioning starting")
 
     container_name = f"cerulean-ktd-{project_id[:8]}"
@@ -135,7 +135,7 @@ def ktd_provision_task(
             if healthy:
                 project = db.get(Project, project_id)
                 if project:
-                    project.stage_8_complete = True
+                    project.stage_11_complete = True
 
             db.commit()
 
@@ -187,7 +187,7 @@ def ktd_teardown_task(self, project_id: str, instance_id: str) -> dict:
     """
     from cerulean.models import SandboxInstance
 
-    log = AuditLogger(project_id=project_id, stage=8, tag="[sandbox]")
+    log = AuditLogger(project_id=project_id, stage=11, tag="[sandbox]")
     log.info("KTD sandbox teardown starting")
 
     try:

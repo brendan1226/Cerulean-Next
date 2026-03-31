@@ -1020,36 +1020,48 @@
       <div class="nav-section-label" id="project-nav-label" style="display:none">Project</div>
       <div id="project-nav" style="display:none">
         <div class="nav-item" data-view="stage1" onclick="navigate('stage1')">
-          <span class="nav-icon">①</span> Data Ingest
+          <span class="nav-icon">①</span> Ingest
           <span class="stage-badge" id="badge-s1">—</span>
         </div>
         <div class="nav-item" data-view="stage2" onclick="navigate('stage2')">
-          <span class="nav-icon">②</span> Analyze &amp; Map
+          <span class="nav-icon">②</span> ILS &amp; Config
           <span class="stage-badge" id="badge-s2">—</span>
         </div>
         <div class="nav-item" data-view="stage3" onclick="navigate('stage3')">
-          <span class="nav-icon">③</span> Transform
+          <span class="nav-icon">③</span> Data Quality
           <span class="stage-badge" id="badge-s3">—</span>
         </div>
         <div class="nav-item" data-view="stage4" onclick="navigate('stage4')">
-          <span class="nav-icon">④</span> Dedup
+          <span class="nav-icon">④</span> Bib Versions
           <span class="stage-badge" id="badge-s4">—</span>
         </div>
         <div class="nav-item" data-view="stage5" onclick="navigate('stage5')">
-          <span class="nav-icon">⑤</span> Items
+          <span class="nav-icon">⑤</span> Field Mapping
           <span class="stage-badge" id="badge-s5">—</span>
         </div>
         <div class="nav-item" data-view="stage6" onclick="navigate('stage6')">
-          <span class="nav-icon">⑥</span> Patrons
+          <span class="nav-icon">⑥</span> Transform
           <span class="stage-badge" id="badge-s6">—</span>
         </div>
         <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
-          <span class="nav-icon">⑦</span> Push to Koha
+          <span class="nav-icon">⑦</span> Load
           <span class="stage-badge" id="badge-s7">—</span>
         </div>
         <div class="nav-item" data-view="stage8" onclick="navigate('stage8')">
-          <span class="nav-icon">⑧</span> KTD Sandbox
+          <span class="nav-icon">⑧</span> Reconciliation
           <span class="stage-badge" id="badge-s8">—</span>
+        </div>
+        <div class="nav-item" data-view="stage9" onclick="navigate('stage9')">
+          <span class="nav-icon">⑨</span> Patrons
+          <span class="stage-badge" id="badge-s9">—</span>
+        </div>
+        <div class="nav-item" data-view="stage10" onclick="navigate('stage10')">
+          <span class="nav-icon">⑩</span> Patron Versions
+          <span class="stage-badge" id="badge-s10">—</span>
+        </div>
+        <div class="nav-item" data-view="stage11" onclick="navigate('stage11')">
+          <span class="nav-icon">⑪</span> Holds &amp; Data
+          <span class="stage-badge" id="badge-s11">—</span>
         </div>
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
@@ -1152,12 +1164,15 @@ function navigate(view, params = {}) {
     'new-project': renderNewProject,
     stage1:       renderStage1,
     stage2:       renderStage2,
-    stage3:       window.renderStage3,
-    stage4:       window.renderStage4,
-    stage5:       window.renderStage5,
-    stage6:       window.renderStage6,
-    stage7:       window.renderStage7,
-    stage8:       window.renderStage8,
+    stage3:       window.renderStage3_Quality,
+    stage4:       window.renderStage4_Versions,
+    stage5:       window.renderStage5_Mapping,
+    stage6:       window.renderStage6_Transform,
+    stage7:       window.renderStage7_Load,
+    stage8:       window.renderStage8_Reconcile,
+    stage9:       window.renderStage9_Patrons,
+    stage10:      window.renderStage10_PatronVersions,
+    stage11:      window.renderStage11_Holds,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
@@ -1172,14 +1187,17 @@ function updateBreadcrumb(view) {
   const labels = {
     dashboard: 'Dashboard',
     'new-project': 'New Project',
-    stage1: 'Stage 1 — Data Ingest',
-    stage2: 'Stage 2 — Analyze & Map',
-    stage3: 'Stage 3 — Build Output',
-    stage4: 'Stage 4 — Validate & Dedup',
-    stage5: 'Stage 5 — Items',
-    stage6: 'Stage 6 — Patrons',
-    stage7: 'Stage 7 — Push to Koha',
-    stage8: 'Stage 8 — KTD Sandbox',
+    stage1: 'Stage 1 — Ingest',
+    stage2: 'Stage 2 — ILS & Config',
+    stage3: 'Stage 3 — Data Quality',
+    stage4: 'Stage 4 — Bib Versions',
+    stage5: 'Stage 5 — Field Mapping',
+    stage6: 'Stage 6 — Transform',
+    stage7: 'Stage 7 — Load',
+    stage8: 'Stage 8 — Reconciliation',
+    stage9: 'Stage 9 — Patrons',
+    stage10: 'Stage 10 — Patron Versions',
+    stage11: 'Stage 11 — Holds & Data',
     'project-log': 'Project Log',
     'project-settings': 'Settings',
     templates: 'Templates',
@@ -1258,13 +1276,16 @@ async function checkHealth() {
 function pipelineBar(project) {
   const stages = [
     { n: 1, label: 'Ingest' },
-    { n: 2, label: 'Map' },
-    { n: 3, label: 'Transform' },
-    { n: 4, label: 'Dedup' },
-    { n: 5, label: 'Items' },
-    { n: 6, label: 'Patrons' },
-    { n: 7, label: 'Push' },
-    { n: 8, label: 'Sandbox' },
+    { n: 2, label: 'Config' },
+    { n: 3, label: 'Quality' },
+    { n: 4, label: 'Versions' },
+    { n: 5, label: 'Mapping' },
+    { n: 6, label: 'Transform' },
+    { n: 7, label: 'Load' },
+    { n: 8, label: 'Reconcile' },
+    { n: 9, label: 'Patrons' },
+    { n: 10, label: 'Pat. Ver.' },
+    { n: 11, label: 'Holds' },
   ];
   return `<div class="pipeline-bar">
     ${stages.map((s, i) => {
@@ -1283,7 +1304,7 @@ function pipelineBar(project) {
 }
 
 function updateStageBadges(project) {
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= 11; i++) {
     const badge = document.getElementById(`badge-s${i}`);
     if (!badge) continue;
     const done = project[`stage_${i}_complete`];
@@ -1896,9 +1917,92 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || 'badge-dim'}">${status === 'not_marc' ? 'not MARC' : status}</span>`;
 }
 
-// ── Stage 2 — Analyze & Map (Three-Panel Layout) ─────────────────────
+// ── Stage 2 — ILS Detection & Migration Config ──────────────────────
 
-// Stage 2 local state
+async function renderStage2(el) {
+  const p = state.currentProject;
+  const ilsHtml = p.source_ils
+    ? `<div class="badge badge-cerulean" style="font-size:14px;padding:8px 16px">${esc(p.source_ils)}</div>
+       <div class="text-secondary" style="margin-top:8px;font-size:12px">Confidence: ${p.ils_confidence ? Math.round(p.ils_confidence * 100) + '%' : '—'}</div>`
+    : `<div class="text-dim" style="font-size:12px">No ILS detected. Upload MARC files in Stage 1 first.</div>`;
+
+  const gateHtml = p.stage_2_complete
+    ? '<span class="badge badge-green">Configuration Saved</span>'
+    : `<button class="btn btn-green" onclick="approveS2Config()">Save Configuration &amp; Continue</button>`;
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 2 — ILS Detection &amp; Config</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Detected Source ILS</span></div>
+        <div style="padding:4px 0">${ilsHtml}</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Migration Configuration</span></div>
+        <div class="form-group">
+          <label class="form-label">Item Record Structure</label>
+          <select class="form-select" id="s2cfg-item-structure" onchange="saveS2Config()">
+            <option value="embedded" ${p.item_structure === 'embedded' ? 'selected' : ''}>Items embedded in bib records (852/9xx)</option>
+            <option value="separate" ${p.item_structure === 'separate' || !p.item_structure ? 'selected' : ''}>Items in a separate file</option>
+            <option value="none" ${p.item_structure === 'none' ? 'selected' : ''}>No item records</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target ILS</label>
+          <input class="form-input" value="Koha" disabled style="opacity:0.6">
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">Files Summary</span></div>
+      <div id="s2-files-summary"><div class="spinner"></div></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px">
+      ${gateHtml}
+      <button class="btn btn-ghost" onclick="navigate('stage5')">Go to Field Mapping →</button>
+    </div>`;
+
+  // Load file summary
+  try {
+    const files = await api('GET', `/projects/${p.id}/files`);
+    const marc = (files || []).filter(f => f.file_category === 'marc' && f.status === 'indexed');
+    const items = (files || []).filter(f => (f.file_category === 'items_csv' || f.file_category === 'items') && f.status === 'indexed');
+    const sumEl = document.getElementById('s2-files-summary');
+    if (sumEl) {
+      sumEl.innerHTML = `
+        <div style="display:flex;gap:24px;font-size:13px">
+          <div><span class="text-dim">MARC files:</span> <strong>${marc.length}</strong> (${marc.reduce((s,f) => s + (f.record_count||0), 0).toLocaleString()} records)</div>
+          <div><span class="text-dim">Item files:</span> <strong>${items.length}</strong> (${items.reduce((s,f) => s + (f.record_count||0), 0).toLocaleString()} rows)</div>
+        </div>`;
+    }
+  } catch(e) {}
+}
+
+async function saveS2Config() {
+  const p = state.currentProject;
+  const val = document.getElementById('s2cfg-item-structure')?.value || 'separate';
+  try { await api('PATCH', `/projects/${p.id}`, { item_structure: val }); } catch(e) {}
+}
+
+async function approveS2Config() {
+  const p = state.currentProject;
+  try {
+    await api('PATCH', `/projects/${p.id}`, { stage_2_complete: true, current_stage: Math.max(p.current_stage || 0, 3) });
+    toast('Configuration saved', 'success');
+    await refreshProject();
+    navigate('stage3');
+  } catch(e) { console.error(e); }
+}
+
+// ── Stage 5 — Field Mapping (Three-Panel Layout) ─────────────────────
+
+// Field mapping local state
 const s2 = {
   files: [],
   selectedFile: null,
@@ -1917,12 +2021,12 @@ const s2 = {
   presetCache: null,
 };
 
-async function renderStage2(el) {
+async function _renderFieldMappingUI(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
-        <div class="page-title" style="font-size:16px">Stage 2 — Analyze &amp; Map</div>
+        <div class="page-title" style="font-size:16px">Stage 5 — Field Mapping</div>
         <div class="text-secondary" style="font-size:12px">${esc(p.library_name)}</div>
       </div>
       <div style="display:flex;gap:8px">
@@ -3768,14 +3872,373 @@ async function doLogin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 3 — Build Output
+// Stage 3 — MARC Data Quality & Remediation
 // ══════════════════════════════════════════════════════════════════
-window.renderStage3 = async function(el) {
+let _q3ScanTaskId = null;
+
+window.renderStage3_Quality = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 3 — Build Output</div>
+        <div class="page-title">Stage 3 — MARC Data Quality</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchQ3Tab('summary', this)">Summary</button>
+      <button class="tab-btn" onclick="switchQ3Tab('issues', this)">Issues</button>
+    </div>
+    <div id="q3-tab"></div>`;
+  renderQ3Summary();
+};
+
+function switchQ3Tab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  ({ summary: renderQ3Summary, issues: renderQ3Issues })[tab]();
+}
+
+async function renderQ3Summary() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('q3-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  let summary = null;
+  try { summary = await window.api('GET', `/projects/${p.id}/quality/summary?scan_type=bib`); } catch(e) {}
+
+  const hasScan = summary && summary.total_issues > 0;
+  const cats = summary?.categories || [];
+  const sevBadge = { error: 'badge-red', warning: 'badge-amber', info: 'badge-dim' };
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="runQualityScan()">Run Quality Scan</button>
+      <button class="btn btn-ghost" onclick="clearQualityResults()">Clear Results</button>
+      ${p.stage_3_complete ? '<span class="badge badge-green">Quality Approved</span>' : `<button class="btn btn-green" onclick="approveQualityPass()" ${!hasScan ? 'disabled' : ''}>Approve Quality Pass</button>`}
+      <div id="q3-scan-status" style="margin-left:8px"></div>
+    </div>
+
+    ${hasScan ? `
+    <div class="stat-grid" style="margin-bottom:16px">
+      <div class="stat-card"><div class="stat-label">Total Issues</div><div class="stat-value">${summary.total_issues.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Records Affected</div><div class="stat-value">${summary.total_records_affected.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Categories</div><div class="stat-value">${cats.length}</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+      ${cats.map(c => `
+        <div class="card" style="cursor:pointer" onclick="switchQ3Tab('issues');q3FilterCategory='${esc(c.category)}';renderQ3Issues()">
+          <div class="card-header" style="padding:12px">
+            <span class="card-title" style="font-size:13px">${esc(c.category.replace('_', ' '))}</span>
+            <span class="badge ${c.errors > 0 ? 'badge-red' : c.warnings > 0 ? 'badge-amber' : 'badge-green'}">${c.total}</span>
+          </div>
+          <div style="padding:0 12px 12px;font-size:11px;display:flex;gap:8px;flex-wrap:wrap">
+            ${c.errors ? `<span class="badge badge-red" style="font-size:10px">${c.errors} errors</span>` : ''}
+            ${c.warnings ? `<span class="badge badge-amber" style="font-size:10px">${c.warnings} warnings</span>` : ''}
+            ${c.info ? `<span class="badge badge-dim" style="font-size:10px">${c.info} info</span>` : ''}
+            ${c.unresolved ? `<span class="text-dim">${c.unresolved} unresolved</span>` : ''}
+            ${c.auto_fixed ? `<span class="text-green">${c.auto_fixed} auto-fixed</span>` : ''}
+            ${c.ignored ? `<span class="text-dim">${c.ignored} ignored</span>` : ''}
+          </div>
+          <div style="padding:0 12px 12px;display:flex;gap:4px">
+            ${c.has_auto_fix && c.unresolved > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="event.stopPropagation();bulkFixCategory('${esc(c.category)}')">Auto-Fix</button>` : ''}
+            ${c.unresolved > 0 ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="event.stopPropagation();ignoreCategoryQ3('${esc(c.category)}')">Ignore All</button>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    ` : `
+    <div class="empty-state" style="padding:40px">
+      <div class="empty-title">${summary ? 'No Issues Found' : 'No Scan Results'}</div>
+      <div class="text-secondary" style="font-size:12px;margin-top:8px">
+        ${summary ? 'All records passed quality checks. You can approve the quality pass.' : 'Click "Run Quality Scan" to check your MARC records for quality issues.'}
+      </div>
+    </div>`}`;
+}
+
+let q3FilterCategory = null;
+
+async function renderQ3Issues() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('q3-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  // Build query
+  let url = `/projects/${p.id}/quality/issues?scan_type=bib&limit=100`;
+  if (q3FilterCategory) url += `&category=${encodeURIComponent(q3FilterCategory)}`;
+
+  try {
+    const r = await window.api('GET', url);
+    if (!r || !r.issues.length) {
+      wrap.innerHTML = `<div class="empty-state" style="padding:40px"><div class="empty-title">No issues${q3FilterCategory ? ` in ${q3FilterCategory}` : ''}</div></div>`;
+      return;
+    }
+
+    const sevBadge = { error: 'badge-red', warning: 'badge-amber', info: 'badge-dim' };
+    const statusBadge = { unresolved: 'badge-amber', auto_fixed: 'badge-green', manually_fixed: 'badge-green', ignored: 'badge-dim' };
+
+    wrap.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <span class="text-dim" style="font-size:12px">${r.total.toLocaleString()} issue(s)${q3FilterCategory ? ` in <strong>${esc(q3FilterCategory)}</strong>` : ''}</span>
+        ${q3FilterCategory ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="q3FilterCategory=null;renderQ3Issues()">Clear Filter</button>` : ''}
+      </div>
+      <div style="max-height:calc(100vh - 300px);overflow:auto">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr>
+            <th>Record</th><th>Category</th><th>Severity</th><th>Tag</th><th>Description</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${r.issues.map(iss => `<tr>
+              <td class="mono">${iss.record_index}</td>
+              <td>${esc(iss.category)}</td>
+              <td><span class="badge ${sevBadge[iss.severity] || 'badge-dim'}">${esc(iss.severity)}</span></td>
+              <td class="mono">${esc(iss.tag || '')}${iss.subfield ? esc(iss.subfield) : ''}</td>
+              <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(iss.description)}">${esc(iss.description)}</td>
+              <td><span class="badge ${statusBadge[iss.status] || 'badge-dim'}">${esc(iss.status)}</span></td>
+              <td style="white-space:nowrap">
+                ${iss.status === 'unresolved' ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="ignoreIssueQ3('${esc(iss.id)}')">Ignore</button>` : ''}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`;
+  }
+}
+
+async function runQualityScan() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/quality/scan`, { scan_type: 'bib' });
+    if (!r) return;
+    _q3ScanTaskId = r.task_id;
+    document.getElementById('q3-scan-status').innerHTML = renderProgressBar({ label: 'Scanning records…' });
+    pollTaskStatus(p.id, r.task_id, 'q3-scan-status', 'Quality Scan', 'quality-scan', () => {
+      refreshProject().then(() => renderQ3Summary());
+    });
+  } catch(e) { console.error(e); }
+}
+
+async function clearQualityResults() {
+  if (!confirm('Clear all quality scan results?')) return;
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/quality/clear`);
+    toast('Quality results cleared', 'info');
+    await refreshProject();
+    renderQ3Summary();
+  } catch(e) { console.error(e); }
+}
+
+async function approveQualityPass() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/quality/approve`);
+    if (r.approved) {
+      toast('Quality pass approved', 'success');
+      await refreshProject();
+      renderQ3Summary();
+    } else {
+      toast(r.message, 'warn');
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function bulkFixCategory(category) {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/quality/bulk-fix`, { category });
+    if (r) {
+      toast(`Bulk fix started for ${category}`, 'info');
+      setTimeout(() => renderQ3Summary(), 3000);
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function ignoreCategoryQ3(category) {
+  if (!confirm(`Ignore all unresolved issues in "${category}"?`)) return;
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/quality/ignore-category?category=${encodeURIComponent(category)}&scan_type=bib`);
+    toast(`${r.ignored_count} issues ignored`, 'info');
+    renderQ3Summary();
+  } catch(e) { console.error(e); }
+}
+
+async function ignoreIssueQ3(issueId) {
+  const p = state.currentProject;
+  try {
+    await window.api('POST', `/projects/${p.id}/quality/ignore/${issueId}`);
+    renderQ3Issues();
+  } catch(e) { console.error(e); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 5 — Field Mapping (NEW — placeholder, will receive Stage 2 mapping code)
+// ══════════════════════════════════════════════════════════════════
+window.renderStage5_Mapping = async function(el) {
+  _renderFieldMappingUI(el);
+};
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 10 — Patron Versioning (NEW — placeholder)
+// ══════════════════════════════════════════════════════════════════
+window.renderStage10_PatronVersions = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 10 — Patron Versions</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchS10Tab('history', this)">Version History</button>
+      <button class="tab-btn" onclick="switchS10Tab('compare', this)">Compare</button>
+    </div>
+    <div id="s10-tab"></div>`;
+  renderS10History();
+};
+
+function switchS10Tab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  ({ history: renderS10History, compare: renderS10Compare })[tab]();
+}
+
+async function renderS10History() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s10-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  let versions = [];
+  try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=patron`) || []; } catch(e) {}
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <button class="btn btn-primary" onclick="createPatronVersion()">Create Patron Snapshot</button>
+      <span class="text-dim" style="font-size:12px">${versions.length ? versions.length + ' version(s)' : 'No versions yet — run Apply in Stage 9, then snapshot here.'}</span>
+      <div id="s10-create-status" style="margin-left:8px"></div>
+    </div>
+    ${versions.length ? `
+    <table class="data-table" style="font-size:12px;width:100%">
+      <thead><tr><th>Version</th><th>Label</th><th>Records</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        ${versions.map(v => `<tr>
+          <td class="mono" style="font-weight:600">v${v.version_number}</td>
+          <td><span style="cursor:pointer;border-bottom:1px dashed var(--border-mid)" onclick="editVersionLabel('${esc(v.id)}', this)">${esc(v.label || '—')}</span></td>
+          <td class="mono">${(v.record_count || 0).toLocaleString()}</td>
+          <td class="text-dim">${new Date(v.created_at).toLocaleString()}</td>
+          <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteVersion('${esc(v.id)}')">Delete</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : ''}`;
+}
+
+async function createPatronVersion() {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/versions/create`, { data_type: 'patron' });
+    if (!r) return;
+    document.getElementById('s10-create-status').innerHTML = renderProgressBar({ label: 'Creating patron snapshot…' });
+    pollTaskStatus(p.id, r.task_id, 's10-create-status', 'Patron Snapshot', 'patron-version', () => renderS10History());
+  } catch(e) { console.error(e); }
+}
+
+async function renderS10Compare() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s10-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  let versions = [];
+  try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=patron`) || []; } catch(e) {}
+
+  if (versions.length < 2) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:40px"><div class="empty-title">Need at least 2 patron versions to compare</div></div>';
+    return;
+  }
+
+  const opts = versions.map(v => `<option value="${esc(v.id)}">v${v.version_number}${v.label ? ' — ' + esc(v.label) : ''} (${(v.record_count||0).toLocaleString()} rows)</option>`).join('');
+
+  wrap.innerHTML = `
+    <div class="card" style="max-width:600px">
+      <div class="card-header"><span class="card-title">Compare Patron Versions</span></div>
+      <div style="display:flex;gap:12px;margin-bottom:12px">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">Version A</label>
+          <select class="form-select" id="s10-diff-a">${opts}</select>
+        </div>
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">Version B</label>
+          <select class="form-select" id="s10-diff-b">${opts}</select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="runPatronVersionDiff()">Compare</button>
+      <div id="s10-diff-status" style="margin-top:8px"></div>
+    </div>
+    <div id="s10-diff-result" style="margin-top:16px"></div>`;
+
+  if (versions.length >= 2) {
+    document.getElementById('s10-diff-a').value = versions[1].id;
+    document.getElementById('s10-diff-b').value = versions[0].id;
+  }
+}
+
+async function runPatronVersionDiff() {
+  const p = state.currentProject;
+  const a = document.getElementById('s10-diff-a')?.value;
+  const b = document.getElementById('s10-diff-b')?.value;
+  if (!a || !b || a === b) { toast('Select two different versions', 'warn'); return; }
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/versions/diff`, { version_a: a, version_b: b, data_type: 'patron' });
+    if (!r) return;
+    document.getElementById('s10-diff-status').innerHTML = renderProgressBar({ label: 'Computing diff…' });
+    const poll = async () => {
+      try {
+        const sr = await window.api('GET', `/projects/${p.id}/versions/diff/status?task_id=${r.task_id}`);
+        if (sr.state === 'SUCCESS' && sr.result) {
+          document.getElementById('s10-diff-status').innerHTML = '';
+          // Reuse the same diff renderer from Stage 4
+          const el = document.getElementById('s10-diff-result');
+          if (el) {
+            const s = sr.result.summary || {};
+            el.innerHTML = `
+              <div class="stat-grid" style="margin-bottom:16px">
+                <div class="stat-card"><div class="stat-label">Added</div><div class="stat-value text-green">${(s.records_added||s.rows_added||0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Removed</div><div class="stat-value text-red">${(s.records_removed||s.rows_removed||0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Changed</div><div class="stat-value" style="color:var(--amber)">${(s.records_changed||s.rows_changed||0).toLocaleString()}</div></div>
+                <div class="stat-card"><div class="stat-label">Unchanged</div><div class="stat-value">${(s.records_unchanged||s.rows_unchanged||0).toLocaleString()}</div></div>
+              </div>`;
+          }
+          return;
+        } else if (sr.state === 'FAILURE') {
+          document.getElementById('s10-diff-status').innerHTML = renderProgressBar({ percent: 100, label: 'Diff failed', status: 'error' });
+          return;
+        }
+      } catch(e) {}
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 2000);
+  } catch(e) { console.error(e); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Stage 6 — Transform
+// ══════════════════════════════════════════════════════════════════
+window.renderStage6_Transform = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 6 — Transform</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
@@ -4101,267 +4564,234 @@ function s3RenderFields(fields, compareFields) {
 }
 
 async function s3AcceptTransform() {
-  toast('Transform results accepted — proceed to Stage 4', 'success');
-  // Stage is already marked complete, just navigate forward
-  navigate('stage4');
+  toast('Transform results accepted — proceed to Stage 7 (Load)', 'success');
+  navigate('stage7');
 }
 
 async function s3RejectTransform() {
   if (!confirm('Reject transform results? You can re-run with different maps.')) return;
-  // Reset stage 3 completion so they can re-run
   const p = state.currentProject;
-  await window.api('PATCH', `/projects/${p.id}`, { stage_3_complete: false, current_stage: 3 });
+  await window.api('PATCH', `/projects/${p.id}`, { stage_6_complete: false, current_stage: 6 });
   toast('Transform rejected — adjust your maps and re-run', 'info');
   navigate('stage2');
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 4 — Validate & Dedup
+// Stage 4 — Versioned Migration Runs (Bibs)
 // ══════════════════════════════════════════════════════════════════
-window.renderStage4 = async function(el) {
+window.renderStage4_Versions = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 4 — Validate &amp; Dedup</div>
-        <div class="page-subtitle">${p.library_name}</div>
+        <div class="page-title">Stage 4 — Bib Versions</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
       </div>
     </div>
     ${pipelineBar(p)}
     <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchS4Tab('rules', this)">Rules</button>
-      <button class="tab-btn" onclick="switchS4Tab('clusters', this)">Clusters</button>
+      <button class="tab-btn active" onclick="switchS4Tab('history', this)">Version History</button>
+      <button class="tab-btn" onclick="switchS4Tab('compare', this)">Compare</button>
     </div>
     <div id="s4-tab"></div>`;
-  renderS4Rules();
+  renderS4History();
 };
 
 function switchS4Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  ({ rules: renderS4Rules, clusters: renderS4Clusters })[tab]();
+  if (btn) btn.classList.add('active');
+  ({ history: renderS4History, compare: renderS4Compare })[tab]();
 }
 
-async function renderS4Rules() {
-  const wrap = document.getElementById('s4-tab');
-  wrap.innerHTML = `
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <button class="btn btn-primary btn-sm" onclick="openNewRuleModal()">+ New Rule</button>
-      <button class="btn btn-ghost btn-sm" onclick="createPresets()">+ Create All Presets</button>
-    </div>
-    <div id="rules-list"><div class="spinner"></div></div>`;
-  loadRules();
-}
-
-async function loadRules() {
+async function renderS4History() {
   const p = state.currentProject;
-  const wrap = document.getElementById('rules-list');
+  const wrap = document.getElementById('s4-tab');
   if (!wrap) return;
-  try {
-    const rules = await window.api('GET', `/projects/${p.id}/dedup/rules`);
-    if (!rules || !rules.length) {
-      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No rules yet</div><div class="empty-body">Create a rule or use "Create All Presets" to add the standard four.</div></div>`;
-      return;
-    }
-    wrap.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
-      ${rules.map(r => `
-        <div class="card" style="border-left:3px solid ${r.active ? 'var(--cerulean)' : 'var(--border)'}">
-          <div class="card-header">
-            <div>
-              <span class="mono" style="font-weight:600">${esc(r.name)}</span>
-              ${r.active ? '<span class="badge badge-cerulean" style="margin-left:8px">active</span>' : ''}
-              ${r.preset_key ? `<span class="badge badge-dim" style="margin-left:8px">${esc(r.preset_key)}</span>` : ''}
-              <span class="badge badge-dim" style="margin-left:8px">${esc(r.on_duplicate)}</span>
-            </div>
-            <div style="display:flex;gap:6px">
-              ${!r.active ? `<button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="activateRule(this.dataset.ruleId)">Activate</button>` : ''}
-              <button class="btn btn-ghost btn-sm" data-rule-id="${esc(r.id)}" onclick="runScan(this.dataset.ruleId)">▶ Scan</button>
-              ${r.last_scan_clusters != null ? `<button class="btn btn-primary btn-sm" data-rule-id="${esc(r.id)}" onclick="runApply(this.dataset.ruleId)">Apply</button>` : ''}
-              <button class="btn btn-danger btn-sm" data-rule-id="${esc(r.id)}" onclick="deleteRule(this.dataset.ruleId)">✕</button>
-            </div>
-          </div>
-          ${r.last_scan_clusters != null ? `
-            <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary)">
-              <span>${r.last_scan_clusters?.toLocaleString()} clusters</span>
-              <span>·</span>
-              <span>${r.last_scan_affected?.toLocaleString()} affected</span>
-              <span>·</span>
-              <span>Last scan: ${r.last_scan_at ? new Date(r.last_scan_at).toLocaleString() : '—'}</span>
-            </div>` : '<div class="text-dim" style="font-size:12px">Not yet scanned</div>'}
-          <div id="rule-status-${r.id}" style="margin-top:8px"></div>
-        </div>`).join('')}
-    </div>`;
-  } catch (e) { console.error(e); }
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  let versions = [];
+  try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=bib`) || []; } catch(e) {}
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <button class="btn btn-primary" onclick="createBibVersion()">Create Version Snapshot</button>
+      <span class="text-dim" style="font-size:12px">${versions.length ? `${versions.length} version(s)` : 'No versions yet — run Build in Stage 6, then create a snapshot here.'}</span>
+      <div id="s4-create-status" style="margin-left:8px"></div>
+    </div>
+    ${versions.length ? `
+    <table class="data-table" style="font-size:12px;width:100%">
+      <thead><tr><th>Version</th><th>Label</th><th>Records</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        ${versions.map(v => `<tr>
+          <td class="mono" style="font-weight:600">v${v.version_number}</td>
+          <td>
+            <span class="v4-label" data-vid="${esc(v.id)}" onclick="editVersionLabel('${esc(v.id)}', this)" style="cursor:pointer;border-bottom:1px dashed var(--border-mid)">${esc(v.label || '—')}</span>
+          </td>
+          <td class="mono">${(v.record_count || 0).toLocaleString()}</td>
+          <td class="text-dim">${new Date(v.created_at).toLocaleString()}</td>
+          <td style="text-align:right">
+            <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteVersion('${esc(v.id)}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : ''}`
+  ;
 }
 
-async function createPresets() {
+async function createBibVersion() {
   const p = state.currentProject;
   try {
-    const created = await window.api('POST', `/projects/${p.id}/dedup/presets`);
-    if (!created) return;
-    toast(`Created ${created.length} preset rules`, 'success');
-    loadRules();
-  } catch (e) { console.error(e); }
-}
-
-async function activateRule(ruleId) {
-  const p = state.currentProject;
-  await window.api('PATCH', `/projects/${p.id}/dedup/rules/${ruleId}`, { active: true });
-  loadRules();
-}
-
-async function deleteRule(ruleId) {
-  const p = state.currentProject;
-  await window.api('DELETE', `/projects/${p.id}/dedup/rules/${ruleId}`);
-  toast('Rule deleted', 'success');
-  loadRules();
-}
-
-async function runScan(ruleId) {
-  const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/dedup/scan`, { rule_id: ruleId });
-  if (!r) return;
-  toast('Dedup scan started', 'info');
-  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-scan', 'dedup', () => loadRules());
-}
-
-async function runApply(ruleId) {
-  const p = state.currentProject;
-  const r = await window.api('POST', `/projects/${p.id}/dedup/apply`, { rule_id: ruleId });
-  if (!r) return;
-  toast('Dedup apply started', 'info');
-  pollTaskStatus(p.id, r.task_id, `rule-status-${ruleId}`, 'dedup-apply', 'dedup', () => loadRules());
-}
-
-function openNewRuleModal() {
-  openModal(`
-    <div class="modal-title">New Dedup Rule</div>
-    <div class="form-group">
-      <label class="form-label">Rule Name *</label>
-      <input class="form-input" id="nr-name" placeholder="e.g. ISBN dedup">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Preset Strategy</label>
-      <select class="form-select" id="nr-preset">
-        <option value="001">001 — control number (fastest)</option>
-        <option value="isbn">ISBN — normalised ISBN match</option>
-        <option value="oclc">OCLC number — 035$a OCoLC</option>
-        <option value="title_author">Title + Author — normalised fuzzy</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label class="form-label">On Duplicate</label>
-      <select class="form-select" id="nr-action">
-        <option value="keep_first">keep_first — keep primary record</option>
-        <option value="keep_most_fields">keep_most_fields — keep richest record</option>
-        <option value="keep_most_items">keep_most_items — keep record with most 952 fields</option>
-        <option value="merge_holdings">merge_holdings — keep primary, copy 952s from others</option>
-        <option value="write_exceptions">write_exceptions — keep all, write exceptions CSV</option>
-      </select>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
-      <input type="checkbox" id="nr-active">
-      <label for="nr-active" style="font-size:12px;color:var(--text-secondary)">Set as active rule</label>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitNewRule()">Create Rule</button>
-    </div>`);
-}
-
-async function submitNewRule() {
-  const p = state.currentProject;
-  const name = document.getElementById('nr-name').value.trim();
-  if (!name) { toast('Name required', 'warn'); return; }
-  try {
-    await window.api('POST', `/projects/${p.id}/dedup/rules`, {
-      name,
-      preset_key: document.getElementById('nr-preset').value,
-      on_duplicate: document.getElementById('nr-action').value,
-      active: document.getElementById('nr-active').checked,
+    const r = await window.api('POST', `/projects/${p.id}/versions/create`, { data_type: 'bib' });
+    if (!r) return;
+    document.getElementById('s4-create-status').innerHTML = renderProgressBar({ label: 'Creating snapshot…' });
+    pollTaskStatus(p.id, r.task_id, 's4-create-status', 'Version Snapshot', 'version-create', () => {
+      renderS4History();
     });
-    closeModal();
-    toast('Rule created', 'success');
-    loadRules();
-  } catch (e) { console.error(e); }
+  } catch(e) { console.error(e); }
 }
 
-async function renderS4Clusters() {
+async function editVersionLabel(versionId, spanEl) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = spanEl.textContent === '—' ? '' : spanEl.textContent;
+  input.className = 'form-input';
+  input.style.cssText = 'font-size:12px;padding:2px 6px;width:200px;height:22px';
+  let committed = false;
+  const commit = async () => {
+    if (committed) return;
+    committed = true;
+    const label = input.value.trim() || null;
+    const p = state.currentProject;
+    try {
+      await window.api('PATCH', `/projects/${p.id}/versions/${versionId}`, { label });
+      renderS4History();
+    } catch(e) { if (input.parentNode) input.replaceWith(spanEl); }
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') { committed = true; if (input.parentNode) input.replaceWith(spanEl); } });
+  input.addEventListener('blur', commit);
+  spanEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+async function deleteVersion(versionId) {
+  if (!confirm('Delete this version snapshot?')) return;
+  const p = state.currentProject;
+  try {
+    await window.api('DELETE', `/projects/${p.id}/versions/${versionId}`);
+    toast('Version deleted', 'info');
+    renderS4History();
+  } catch(e) { console.error(e); }
+}
+
+async function renderS4Compare() {
   const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
-  const rules = await window.api('GET', `/projects/${p.id}/dedup/rules`);
-  const active = rules?.find(r => r.active);
-  if (!active) {
-    wrap.innerHTML = `<div class="alert alert-warn">Activate a rule first, then run a scan to see clusters.</div>`;
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  let versions = [];
+  try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=bib`) || []; } catch(e) {}
+
+  if (versions.length < 2) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:40px"><div class="empty-title">Need at least 2 versions to compare</div><div class="text-secondary" style="font-size:12px;margin-top:8px">Create version snapshots in the History tab first.</div></div>';
     return;
   }
-  wrap.innerHTML = `<div class="spinner"></div>`;
-  try {
-    const data = await window.api('GET', `/projects/${p.id}/dedup/clusters?rule_id=${active.id}&resolved=false&limit=100`);
-    const clusters = data?.items || [];
-    const total = data?.total || 0;
-    if (!clusters.length) {
-      wrap.innerHTML = `<div class="empty-state"><div class="empty-title">No open clusters</div><div class="empty-body">Run a scan to detect duplicates.</div></div>`;
-      return;
-    }
-    wrap.innerHTML = `
-      <div class="alert alert-info">${total} total open clusters (showing ${clusters.length}). Use Apply to resolve all automatically.</div>
-      <table class="data-table">
-        <thead><tr><th>Match Key</th><th>Records</th><th>Primary</th><th>Action</th></tr></thead>
-        <tbody>
-          ${clusters.map(c => `<tr>
-            <td class="mono text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(c.match_key || '—')}</td>
-            <td>${c.records?.length}</td>
-            <td class="mono">${esc(c.records?.[c.primary_index]?.marc_001 || 'idx:' + c.primary_index)}</td>
-            <td><button class="btn btn-ghost btn-sm" data-cluster-id="${esc(c.id)}" data-cluster='${JSON.stringify(c).replace(/'/g,"&#39;")}' onclick="viewCluster(this.dataset.clusterId, JSON.parse(this.dataset.cluster))">View</button></td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`;
-  } catch (e) { console.error(e); }
-}
 
-function viewCluster(id, cluster) {
-  const records = cluster.records || [];
-  openModal(`
-    <div class="modal-title">Cluster — ${esc(cluster.match_key || id.slice(0,8))}</div>
-    <div style="margin-bottom:16px;font-size:12px;color:var(--text-secondary)">${records.length} duplicate records. Select which to keep as primary:</div>
-    ${records.map((r, i) => `
-      <div class="card" style="margin-bottom:8px;border-left:3px solid ${i===cluster.primary_index?'var(--cerulean)':'var(--border)'}">
-        <div style="display:flex;align-items:center;gap:12px">
-          <input type="radio" name="primary" value="${i}" ${i===cluster.primary_index?'checked':''} id="pri-${i}">
-          <label for="pri-${i}" style="flex:1;cursor:pointer">
-            <span class="mono">001: ${esc(r.marc_001 || 'unknown')}</span>
-            <span class="text-dim" style="margin-left:12px">${r.field_count} fields, ${r.item_count} items</span>
-          </label>
+  const opts = versions.map(v => `<option value="${esc(v.id)}">v${v.version_number}${v.label ? ' — ' + esc(v.label) : ''} (${(v.record_count||0).toLocaleString()} records)</option>`).join('');
+
+  wrap.innerHTML = `
+    <div class="card" style="max-width:600px">
+      <div class="card-header"><span class="card-title">Compare Versions</span></div>
+      <div style="display:flex;gap:12px;margin-bottom:12px">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">Version A (older)</label>
+          <select class="form-select" id="s4-diff-a">${opts}</select>
         </div>
-      </div>`).join('')}
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" data-cluster-id="${esc(id)}" onclick="resolveCluster(this.dataset.clusterId)">Set Primary</button>
-    </div>`);
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">Version B (newer)</label>
+          <select class="form-select" id="s4-diff-b">${opts}</select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="runVersionDiff()">Compare</button>
+      <div id="s4-diff-status" style="margin-top:8px"></div>
+    </div>
+    <div id="s4-diff-result" style="margin-top:16px"></div>`;
+
+  // Default: select second-to-last and last
+  if (versions.length >= 2) {
+    document.getElementById('s4-diff-a').value = versions[1].id;
+    document.getElementById('s4-diff-b').value = versions[0].id;
+  }
 }
 
-async function resolveCluster(clusterId) {
+async function runVersionDiff() {
   const p = state.currentProject;
-  const selected = document.querySelector('input[name="primary"]:checked');
-  if (!selected) return;
-  await window.api('PATCH', `/projects/${p.id}/dedup/clusters/${clusterId}`, {
-    primary_index: parseInt(selected.value),
-  });
-  closeModal();
-  toast('Cluster resolved', 'success');
-  renderS4Clusters();
+  const a = document.getElementById('s4-diff-a')?.value;
+  const b = document.getElementById('s4-diff-b')?.value;
+  if (!a || !b || a === b) { toast('Select two different versions', 'warn'); return; }
+
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/versions/diff`, { version_a: a, version_b: b, data_type: 'bib' });
+    if (!r) return;
+    document.getElementById('s4-diff-status').innerHTML = renderProgressBar({ label: 'Computing diff…' });
+    const poll = async () => {
+      try {
+        const sr = await window.api('GET', `/projects/${p.id}/versions/diff/status?task_id=${r.task_id}`);
+        if (sr.state === 'SUCCESS' && sr.result) {
+          document.getElementById('s4-diff-status').innerHTML = '';
+          renderDiffResult(sr.result);
+          return;
+        } else if (sr.state === 'FAILURE') {
+          document.getElementById('s4-diff-status').innerHTML = renderProgressBar({ percent: 100, label: 'Diff failed', status: 'error' });
+          return;
+        }
+      } catch(e) {}
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 2000);
+  } catch(e) { console.error(e); }
+}
+
+function renderDiffResult(diff) {
+  const el = document.getElementById('s4-diff-result');
+  if (!el) return;
+  const s = diff.summary || {};
+  el.innerHTML = `
+    <div class="stat-grid" style="margin-bottom:16px">
+      <div class="stat-card"><div class="stat-label">Added</div><div class="stat-value text-green">${(s.records_added||0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Removed</div><div class="stat-value text-red">${(s.records_removed||0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Changed</div><div class="stat-value" style="color:var(--amber)">${(s.records_changed||0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="stat-label">Unchanged</div><div class="stat-value">${(s.records_unchanged||0).toLocaleString()}</div></div>
+    </div>
+    ${diff.changed_records?.length ? `
+    <div class="card">
+      <div class="card-header"><span class="card-title">Changed Records (first ${diff.changed_records.length})</span></div>
+      <div style="max-height:400px;overflow:auto">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr><th>Record ID</th><th>Field</th><th>Old Value</th><th>New Value</th></tr></thead>
+          <tbody>
+            ${diff.changed_records.map(cr => cr.changes.map((ch, i) => `<tr>
+              ${i === 0 ? `<td class="mono" rowspan="${cr.changes.length}" style="vertical-align:top;font-weight:600">${esc(cr.record_id || '')}</td>` : ''}
+              <td class="mono">${esc(ch.tag || ch.field || '')}</td>
+              <td style="background:rgba(248,81,73,0.1)">${esc((ch.old_value||'').slice(0,80))}</td>
+              <td style="background:rgba(34,197,94,0.1)">${esc((ch.new_value||'').slice(0,80))}</td>
+            </tr>`).join('')).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 5 — Items
+// Stage 8 — Reconciliation (was: Stage 5 — Items)
 // ══════════════════════════════════════════════════════════════════
-window.renderStage5 = async function(el) {
+window.renderStage8_Reconcile = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 5 — Items</div>
+        <div class="page-title">Stage 8 — Item + Bib Reconciliation</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
@@ -4970,14 +5400,14 @@ async function _recPreviewValue(category, value) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 6 — Patron Data Transformation
+// Stage 9 — Patron Data Transformation
 // ══════════════════════════════════════════════════════════════════
-window.renderStage6 = async function(el) {
+window.renderStage9_Patrons = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 6 — Patron Data Transformation</div>
+        <div class="page-title">Stage 9 — Patron Data</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
@@ -6109,14 +6539,14 @@ async function refreshProject() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 7 — Push to Koha
+// Stage 7 — Load (Push to Koha)
 // ══════════════════════════════════════════════════════════════════
-window.renderStage7 = async function(el) {
+window.renderStage7_Load = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 7 — Push to Koha</div>
+        <div class="page-title">Stage 7 — Load</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
@@ -6781,30 +7211,38 @@ async function renderS7Manifests() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Stage 8 — KTD Sandbox
+// Stage 11 — Holds & Remaining Data (was: Stage 8 — KTD Sandbox)
 // ══════════════════════════════════════════════════════════════════
-window.renderStage8 = async function(el) {
+window.renderStage11_Holds = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 8 — KTD Sandbox</div>
-        <div class="page-subtitle">${p.library_name}</div>
+        <div class="page-title">Stage 11 — Holds &amp; Remaining Data</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
       </div>
     </div>
     ${pipelineBar(p)}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
       <div class="card">
-        <div class="card-header"><span class="card-title">Sandbox Control</span></div>
-        <div id="sandbox-current"><div class="spinner"></div></div>
+        <div class="card-header"><span class="card-title">Holds</span></div>
+        <div class="empty-state" style="padding:30px">
+          <div class="empty-title">Coming Soon</div>
+          <div class="text-secondary" style="font-size:12px;margin-top:8px">
+            Upload holds/reserves data, validate bib+patron linkage, and push to Koha.
+          </div>
+        </div>
       </div>
       <div class="card">
-        <div class="card-header"><span class="card-title">Instance History</span></div>
-        <div id="sandbox-instances"><div class="spinner"></div></div>
+        <div class="card-header"><span class="card-title">Checkouts &amp; Fines</span></div>
+        <div class="empty-state" style="padding:30px">
+          <div class="empty-title">Coming Soon</div>
+          <div class="text-secondary" style="font-size:12px;margin-top:8px">
+            Current checkouts, fine/fee records, and reading history migration.
+          </div>
+        </div>
       </div>
     </div>`;
-  loadSandboxStatus();
-  loadSandboxInstances();
 };
 
 async function loadSandboxStatus() {
@@ -7197,12 +7635,15 @@ window.navigate = function(view, params = {}) {
     'new-project': renderNewProject,
     stage1:        renderStage1,
     stage2:        renderStage2,
-    stage3:        window.renderStage3,
-    stage4:        window.renderStage4,
-    stage5:        window.renderStage5,
-    stage6:        window.renderStage6,
-    stage7:        window.renderStage7,
-    stage8:        window.renderStage8,
+    stage3:        window.renderStage3_Quality,
+    stage4:        window.renderStage4_Versions,
+    stage5:        window.renderStage5_Mapping,
+    stage6:        window.renderStage6_Transform,
+    stage7:        window.renderStage7_Load,
+    stage8:        window.renderStage8_Reconcile,
+    stage9:        window.renderStage9_Patrons,
+    stage10:       window.renderStage10_PatronVersions,
+    stage11:       window.renderStage11_Holds,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,

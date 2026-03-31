@@ -48,6 +48,10 @@ class ProjectOut(BaseModel):
     stage_6_complete: bool
     stage_7_complete: bool
     stage_8_complete: bool
+    stage_9_complete: bool
+    stage_10_complete: bool
+    stage_11_complete: bool
+    item_structure: str | None
     items_csv_match_tag: str | None
     items_csv_key_column: str | None
     archived: bool

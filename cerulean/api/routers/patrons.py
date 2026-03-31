@@ -1,7 +1,7 @@
 """
 cerulean/api/routers/patrons.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 6 — Patron Data Transformation API endpoints.
+Stage 9 — Patron Data Transformation API endpoints.
 
 Upload & Parse (multi-file):
   GET   /projects/{id}/patrons/available-files — list Stage 1 files for selection
@@ -205,7 +205,7 @@ async def select_existing_file(
     await db.flush()
     await db.refresh(pf)
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron-upload]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron-upload]",
                     message=f"Patron file selected from Stage 1: {marc_file.filename}")
     await db.flush()
 
@@ -266,7 +266,7 @@ async def upload_patron_file(
     await db.flush()
     await db.refresh(pf)
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron-upload]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron-upload]",
                     message=f"Patron file uploaded: {filename}")
     await db.flush()
 
@@ -328,7 +328,7 @@ async def delete_single_patron_file(
     # Re-concat remaining files
     _concat_patron_files(project_id)
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron]",
                     message=f"Patron file deleted: {filename}")
     await db.flush()
 
@@ -491,11 +491,11 @@ async def delete_patron_file(
     project.patron_scan_task_id = None
     project.patron_apply_task_id = None
     project.patron_ai_task_id = None
-    project.stage_6_complete = False
+    project.stage_9_complete = False
 
     await db.flush()
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron]",
                     message="Patron file and all data deleted")
     await db.flush()
 
@@ -524,7 +524,7 @@ async def ai_suggest_maps(
             "message": "Upload and parse a patron file first.",
         })
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron-ai]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron-ai]",
                     message="Patron AI column mapping dispatched")
     await db.flush()
 
@@ -719,7 +719,7 @@ async def start_patron_scan(
             "message": "Upload and parse a patron file first.",
         })
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron-scan]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron-scan]",
                     message="Patron scan dispatched")
     await db.flush()
 
@@ -993,7 +993,7 @@ async def start_patron_apply(
             "message": "Upload and parse a patron file first.",
         })
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron-apply]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron-apply]",
                     message="Patron apply dispatched")
     await db.flush()
 
@@ -1237,10 +1237,10 @@ async def clear_patron_scan(
     # Reset task IDs
     project.patron_scan_task_id = None
     project.patron_apply_task_id = None
-    project.stage_6_complete = False
+    project.stage_9_complete = False
     await db.flush()
 
-    await audit_log(db, project_id, stage=6, level="info", tag="[patron]",
+    await audit_log(db, project_id, stage=9, level="info", tag="[patron]",
                     message="Patron scan results and output files cleared")
     await db.flush()
 

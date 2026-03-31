@@ -89,7 +89,7 @@ async def start_transform(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await audit_log(db, project_id, stage=3, level="info", tag="[transform]",
+    await audit_log(db, project_id, stage=6, level="info", tag="[transform]",
                     message="Transform pipeline dispatched")
     await db.flush()
 
@@ -127,7 +127,7 @@ async def start_merge(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await audit_log(db, project_id, stage=3, level="info", tag="[merge]",
+    await audit_log(db, project_id, stage=6, level="info", tag="[merge]",
                     message="Merge pipeline dispatched")
     await db.flush()
 
@@ -193,7 +193,7 @@ async def start_build(
         started_at=datetime.utcnow(),
     )
     db.add(manifest)
-    await audit_log(db, project_id, stage=3, level="info", tag="[build]",
+    await audit_log(db, project_id, stage=6, level="info", tag="[build]",
                     message=f"Build output dispatched: {len(body.file_ids)} file(s), items={'yes' if body.include_items else 'no'}")
     await db.flush()
 
@@ -408,12 +408,12 @@ async def clear_transform_results(project_id: str, db: AsyncSession = Depends(ge
     )
     manifests_deleted = result.rowcount
 
-    # Reset stage 3 completion
-    project.stage_3_complete = False
-    if (project.current_stage or 0) > 3:
-        project.current_stage = 3
+    # Reset stage 6 completion
+    project.stage_6_complete = False
+    if (project.current_stage or 0) > 6:
+        project.current_stage = 6
 
-    await audit_log(db, project_id, stage=3, level="info", tag="[transform]",
+    await audit_log(db, project_id, stage=6, level="info", tag="[transform]",
                     message=f"Cleared previous results: {deleted_files} file(s), {manifests_deleted} manifest(s)")
 
     return {

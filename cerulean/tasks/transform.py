@@ -1,7 +1,7 @@
 """
 cerulean/tasks/transform.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 3 Celery tasks:
+Stage 6 Celery tasks:
 
     transform_pipeline_task  — apply approved FieldMaps to indexed MARC files
     merge_pipeline_task      — merge transformed files + optional items CSV join
@@ -98,7 +98,7 @@ def transform_pipeline_task(
     """
     from cerulean.models import FieldMap, MARCFile, Project, TransformManifest
 
-    log = AuditLogger(project_id=project_id, stage=3, tag="[transform]")
+    log = AuditLogger(project_id=project_id, stage=6, tag="[transform]")
     log.info("Transform pipeline starting")
 
     try:
@@ -207,7 +207,7 @@ def transform_pipeline_task(
                 agg["skipped"] += counts["skipped"]
                 agg["errors"] += counts["errors"]
 
-        # 5. Update manifest + mark stage 3 complete
+        # 5. Update manifest + mark stage 6 complete
         with Session(_engine) as db:
             db.execute(
                 update(TransformManifest)
@@ -222,9 +222,9 @@ def transform_pipeline_task(
                 )
             )
             project = db.get(Project, project_id)
-            if project and not project.stage_3_complete:
-                project.stage_3_complete = True
-                project.current_stage = max(project.current_stage or 0, 4)
+            if project and not project.stage_6_complete:
+                project.stage_6_complete = True
+                project.current_stage = max(project.current_stage or 0, 7)
                 project.bib_count_ingested = total_records
             db.commit()
 
@@ -284,7 +284,7 @@ def merge_pipeline_task(
     """
     from cerulean.models import ItemColumnMap, MARCFile, Project, TransformManifest
 
-    log = AuditLogger(project_id=project_id, stage=3, tag="[merge]")
+    log = AuditLogger(project_id=project_id, stage=6, tag="[merge]")
     log.info("Merge pipeline starting")
 
     try:
@@ -461,15 +461,15 @@ def merge_pipeline_task(
         if duplicate_001s:
             log.warn(
                 f"Detected {len(duplicate_001s)} duplicate 001 values — "
-                f"review in Stage 4 (Dedup)"
+                f"review in Stage 7 (Dedup)"
             )
 
         # 6. Update project & manifest
         with Session(_engine) as db:
             project = db.get(Project, project_id)
             if project:
-                project.stage_3_complete = True
-                project.current_stage = 4
+                project.stage_6_complete = True
+                project.current_stage = 7
                 project.bib_count_ingested = total_records
 
             db.execute(
@@ -540,7 +540,7 @@ def build_output_task(
     """
     from cerulean.models import FieldMap, ItemColumnMap, MARCFile, Project, TransformManifest
 
-    log = AuditLogger(project_id=project_id, stage=3, tag="[build]")
+    log = AuditLogger(project_id=project_id, stage=6, tag="[build]")
     log.info("Build output starting")
 
     try:
@@ -727,8 +727,8 @@ def build_output_task(
         with Session(_engine) as db:
             project = db.get(Project, project_id)
             if project:
-                project.stage_3_complete = True
-                project.current_stage = max(project.current_stage or 0, 4)
+                project.stage_6_complete = True
+                project.current_stage = max(project.current_stage or 0, 7)
                 project.bib_count_ingested = total_records
 
             db.execute(

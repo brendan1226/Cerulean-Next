@@ -1,7 +1,7 @@
 """
 cerulean/api/routers/reconcile.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 5 — Items API endpoints.
+Stage 8 — Items API endpoints.
 
 POST  /projects/{id}/reconcile/confirm-source   — resolve and store source file
 POST  /projects/{id}/reconcile/scan             — dispatch scan task
@@ -99,7 +99,7 @@ async def confirm_source(
     if not source_file:
         raise HTTPException(409, detail={
             "error": "NO_SOURCE_FILE",
-            "message": "No MARC output files found. Complete Stage 3 (Transform) first.",
+            "message": "No MARC output files found. Complete Stage 6 (Transform) first.",
         })
 
     # Quick record count
@@ -115,7 +115,7 @@ async def confirm_source(
     project.reconcile_source_file = source_file
     await db.flush()
 
-    await audit_log(db, project_id, stage=5, level="info", tag="[items]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[items]",
                     message=f"Source file confirmed: {Path(source_file).name} ({record_count:,} records)")
     await db.flush()
 
@@ -134,13 +134,13 @@ async def start_scan(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Dispatch items scan task. Precondition: stage_3_complete."""
+    """Dispatch items scan task. Precondition: stage_6_complete."""
     project = await require_project(project_id, db)
 
-    if not project.stage_3_complete:
+    if not project.stage_6_complete:
         raise HTTPException(409, detail={
-            "error": "STAGE_3_INCOMPLETE",
-            "message": "Stage 3 (transform) must be complete before items scan.",
+            "error": "STAGE_6_INCOMPLETE",
+            "message": "Stage 6 (transform) must be complete before items scan.",
         })
 
     if not project.reconcile_source_file:
@@ -149,7 +149,7 @@ async def start_scan(
             "message": "Confirm a source file first via POST /reconcile/confirm-source.",
         })
 
-    await audit_log(db, project_id, stage=5, level="info", tag="[items-scan]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[items-scan]",
                     message="Items scan dispatched")
     await db.flush()
 
@@ -458,7 +458,7 @@ async def start_apply(
             "message": "Confirm a source file first.",
         })
 
-    await audit_log(db, project_id, stage=5, level="info", tag="[items-apply]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[items-apply]",
                     message="Items apply dispatched")
     await db.flush()
 
@@ -746,10 +746,10 @@ async def clear_scan(
     # Reset task IDs
     project.reconcile_scan_task_id = None
     project.reconcile_apply_task_id = None
-    project.stage_5_complete = False
+    project.stage_8_complete = False
     await db.flush()
 
-    await audit_log(db, project_id, stage=5, level="info", tag="[items]",
+    await audit_log(db, project_id, stage=8, level="info", tag="[items]",
                     message="Items scan results and output cleared")
     await db.flush()
 

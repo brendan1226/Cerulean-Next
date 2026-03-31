@@ -1,7 +1,7 @@
 """
 cerulean/tasks/patrons.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 6 Celery tasks: Patron Data Transformation.
+Stage 9 Celery tasks: Patron Data Transformation.
 
     patron_parse_task    — parse uploaded patron file into normalised CSV
     patron_ai_map_task   — AI-suggest column mappings to Koha borrower headers
@@ -104,7 +104,7 @@ def patron_parse_task(self, project_id: str, patron_file_id: str) -> dict:
     """
     from cerulean.models import PatronFile
 
-    log = AuditLogger(project_id=project_id, stage=6, tag="[patron-parse]")
+    log = AuditLogger(project_id=project_id, stage=9, tag="[patron-parse]")
     log.info("Patron file parse starting")
 
     try:
@@ -298,7 +298,7 @@ def patron_ai_map_task(self, project_id: str) -> dict:
     """
     from cerulean.models import PatronColumnMap
 
-    log = AuditLogger(project_id=project_id, stage=6, tag="[patron-ai]")
+    log = AuditLogger(project_id=project_id, stage=9, tag="[patron-ai]")
     log.info("Patron AI column mapping starting")
 
     try:
@@ -447,7 +447,7 @@ def patron_scan_task(self, project_id: str) -> dict:
     """
     from cerulean.models import PatronColumnMap, PatronScanResult
 
-    log = AuditLogger(project_id=project_id, stage=6, tag="[patron-scan]")
+    log = AuditLogger(project_id=project_id, stage=9, tag="[patron-scan]")
     log.info("Patron scan starting")
 
     try:
@@ -565,7 +565,7 @@ def patron_apply_task(self, project_id: str) -> dict:
     """
     from cerulean.models import PatronColumnMap, PatronValueRule, Project
 
-    log = AuditLogger(project_id=project_id, stage=6, tag="[patron-apply]")
+    log = AuditLogger(project_id=project_id, stage=9, tag="[patron-apply]")
     log.info("Patron apply starting")
 
     try:
@@ -747,8 +747,8 @@ def patron_apply_task(self, project_id: str) -> dict:
         with Session(_engine) as db:
             project = db.get(Project, project_id)
             if project:
-                project.stage_6_complete = True
-                project.current_stage = 7
+                project.stage_9_complete = True
+                project.current_stage = 10
                 project.patron_count = rows_out
                 db.commit()
 

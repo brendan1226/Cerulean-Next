@@ -195,13 +195,13 @@ async def scan_dedup(
     body: DedupScanRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Dispatch dedup scan task. Precondition: stage_3_complete."""
+    """Dispatch dedup scan task. Precondition: stage_6_complete."""
     project = await require_project(project_id, db)
 
-    if not project.stage_3_complete:
+    if not project.stage_6_complete:
         raise HTTPException(409, detail={
-            "error": "STAGE_3_INCOMPLETE",
-            "message": "Stage 3 (transform) must be complete before dedup scan.",
+            "error": "STAGE_6_INCOMPLETE",
+            "message": "Stage 6 (transform) must be complete before dedup scan.",
         })
 
     # Verify rule exists

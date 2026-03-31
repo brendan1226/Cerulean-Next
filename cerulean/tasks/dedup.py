@@ -329,7 +329,7 @@ def dedup_apply_task(self, project_id: str, rule_id: str) -> dict:
             project = db.get(Project, project_id)
             if project:
                 project.stage_4_complete = True
-                project.current_stage = 5
+                project.current_stage = 5  # advance to Field Mapping
                 project.bib_count_post_dedup = records_out
 
             # Mark all clusters as resolved

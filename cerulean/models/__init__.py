@@ -23,6 +23,7 @@ Models:
     AuditEvent     — append-only project event log
     Suggestion     — engineer feedback / feature request
     SuggestionVote — upvote join table
+    QualityScanResult — MARC data quality issue (Stage 3)
 """
 
 import uuid
@@ -77,27 +78,33 @@ class Project(Base):
     koha_version: Mapped[str | None] = mapped_column(String(20))
     search_engine: Mapped[str | None] = mapped_column(String(20))  # "es8" | "zebra"
 
-    # Pipeline stage tracking (1–8, null = not started)
+    # Pipeline stage tracking (1–11, null = not started)
     current_stage: Mapped[int] = mapped_column(Integer, default=1)
-    stage_1_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_2_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_3_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_4_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_5_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_6_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_7_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    stage_8_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    stage_1_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # MARC Ingest
+    stage_2_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # ILS Detection + Config
+    stage_3_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # MARC Data Quality
+    stage_4_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Versioned Run — Bibs
+    stage_5_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Field Mapping
+    stage_6_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Transform
+    stage_7_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Load (Push)
+    stage_8_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Item + Bib Reconciliation
+    stage_9_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Patron Data Quality
+    stage_10_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Versioned Run — Patrons
+    stage_11_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Holds & Remaining Data
 
-    # Stage 5 — Reconciliation
+    # Stage 8 — Reconciliation
     reconcile_source_file: Mapped[str | None] = mapped_column(String(500))
     reconcile_scan_task_id: Mapped[str | None] = mapped_column(String(200))
     reconcile_apply_task_id: Mapped[str | None] = mapped_column(String(200))
 
-    # Stage 2/3 — Item CSV match config
+    # Stage 2 — Migration config
+    item_structure: Mapped[str | None] = mapped_column(String(20))  # "embedded" | "separate" | "none"
+
+    # Stage 5/6 — Item CSV match config
     items_csv_match_tag: Mapped[str | None] = mapped_column(String(10))   # MARC tag, e.g. "001"
     items_csv_key_column: Mapped[str | None] = mapped_column(String(200)) # CSV column name
 
-    # Stage 6 — Patron Data Transformation
+    # Stage 9 — Patron Data Transformation
     patron_scan_task_id: Mapped[str | None] = mapped_column(String(200))
     patron_apply_task_id: Mapped[str | None] = mapped_column(String(200))
     patron_ai_task_id: Mapped[str | None] = mapped_column(String(200))
@@ -747,3 +754,65 @@ class SuggestionVote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     suggestion: Mapped["Suggestion"] = relationship(back_populates="votes")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# STAGE 3 — MARC DATA QUALITY
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class QualityScanResult(Base):
+    """One quality issue found during a Stage 3 data quality scan.
+
+    Categories: encoding, diacritics, indicators, subfield_structure,
+                field_length, leader_008, duplicates, blank_fields
+    """
+
+    __tablename__ = "quality_scan_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    scan_type: Mapped[str] = mapped_column(String(20), nullable=False)       # "bib" | "item"
+    category: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)        # "error" | "warning" | "info"
+    record_index: Mapped[int] = mapped_column(Integer, nullable=False)       # 0-based record position
+    file_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("marc_files.id"))
+    tag: Mapped[str | None] = mapped_column(String(5))                       # affected MARC tag
+    subfield: Mapped[str | None] = mapped_column(String(5))                  # affected subfield code
+    description: Mapped[str] = mapped_column(Text, nullable=False)           # human-readable issue
+    original_value: Mapped[str | None] = mapped_column(Text)                 # the problematic value
+    suggested_fix: Mapped[str | None] = mapped_column(Text)                  # auto-fix value if available
+    status: Mapped[str] = mapped_column(String(20), default="unresolved")    # unresolved|auto_fixed|manually_fixed|ignored
+    fixed_value: Mapped[str | None] = mapped_column(Text)
+    fixed_by: Mapped[str | None] = mapped_column(String(200))
+    fixed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# STAGE 4 / 10 — VERSIONED MIGRATION RUNS
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class MigrationVersion(Base):
+    """Immutable snapshot of a migration run for a specific data type.
+
+    data_type: "bib" (Stage 4), "item" (Stage 8), "patron" (Stage 10), "holds" (Stage 11)
+    """
+
+    __tablename__ = "migration_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    data_type: Mapped[str] = mapped_column(String(20), nullable=False)       # bib|item|patron|holds
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(200))                   # optional user label
+    snapshot_path: Mapped[str] = mapped_column(Text, nullable=False)         # path to snapshot file
+    mapping_snapshot: Mapped[dict | None] = mapped_column(JSONB)             # field maps at run time
+    quality_log: Mapped[dict | None] = mapped_column(JSONB)                  # Stage 3 remediation summary
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    run_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    load_success: Mapped[int | None] = mapped_column(Integer)
+    load_failed: Mapped[int | None] = mapped_column(Integer)
+    created_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

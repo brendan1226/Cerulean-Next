@@ -1,7 +1,7 @@
 """
 cerulean/tasks/reconcile.py
 ─────────────────────────────────────────────────────────────────────────────
-Stage 5 Celery tasks: Items.
+Stage 8 Celery tasks: Items.
 
     reconciliation_scan_task   — scan MARC 952 fields, extract subfield values
     reconciliation_apply_task  — apply reconciliation rules, write output file
@@ -76,7 +76,7 @@ def reconciliation_scan_task(self, project_id: str) -> dict:
     """
     from cerulean.models import Project, ReconciliationScanResult
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[items-scan]")
+    log = AuditLogger(project_id=project_id, stage=8, tag="[items-scan]")
     log.info("Items scan starting")
 
     try:
@@ -182,7 +182,7 @@ def reconciliation_apply_task(self, project_id: str) -> dict:
     """
     from cerulean.models import Project, ReconciliationRule
 
-    log = AuditLogger(project_id=project_id, stage=5, tag="[items-apply]")
+    log = AuditLogger(project_id=project_id, stage=8, tag="[items-apply]")
     log.info("Items apply starting")
 
     try:
@@ -302,8 +302,8 @@ def reconciliation_apply_task(self, project_id: str) -> dict:
         with Session(_engine) as db:
             project = db.get(Project, project_id)
             if project:
-                project.stage_5_complete = True
-                project.current_stage = 6
+                project.stage_8_complete = True
+                project.current_stage = 9
                 db.commit()
 
         log.complete(

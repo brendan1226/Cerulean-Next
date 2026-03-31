@@ -29,6 +29,8 @@ celery_app = Celery(
     include=[
         "cerulean.tasks.ingest",
         "cerulean.tasks.analyze",
+        "cerulean.tasks.quality",
+        "cerulean.tasks.versioning",
         "cerulean.tasks.transform",
         "cerulean.tasks.items",
         "cerulean.tasks.dedup",
@@ -45,6 +47,8 @@ celery_app.conf.update(
         "cerulean.tasks.ingest.*": {"queue": "ingest"},
         "cerulean.tasks.items.*": {"queue": "ingest"},
         "cerulean.tasks.analyze.*": {"queue": "analyze"},
+        "cerulean.tasks.quality.*": {"queue": "analyze"},
+        "cerulean.tasks.versioning.*": {"queue": "analyze"},
         "cerulean.tasks.transform.*": {"queue": "transform"},
         "cerulean.tasks.dedup.*": {"queue": "dedup"},
         "cerulean.tasks.reconcile.*": {"queue": "reconcile"},
