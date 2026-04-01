@@ -34,8 +34,8 @@ class MigrationVersionOut(BaseModel):
     load_failed: int | None
     created_by: str | None
     created_at: datetime
-    mapping_snapshot: dict | None = None
-    quality_log: dict | None = None
+    mapping_snapshot: list | dict | None = None
+    quality_log: list | dict | None = None
 
 
 class UpdateVersionRequest(BaseModel):

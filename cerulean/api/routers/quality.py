@@ -16,15 +16,21 @@ POST /projects/{id}/quality/approve           — approve quality pass (gate)
 """
 
 from datetime import datetime
+from pathlib import Path
 
+import pymarc
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.api.deps import audit_log, require_project
+from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
-from cerulean.models import QualityScanResult
+from cerulean.models import MARCFile, QualityScanResult
+from cerulean.utils.marc import record_to_dict
+
+settings = get_settings()
 from cerulean.schemas.quality import (
     QualityApproveResponse,
     QualityBulkFixRequest,
@@ -302,6 +308,26 @@ async def ignore_quality_issue(
     return issue
 
 
+@router.post("/{project_id}/quality/ignore-record/{record_index}")
+async def ignore_record_issues(
+    project_id: str,
+    record_index: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Ignore all unresolved issues for a specific record."""
+    await require_project(project_id, db)
+    result = await db.execute(
+        update(QualityScanResult)
+        .where(
+            QualityScanResult.project_id == project_id,
+            QualityScanResult.record_index == record_index,
+            QualityScanResult.status == "unresolved",
+        )
+        .values(status="ignored", fixed_at=datetime.utcnow(), fixed_by="ignored")
+    )
+    return {"record_index": record_index, "ignored_count": result.rowcount}
+
+
 @router.post("/{project_id}/quality/ignore-category")
 async def ignore_quality_category(
     project_id: str,
@@ -328,6 +354,333 @@ async def ignore_quality_category(
                     message=f"Ignored {count} issues in category '{category}'")
 
     return {"category": category, "ignored_count": count}
+
+
+# ── Record View & Edit ───────────────────────────────────────────────
+
+
+@router.get("/{project_id}/quality/record/{record_index}")
+async def get_quality_record(
+    project_id: str,
+    record_index: int,
+    file_id: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a full MARC record with its quality issues annotated."""
+    await require_project(project_id, db)
+
+    # If no file_id, try to get it from the issue itself
+    actual_file_id = file_id
+    if not actual_file_id:
+        issue_row = (await db.execute(
+            select(QualityScanResult.file_id).where(
+                QualityScanResult.project_id == project_id,
+                QualityScanResult.record_index == record_index,
+                QualityScanResult.file_id.isnot(None),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if issue_row:
+            actual_file_id = issue_row
+
+    # Load all indexed MARC files in scan order
+    files_result = await db.execute(
+        select(MARCFile).where(
+            MARCFile.project_id == project_id,
+            MARCFile.file_category == "marc",
+            MARCFile.status == "indexed",
+        ).order_by(MARCFile.sort_order, MARCFile.created_at)
+    )
+    all_files = files_result.scalars().all()
+    if not all_files:
+        raise HTTPException(404, detail={"error": "NO_FILE", "message": "No MARC file found."})
+
+    # If we know the file_id, only search that file — compute local offset
+    # by counting records in files that come before it in scan order
+    record = None
+    found_file_id = None
+    if actual_file_id:
+        # Count records in files before the target file
+        offset = 0
+        for f in all_files:
+            if f.id == actual_file_id:
+                break
+            offset += f.record_count or 0
+        local_idx = record_index - offset
+        marc_file = await db.get(MARCFile, actual_file_id)
+        if marc_file and local_idx >= 0:
+            try:
+                count = 0
+                with open(marc_file.storage_path, "rb") as fh:
+                    reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                    for rec in reader:
+                        if rec is None:
+                            continue
+                        if count == local_idx:
+                            record = rec
+                            found_file_id = actual_file_id
+                            break
+                        count += 1
+            except Exception:
+                pass
+    else:
+        # No file_id — iterate all files globally
+        global_idx = 0
+        for f in all_files:
+            try:
+                with open(f.storage_path, "rb") as fh:
+                    reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                    for rec in reader:
+                        if rec is None:
+                            continue
+                        if global_idx == record_index:
+                            record = rec
+                            found_file_id = f.id
+                            break
+                        global_idx += 1
+                if record:
+                    break
+            except Exception:
+                continue
+
+    if not record:
+        raise HTTPException(404, detail={"error": "RECORD_NOT_FOUND", "message": f"No record at index {record_index}."})
+
+    # Get issues for this record
+    issues_result = await db.execute(
+        select(QualityScanResult).where(
+            QualityScanResult.project_id == project_id,
+            QualityScanResult.record_index == record_index,
+        ).order_by(QualityScanResult.category)
+    )
+    issues = issues_result.scalars().all()
+
+    # Build annotated field list
+    issue_tags = {}
+    for iss in issues:
+        key = iss.tag or "LDR"
+        issue_tags.setdefault(key, []).append({
+            "id": iss.id,
+            "category": iss.category,
+            "severity": iss.severity,
+            "description": iss.description,
+            "status": iss.status,
+            "original_value": iss.original_value,
+            "suggested_fix": iss.suggested_fix,
+        })
+
+    record_dict = record_to_dict(record, record_index)
+
+    return {
+        "record_index": record_index,
+        "file_id": found_file_id,
+        "record": record_dict,
+        "issues": [
+            {
+                "id": iss.id, "category": iss.category, "severity": iss.severity,
+                "tag": iss.tag, "subfield": iss.subfield, "description": iss.description,
+                "status": iss.status, "original_value": iss.original_value,
+                "suggested_fix": iss.suggested_fix,
+            }
+            for iss in issues
+        ],
+        "issue_tags": issue_tags,
+        "total_issues": len(issues),
+    }
+
+
+@router.post("/{project_id}/quality/record/{record_index}/edit")
+async def edit_quality_record(
+    project_id: str,
+    record_index: int,
+    body: dict,
+    file_id: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a MARC record field and save back to the file.
+
+    Body: { "tag": "245", "subfield": "$a", "old_value": "...", "new_value": "..." }
+    For leader edits: { "tag": "LDR", "position": 6, "new_value": "a" }
+    For control fields: { "tag": "008", "new_value": "..." }
+    """
+    await require_project(project_id, db)
+
+    # Find the file — prefer explicit file_id, then look up from issue data
+    actual_file_id = file_id
+    if not actual_file_id:
+        issue_row = (await db.execute(
+            select(QualityScanResult.file_id).where(
+                QualityScanResult.project_id == project_id,
+                QualityScanResult.record_index == record_index,
+                QualityScanResult.file_id.isnot(None),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if issue_row:
+            actual_file_id = issue_row
+
+    marc_file = None
+    local_index = record_index
+
+    if actual_file_id:
+        marc_file = await db.get(MARCFile, actual_file_id)
+        # Compute local index by subtracting records from prior files
+        files_result = await db.execute(
+            select(MARCFile).where(
+                MARCFile.project_id == project_id,
+                MARCFile.file_category == "marc",
+                MARCFile.status == "indexed",
+            ).order_by(MARCFile.sort_order, MARCFile.created_at)
+        )
+        for f in files_result.scalars().all():
+            if f.id == actual_file_id:
+                break
+            local_index -= f.record_count or 0
+    else:
+        result = await db.execute(
+            select(MARCFile).where(
+                MARCFile.project_id == project_id,
+                MARCFile.file_category == "marc",
+                MARCFile.status == "indexed",
+            ).order_by(MARCFile.sort_order, MARCFile.created_at).limit(1)
+        )
+        marc_file = result.scalar_one_or_none()
+
+    if not marc_file:
+        raise HTTPException(404, detail={"error": "NO_FILE", "message": "No MARC file found."})
+
+    tag = body.get("tag", "")
+    new_value = body.get("new_value", "")
+    subfield = body.get("subfield", "")
+    position = body.get("position")
+
+    # Read all records, modify the target, write back
+    records = []
+    try:
+        with open(marc_file.storage_path, "rb") as fh:
+            reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+            for rec in reader:
+                records.append(rec)
+    except Exception as e:
+        raise HTTPException(500, detail={"error": "READ_ERROR", "message": str(e)})
+
+    if local_index < 0 or local_index >= len(records) or records[local_index] is None:
+        raise HTTPException(404, detail={"error": "RECORD_NOT_FOUND", "message": f"No record at local index {local_index} (global {record_index})."})
+
+    record = records[local_index]
+    edited = False
+
+    if tag == "LDR" and position is not None:
+        # Leader byte edit
+        leader = list(record.leader)
+        if 0 <= position < len(leader):
+            leader[position] = new_value[0] if new_value else " "
+            record.leader = "".join(leader)
+            edited = True
+    elif tag and tag < "010":
+        # Control field
+        for f in record.get_fields(tag):
+            f.data = new_value
+            edited = True
+            break
+    elif tag and subfield:
+        # Data field subfield edit
+        sub_code = subfield.lstrip("$")
+        for f in record.get_fields(tag):
+            for i, sf in enumerate(f.subfields):
+                if sf.code == sub_code and (not body.get("old_value") or sf.value == body["old_value"]):
+                    f.subfields[i] = pymarc.Subfield(code=sub_code, value=new_value)
+                    edited = True
+                    break
+            if edited:
+                break
+
+    if not edited:
+        raise HTTPException(400, detail={"error": "NO_MATCH", "message": "Could not find the field to edit."})
+
+    # Write all records back to file
+    try:
+        with open(marc_file.storage_path, "wb") as fh:
+            for rec in records:
+                if rec is not None:
+                    fh.write(rec.as_marc())
+    except Exception as e:
+        raise HTTPException(500, detail={"error": "WRITE_ERROR", "message": str(e)})
+
+    # Mark related issues as manually fixed (filter by subfield if provided)
+    fix_where = [
+        QualityScanResult.project_id == project_id,
+        QualityScanResult.record_index == record_index,
+        QualityScanResult.tag == tag,
+        QualityScanResult.status == "unresolved",
+    ]
+    if subfield:
+        fix_where.append(QualityScanResult.subfield == subfield)
+    await db.execute(
+        update(QualityScanResult)
+        .where(*fix_where)
+        .values(status="manually_fixed", fixed_value=new_value, fixed_at=datetime.utcnow(), fixed_by="manual")
+    )
+
+    await audit_log(db, project_id, stage=3, level="info", tag="[quality-edit]",
+                    message=f"Record {record_index} field {tag}{subfield} edited manually")
+
+    return {"edited": True, "record_index": record_index, "tag": tag}
+
+
+@router.get("/{project_id}/quality/bulk-fix/preview")
+async def bulk_fix_preview(
+    project_id: str,
+    category: str = Query(...),
+    sample_size: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview what a bulk fix would do — show before/after for sample records."""
+    await require_project(project_id, db)
+
+    # Get sample issues with suggested fixes
+    result = await db.execute(
+        select(QualityScanResult).where(
+            QualityScanResult.project_id == project_id,
+            QualityScanResult.category == category,
+            QualityScanResult.status == "unresolved",
+            QualityScanResult.suggested_fix.isnot(None),
+        ).limit(sample_size)
+    )
+    samples = result.scalars().all()
+
+    # Count total fixable
+    total = (await db.execute(
+        select(func.count()).select_from(QualityScanResult).where(
+            QualityScanResult.project_id == project_id,
+            QualityScanResult.category == category,
+            QualityScanResult.status == "unresolved",
+            QualityScanResult.suggested_fix.isnot(None),
+        )
+    )).scalar() or 0
+
+    total_unresolved = (await db.execute(
+        select(func.count()).select_from(QualityScanResult).where(
+            QualityScanResult.project_id == project_id,
+            QualityScanResult.category == category,
+            QualityScanResult.status == "unresolved",
+        )
+    )).scalar() or 0
+
+    return {
+        "category": category,
+        "total_fixable": total,
+        "total_unresolved": total_unresolved,
+        "samples": [
+            {
+                "record_index": s.record_index,
+                "tag": s.tag,
+                "subfield": s.subfield,
+                "description": s.description,
+                "before": s.original_value,
+                "after": s.suggested_fix,
+            }
+            for s in samples
+        ],
+    }
 
 
 # ── Stage Gate ───────────────────────────────────────────────────────

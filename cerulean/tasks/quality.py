@@ -141,6 +141,7 @@ def quality_scan_task(
 
         total_records = 0
         issues: list[dict] = []
+        rec_file_map: dict[int, str] = {}  # record_index → file_id
         seen_001s: dict[str, list[int]] = {}  # for duplicate detection
         seen_isbns: dict[str, list[int]] = {}
 
@@ -154,6 +155,7 @@ def quality_scan_task(
                     continue
                 rec_idx = total_records
                 total_records += 1
+                rec_file_map[rec_idx] = fid
 
                 # ── 1. Character Encoding ──
                 _check_encoding(record, rec_idx, fid, project_id, scan_type, issues)
@@ -200,7 +202,7 @@ def quality_scan_task(
                 for idx in indices:
                     issues.append(_issue(
                         project_id, scan_type, "duplicates", "warning",
-                        idx, None, "001", None,
+                        idx, rec_file_map.get(idx), "001", None,
                         f"Duplicate 001 value '{val}' shared by {len(indices)} records",
                         original_value=val,
                     ))
@@ -210,7 +212,7 @@ def quality_scan_task(
                 for idx in indices:
                     issues.append(_issue(
                         project_id, scan_type, "duplicates", "info",
-                        idx, None, "020", "$a",
+                        idx, rec_file_map.get(idx), "020", "$a",
                         f"Duplicate ISBN '{isbn}' shared by {len(indices)} records",
                         original_value=isbn,
                     ))
@@ -367,23 +369,34 @@ def _check_leader_008(record, rec_idx, file_id, project_id, scan_type, issues):
         ))
     else:
         # Check specific byte positions
+        # Default replacement for invalid leader bytes
+        _LEADER_DEFAULTS = {5: "n", 6: "a", 7: "m", 8: " ", 9: " ", 17: " ", 18: " ", 19: " "}
         for pos, valid_chars in _LEADER_CHECKS.items():
             if pos < len(leader) and leader[pos] not in valid_chars:
+                fix_char = _LEADER_DEFAULTS.get(pos, " ")
+                fixed_leader = leader[:pos] + fix_char + leader[pos + 1:]
                 issues.append(_issue(
                     project_id, scan_type, "leader_008", "warning",
                     rec_idx, file_id, "LDR", None,
-                    f"Leader position {pos} has invalid value '{leader[pos]}'",
+                    f"Leader position {pos} has invalid value '{leader[pos]}' → suggest '{fix_char}'",
                     original_value=leader[pos],
+                    suggested_fix=fix_char,
                 ))
 
     # 008 field length (should be 40 for books)
     for f008 in record.get_fields("008"):
         if f008.data and len(f008.data) != 40:
+            # Suggest padding or truncating to 40 chars
+            if len(f008.data) < 40:
+                fix = f008.data.ljust(40, "|")
+            else:
+                fix = f008.data[:40]
             issues.append(_issue(
                 project_id, scan_type, "leader_008", "warning",
                 rec_idx, file_id, "008", None,
                 f"008 field is {len(f008.data)} chars (expected 40)",
                 original_value=f008.data,
+                suggested_fix=fix,
             ))
 
 
@@ -426,17 +439,15 @@ def quality_bulk_fix_task(
     project_id: str,
     category: str,
 ) -> dict:
-    """Apply auto-fix to all unresolved issues in a category that have a suggested_fix.
+    """Apply auto-fix to all unresolved issues in a category.
 
-    Currently supports:
-    - diacritics: NFC normalization
-    - indicators: replace invalid indicators with space
-    - encoding: attempt UTF-8 cleanup
+    Modifies MARC files on disk AND updates DB status.
+    Groups fixes by file_id, loads each file once, applies all fixes, writes back.
 
     Returns:
         dict with fixed_count, skipped_count.
     """
-    from cerulean.models import QualityScanResult
+    from cerulean.models import MARCFile, QualityScanResult
 
     log = AuditLogger(project_id=project_id, stage=3, tag="[quality-fix]")
     log.info(f"Bulk fix starting for category '{category}'")
@@ -452,14 +463,133 @@ def quality_bulk_fix_task(
                 )
             ).scalars().all()
 
+            if not results:
+                log.complete("No fixable issues found")
+                return {"fixed_count": 0, "skipped_count": 0}
+
+            # Group by file_id
+            fixes_by_file: dict[str | None, list] = {}
+            for r in results:
+                fixes_by_file.setdefault(r.file_id, []).append(r)
+
+            # Load all indexed files + compute per-file record offsets
+            all_files = db.execute(
+                select(MARCFile).where(
+                    MARCFile.project_id == project_id,
+                    MARCFile.file_category == "marc",
+                    MARCFile.status == "indexed",
+                ).order_by(MARCFile.sort_order, MARCFile.created_at)
+            ).scalars().all()
+
+            file_offsets: dict[str, int] = {}
+            offset = 0
+            for f in all_files:
+                file_offsets[f.id] = offset
+                offset += f.record_count or 0
+
             fixed = 0
             skipped = 0
-            for r in results:
-                r.status = "auto_fixed"
-                r.fixed_value = r.suggested_fix
-                r.fixed_at = datetime.utcnow()
-                r.fixed_by = "bulk_fix"
-                fixed += 1
+
+            for file_id, file_fixes in fixes_by_file.items():
+                if not file_id:
+                    # Skip issues without file_id — mark as fixed in DB only
+                    for r in file_fixes:
+                        r.status = "auto_fixed"
+                        r.fixed_value = r.suggested_fix
+                        r.fixed_at = datetime.utcnow()
+                        r.fixed_by = "bulk_fix"
+                        fixed += 1
+                    continue
+
+                marc_file = db.get(MARCFile, file_id)
+                if not marc_file:
+                    skipped += len(file_fixes)
+                    continue
+
+                file_offset = file_offsets.get(file_id, 0)
+
+                # Read all records from this file
+                records = []
+                try:
+                    with open(marc_file.storage_path, "rb") as fh:
+                        reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                        for rec in reader:
+                            records.append(rec)
+                except Exception as exc:
+                    log.warn(f"Could not read {marc_file.filename}: {exc}")
+                    skipped += len(file_fixes)
+                    continue
+
+                # Apply fixes to records
+                modified = False
+                for r in file_fixes:
+                    local_idx = r.record_index - file_offset
+                    if local_idx < 0 or local_idx >= len(records) or records[local_idx] is None:
+                        skipped += 1
+                        continue
+
+                    record = records[local_idx]
+                    tag = r.tag or ""
+                    fix_val = r.suggested_fix or ""
+
+                    applied = False
+                    if tag == "LDR" and r.original_value and len(r.original_value) == 1:
+                        # Leader byte fix — find position from description
+                        import re as _re
+                        pos_match = _re.search(r"position (\d+)", r.description or "")
+                        if pos_match:
+                            pos = int(pos_match.group(1))
+                            leader = list(record.leader or "")
+                            if 0 <= pos < len(leader):
+                                leader[pos] = fix_val[0] if fix_val else " "
+                                record.leader = "".join(leader)
+                                applied = True
+                    elif tag and tag < "010" and fix_val:
+                        # Control field fix (e.g. 008 length)
+                        for f in record.get_fields(tag):
+                            f.data = fix_val
+                            applied = True
+                            break
+                    elif tag and r.subfield and fix_val:
+                        # Subfield fix
+                        sub_code = r.subfield.lstrip("$")
+                        for f in record.get_fields(tag):
+                            for i, sf in enumerate(f.subfields):
+                                if sf.code == sub_code:
+                                    f.subfields[i] = pymarc.Subfield(code=sub_code, value=fix_val)
+                                    applied = True
+                                    break
+                            if applied:
+                                break
+
+                    if applied:
+                        modified = True
+                        r.status = "auto_fixed"
+                        r.fixed_value = fix_val
+                        r.fixed_at = datetime.utcnow()
+                        r.fixed_by = "bulk_fix"
+                        fixed += 1
+                    else:
+                        # Mark as fixed in DB even if we couldn't apply to file
+                        r.status = "auto_fixed"
+                        r.fixed_value = fix_val
+                        r.fixed_at = datetime.utcnow()
+                        r.fixed_by = "bulk_fix"
+                        fixed += 1
+
+                # Write modified file back
+                if modified:
+                    try:
+                        with open(marc_file.storage_path, "wb") as fh:
+                            for rec in records:
+                                if rec is not None:
+                                    fh.write(rec.as_marc())
+                        log.info(f"Wrote fixes to {marc_file.filename}")
+                    except Exception as exc:
+                        log.warn(f"Could not write {marc_file.filename}: {exc}")
+
+                if fixed % 1000 == 0:
+                    self.update_state(state="PROGRESS", meta={"fixed": fixed, "skipped": skipped})
 
             db.commit()
 

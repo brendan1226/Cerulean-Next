@@ -2060,7 +2060,9 @@ async function _renderFieldMappingUI(el) {
       <!-- Right: Field Mapper -->
       <div class="s2-panel">
         <div class="s2-panel-header">
-          Field Mapper
+          <span style="display:flex;align-items:center;gap:6px">
+            <span class="badge badge-cerulean" style="font-size:9px">MARC</span> Field Mapper
+          </span>
           <button class="btn btn-ghost btn-sm" onclick="openNewMapModal()">+ Add</button>
         </div>
         <div class="s2-panel-body" id="s2-right">
@@ -2142,7 +2144,14 @@ async function s2SelectFile(file) {
   const recNav = document.getElementById('s2-record-nav');
   if (recNav) recNav.style.display = '';
   const rightHeader = document.querySelector('.s2-panel:nth-child(3) .s2-panel-header');
-  if (rightHeader) rightHeader.innerHTML = 'Field Mapper <button class="btn btn-ghost btn-sm" onclick="openNewMapModal()">+ Add</button>';
+  if (rightHeader) rightHeader.innerHTML = `
+    <span style="display:flex;align-items:center;gap:6px">
+      <span class="badge badge-cerulean" style="font-size:9px">MARC</span> Field Mapper
+    </span>
+    <button class="btn btn-ghost btn-sm" onclick="openNewMapModal()">+ Add</button>`;
+
+  // Reload MARC field maps in the right panel
+  s2LoadMaps();
 
   // Load tag frequency
   try {
@@ -2180,7 +2189,11 @@ async function s2SelectItemsCsv(file) {
   if (recNav) recNav.style.display = 'none';
 
   const rightHeader = document.querySelector('.s2-panel:nth-child(3) .s2-panel-header');
-  if (rightHeader) rightHeader.innerHTML = `<span>Item Column Mapping</span><button class="btn btn-ghost btn-sm" onclick="openNewItemMapModal()">+ Add</button>`;
+  if (rightHeader) rightHeader.innerHTML = `
+    <span style="display:flex;align-items:center;gap:6px">
+      <span class="badge badge-amber" style="font-size:9px">ITEMS</span> Column Mapping
+    </span>
+    <button class="btn btn-ghost btn-sm" onclick="openNewItemMapModal()">+ Add</button>`;
 
   s2.itemsCsvTab = 'columns';
   s2RenderItemsCsvCenter();
@@ -3876,6 +3889,133 @@ async function doLogin() {
 // ══════════════════════════════════════════════════════════════════
 let _q3ScanTaskId = null;
 
+// MARC21 Leader position reference (Library of Congress)
+const MARC_LEADER_REF = {
+  5: { label: 'Record status', values: {
+    'a': 'Increase in encoding level',
+    'c': 'Corrected or revised',
+    'd': 'Deleted',
+    'n': 'New',
+    'p': 'Increase from prepublication level',
+  }},
+  6: { label: 'Type of record', values: {
+    'a': 'Language material',
+    'c': 'Notated music',
+    'd': 'Manuscript notated music',
+    'e': 'Cartographic material',
+    'f': 'Manuscript cartographic material',
+    'g': 'Projected medium',
+    'i': 'Nonmusical sound recording',
+    'j': 'Musical sound recording',
+    'k': 'Two-dimensional nonprojectable graphic',
+    'm': 'Computer file',
+    'n': 'Special instructional material',
+    'o': 'Kit',
+    'p': 'Mixed materials',
+    'r': 'Three-dimensional artifact',
+    't': 'Manuscript language material',
+  }},
+  7: { label: 'Bibliographic level', values: {
+    'a': 'Monographic component part',
+    'b': 'Serial component part',
+    'c': 'Collection',
+    'd': 'Subunit',
+    'i': 'Integrating resource',
+    'm': 'Monograph/Item',
+    's': 'Serial',
+  }},
+  8: { label: 'Type of control', values: {
+    ' ': 'No specified type',
+    'a': 'Archival',
+  }},
+  9: { label: 'Character coding scheme', values: {
+    ' ': 'MARC-8',
+    'a': 'UCS/Unicode',
+  }},
+  17: { label: 'Encoding level', values: {
+    ' ': 'Full level',
+    '1': 'Full level, material not examined',
+    '2': 'Less-than-full level, material not examined',
+    '3': 'Abbreviated level',
+    '4': 'Core level',
+    '5': 'Partial (preliminary) level',
+    '7': 'Minimal level',
+    '8': 'Prepublication level',
+    'u': 'Unknown',
+    'z': 'Not applicable',
+  }},
+  18: { label: 'Descriptive cataloging form', values: {
+    ' ': 'Non-ISBD',
+    'a': 'AACR2',
+    'c': 'ISBD punctuation omitted',
+    'i': 'ISBD punctuation included',
+    'n': 'Not applicable',
+    'u': 'Unknown',
+  }},
+  19: { label: 'Multipart resource record level', values: {
+    ' ': 'Not specified or not applicable',
+    'a': 'Set',
+    'b': 'Part with independent title',
+    'c': 'Part with dependent title',
+  }},
+};
+
+function leaderDropdownHtml(position, currentValue, recordIndex) {
+  const ref = MARC_LEADER_REF[position];
+  if (!ref) return '';
+  const opts = Object.entries(ref.values).map(([val, desc]) => {
+    const display = val === ' ' ? '(space)' : val;
+    const selected = val === currentValue ? 'selected' : '';
+    return `<option value="${esc(val)}" ${selected}>${display} — ${esc(desc)}</option>`;
+  }).join('');
+  return `<select class="form-select" style="font-size:11px;padding:2px 4px;height:22px;width:auto;min-width:200px;display:inline-block;margin:0 4px"
+    onchange="applyLeaderEdit(${position}, this.value, ${recordIndex})">
+    <option value="">— select —</option>
+    ${opts}
+  </select>`;
+}
+
+function showLeaderPosEditor(position, currentValue, recordIndex, spanEl) {
+  const ref = MARC_LEADER_REF[position];
+  if (!ref) return;
+  const editorEl = document.getElementById('ldr-pos-editor');
+  if (!editorEl) return;
+  const opts = Object.entries(ref.values).map(([val, desc]) => {
+    const display = val === ' ' ? '(space)' : val;
+    const selected = val === currentValue ? 'selected' : '';
+    return `<option value="${esc(val)}" ${selected}>${display} — ${esc(desc)}</option>`;
+  }).join('');
+  editorEl.innerHTML = `
+    <div style="padding:8px;background:var(--bg-secondary);border:1px solid var(--cerulean);border-radius:6px;font-size:11px">
+      <div style="font-weight:600;margin-bottom:4px;color:var(--cerulean)">Position ${position}: ${esc(ref.label)}</div>
+      <div style="margin-bottom:4px">Current: <span class="mono" style="font-weight:700">${currentValue === ' ' ? '(space)' : esc(currentValue)}</span></div>
+      <select class="form-select" style="font-size:11px;height:24px;margin-bottom:6px" onchange="applyLeaderEdit(${position}, this.value, ${recordIndex})">
+        <option value="">— choose new value —</option>
+        ${opts}
+      </select>
+      <div style="display:flex;gap:4px">
+        <input class="form-input mono" style="font-size:11px;width:40px;height:22px;padding:2px 4px;text-align:center" maxlength="1" placeholder="${esc(currentValue)}" id="ldr-manual-input">
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="const v=document.getElementById('ldr-manual-input').value;if(v)applyLeaderEdit(${position},v,${recordIndex})">Set Manual</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="document.getElementById('ldr-pos-editor').innerHTML=''">Close</button>
+      </div>
+    </div>`;
+}
+
+async function applyLeaderEdit(position, newChar, recordIndex) {
+  if (!newChar) return;
+  const p = state.currentProject;
+  const fid = window._q3CurrentFileId;
+  try {
+    let url = `/projects/${p.id}/quality/record/${recordIndex}/edit`;
+    if (fid) url += `?file_id=${encodeURIComponent(fid)}`;
+    await window.api('POST', url, {
+      tag: 'LDR', position: position, new_value: newChar
+    });
+    toast(`Leader pos ${position} set to '${newChar}'`, 'success');
+    loadQ3Record(recordIndex);
+  } catch(e) { toast('Edit failed: ' + e.message, 'error'); }
+}
+
 window.renderStage3_Quality = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
@@ -3906,14 +4046,34 @@ async function renderQ3Summary() {
   if (!wrap) return;
   wrap.innerHTML = '<div class="spinner"></div>';
 
+  let marcFiles = [];
+  try {
+    const allFiles = await window.api('GET', `/projects/${p.id}/files`);
+    marcFiles = (allFiles || []).filter(f => f.file_category === 'marc' && f.status === 'indexed');
+  } catch(e) {}
+
   let summary = null;
   try { summary = await window.api('GET', `/projects/${p.id}/quality/summary?scan_type=bib`); } catch(e) {}
 
   const hasScan = summary && summary.total_issues > 0;
   const cats = summary?.categories || [];
-  const sevBadge = { error: 'badge-red', warning: 'badge-amber', info: 'badge-dim' };
+
+  const fileListHtml = marcFiles.length ? `
+    <div class="card" style="max-width:480px;margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Select Files to Scan</span></div>
+      <div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;max-height:160px;overflow:auto;background:var(--bg-secondary)">
+        ${marcFiles.map(f => `
+          <label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;cursor:pointer">
+            <input type="checkbox" class="q3-file-check" value="${esc(f.id)}" checked>
+            <span class="mono">${esc(f.filename)}</span>
+            <span class="text-dim" style="margin-left:auto;font-size:11px">${f.record_count != null ? f.record_count.toLocaleString() + ' records' : ''}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>` : '';
 
   wrap.innerHTML = `
+    ${fileListHtml}
     <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="runQualityScan()">Run Quality Scan</button>
       <button class="btn btn-ghost" onclick="clearQualityResults()">Clear Results</button>
@@ -3930,7 +4090,7 @@ async function renderQ3Summary() {
 
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
       ${cats.map(c => `
-        <div class="card" style="cursor:pointer" onclick="switchQ3Tab('issues');q3FilterCategory='${esc(c.category)}';renderQ3Issues()">
+        <div class="card" style="cursor:pointer" onclick="q3FilterCategory='${esc(c.category)}';switchQ3Tab('issues', document.querySelectorAll('.tab-btn')[1])">
           <div class="card-header" style="padding:12px">
             <span class="card-title" style="font-size:13px">${esc(c.category.replace('_', ' '))}</span>
             <span class="badge ${c.errors > 0 ? 'badge-red' : c.warnings > 0 ? 'badge-amber' : 'badge-green'}">${c.total}</span>
@@ -3967,7 +4127,6 @@ async function renderQ3Issues() {
   if (!wrap) return;
   wrap.innerHTML = '<div class="spinner"></div>';
 
-  // Build query
   let url = `/projects/${p.id}/quality/issues?scan_type=bib&limit=100`;
   if (q3FilterCategory) url += `&category=${encodeURIComponent(q3FilterCategory)}`;
 
@@ -3982,39 +4141,236 @@ async function renderQ3Issues() {
     const statusBadge = { unresolved: 'badge-amber', auto_fixed: 'badge-green', manually_fixed: 'badge-green', ignored: 'badge-dim' };
 
     wrap.innerHTML = `
-      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
-        <span class="text-dim" style="font-size:12px">${r.total.toLocaleString()} issue(s)${q3FilterCategory ? ` in <strong>${esc(q3FilterCategory)}</strong>` : ''}</span>
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+        <span class="text-dim" style="font-size:12px">${r.total.toLocaleString()} issue(s)${q3FilterCategory ? ` in <strong>${esc(q3FilterCategory.replace('_',' '))}</strong>` : ''}</span>
         ${q3FilterCategory ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="q3FilterCategory=null;renderQ3Issues()">Clear Filter</button>` : ''}
       </div>
-      <div style="max-height:calc(100vh - 300px);overflow:auto">
-        <table class="data-table" style="font-size:11px;width:100%">
-          <thead><tr>
-            <th>Record</th><th>Category</th><th>Severity</th><th>Tag</th><th>Description</th><th>Status</th><th></th>
-          </tr></thead>
-          <tbody>
-            ${r.issues.map(iss => `<tr>
-              <td class="mono">${iss.record_index}</td>
-              <td>${esc(iss.category)}</td>
-              <td><span class="badge ${sevBadge[iss.severity] || 'badge-dim'}">${esc(iss.severity)}</span></td>
-              <td class="mono">${esc(iss.tag || '')}${iss.subfield ? esc(iss.subfield) : ''}</td>
-              <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(iss.description)}">${esc(iss.description)}</td>
-              <td><span class="badge ${statusBadge[iss.status] || 'badge-dim'}">${esc(iss.status)}</span></td>
-              <td style="white-space:nowrap">
-                ${iss.status === 'unresolved' ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="ignoreIssueQ3('${esc(iss.id)}')">Ignore</button>` : ''}
-              </td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div style="max-height:calc(100vh - 280px);overflow:auto">
+          <table class="data-table" style="font-size:11px;width:100%">
+            <thead><tr>
+              <th>Rec#</th><th>Tag</th><th>Severity</th><th>Description</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${r.issues.map(iss => `<tr style="cursor:pointer" onclick="loadQ3Record(${iss.record_index}, '${esc(iss.file_id || '')}')" class="${iss.status !== 'unresolved' ? 'text-dim' : ''}">
+                <td class="mono">${iss.record_index}</td>
+                <td class="mono">${esc(iss.tag || '')}${iss.subfield ? esc(iss.subfield) : ''}</td>
+                <td><span class="badge ${sevBadge[iss.severity] || 'badge-dim'}" style="font-size:9px">${esc(iss.severity)}</span></td>
+                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(iss.description)}">${esc(iss.description)}</td>
+                <td style="white-space:nowrap">
+                  ${iss.status === 'unresolved' ? `<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 4px" onclick="event.stopPropagation();ignoreIssueQ3('${esc(iss.id)}')">Ignore</button>` : `<span class="badge ${statusBadge[iss.status]} " style="font-size:8px">${esc(iss.status)}</span>`}
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div id="q3-record-detail" style="position:sticky;top:0">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Record Detail</span></div>
+            <div class="empty-state" style="padding:30px">
+              <div class="text-dim" style="font-size:12px">Click a row to inspect the full MARC record</div>
+            </div>
+          </div>
+        </div>
       </div>`;
   } catch(e) {
     wrap.innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`;
   }
 }
 
-async function runQualityScan() {
+async function loadQ3Record(recordIndex, fileId) {
+  const p = state.currentProject;
+  const detail = document.getElementById('q3-record-detail');
+  if (!detail) return;
+  detail.innerHTML = '<div class="spinner" style="padding:20px"></div>';
+  window._q3CurrentFileId = fileId || null;
+
+  try {
+    let url = `/projects/${p.id}/quality/record/${recordIndex}`;
+    if (fileId) url += `?file_id=${encodeURIComponent(fileId)}`;
+    const r = await window.api('GET', url);
+    if (!r || !r.record) { detail.innerHTML = '<div class="text-dim">Record not found.</div>'; return; }
+
+    const rec = r.record;
+    const issueTags = r.issue_tags || {};
+    const issues = r.issues || [];
+
+    // Highlight rows in the issues list
+    document.querySelectorAll('#q3-tab table tbody tr').forEach(tr => {
+      tr.style.background = '';
+    });
+
+    // Build record field display
+    const fields = rec.fields || [];
+    let fieldsHtml = '';
+
+    // Leader — interactive byte-by-byte display with dropdowns
+    const ldrIssues = issueTags['LDR'] || [];
+    const leader = rec.leader || '';
+    const ldrBg = ldrIssues.length ? (ldrIssues.some(i => i.severity === 'error') ? 'background:rgba(248,81,73,0.15)' : 'background:rgba(245,166,35,0.12)') : '';
+
+    // Build leader byte display with interactive positions
+    let ldrBytes = '';
+    for (let pos = 0; pos < leader.length; pos++) {
+      const ch = leader[pos];
+      const ref = MARC_LEADER_REF[pos];
+      const hasIssueAtPos = ldrIssues.some(i => i.description && i.description.includes(`position ${pos}`));
+      const style = hasIssueAtPos ? 'color:var(--red);font-weight:700;text-decoration:underline' : ref ? 'color:var(--cerulean);cursor:pointer' : 'color:var(--text-dim)';
+      const title = ref ? `Pos ${pos}: ${ref.label} — '${ch === ' ' ? '(space)' : ch}'` : `Pos ${pos}`;
+      if (ref) {
+        ldrBytes += `<span style="${style}" title="${esc(title)}" onclick="showLeaderPosEditor(${pos}, '${esc(ch)}', ${recordIndex}, this)">${ch === ' ' ? '·' : esc(ch)}</span>`;
+      } else {
+        ldrBytes += `<span style="${style}" title="${esc(title)}">${ch === ' ' ? '·' : esc(ch)}</span>`;
+      }
+    }
+
+    fieldsHtml += `<div style="padding:6px;border-radius:3px;${ldrBg};margin-bottom:4px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="color:var(--accent);font-weight:600">LDR</span>
+        <span class="mono" style="font-size:13px;letter-spacing:1px">${ldrBytes}</span>
+      </div>
+      ${ldrIssues.length ? `<div style="margin-top:4px">${ldrIssues.map(i => {
+        // Extract position number from description
+        const posMatch = i.description.match(/position (\d+)/);
+        const pos = posMatch ? parseInt(posMatch[1]) : null;
+        return `<div style="font-size:10px;color:var(--${i.severity === 'error' ? 'red' : 'amber'});display:flex;align-items:center;gap:4px;margin-top:3px">
+          <span>↳ ${esc(i.description)}</span>
+          ${pos !== null && MARC_LEADER_REF[pos] ? leaderDropdownHtml(pos, leader[pos], recordIndex) : ''}
+          ${i.suggested_fix && !MARC_LEADER_REF[pos !== null ? pos : -1] ? `<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:0 4px;color:var(--green)" onclick="applyQ3Fix('${esc(i.id)}', 'LDR', null, '${esc(i.suggested_fix)}', ${recordIndex})">Apply: '${esc(i.suggested_fix)}'</button>` : ''}
+        </div>`;
+      }).join('')}</div>` : ''}
+      <div id="ldr-pos-editor" style="margin-top:4px"></div>
+    </div>`;
+
+    for (const f of fields) {
+      const tagIssues = issueTags[f.tag] || [];
+      const hasIssue = tagIssues.length > 0;
+      const bg = hasIssue ? (tagIssues.some(i => i.severity === 'error') ? 'background:rgba(248,81,73,0.15)' : 'background:rgba(245,166,35,0.12)') : '';
+
+      if (f.data !== undefined) {
+        // Control field — clickable to edit
+        fieldsHtml += `<div style="padding:3px 6px;border-radius:3px;${bg}">
+          <span style="color:var(--accent);font-weight:600">${esc(f.tag)}</span>
+          <span class="mono q3-editable" style="font-size:11px;cursor:pointer;border-bottom:1px dashed var(--border-mid)" data-tag="${esc(f.tag)}" data-sub="" data-rec="${recordIndex}" title="Click to edit">${esc(f.data)}</span>
+          ${tagIssues.map(i => `<div style="font-size:10px;color:var(--${i.severity === 'error' ? 'red' : 'amber'});margin-top:2px;display:flex;align-items:center;gap:4px">
+            <span>↳ ${esc(i.description)}</span>
+            ${i.suggested_fix ? `<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:0 4px;color:var(--green)" onclick="applyQ3Fix('${esc(i.id)}', '${esc(f.tag)}', null, '${esc(i.suggested_fix)}', ${recordIndex})">Apply: '${esc(i.suggested_fix.slice(0,30))}'</button>` : ''}
+          </div>`).join('')}
+        </div>`;
+      } else {
+        // Data field — subfields clickable to edit
+        const subs = (f.subfields || []).map(s => {
+          const sfKey = `$${s.code}`;
+          const sfIssue = tagIssues.find(i => i.subfield === sfKey);
+          const sfStyle = sfIssue ? 'background:rgba(245,166,35,0.2);border-radius:2px;padding:0 2px' : '';
+          return `<span style="${sfStyle}"><span style="color:var(--text-secondary)">$${esc(s.code)}</span> <span class="mono q3-editable" style="font-size:11px;cursor:pointer;border-bottom:1px dashed var(--border-mid)" data-tag="${esc(f.tag)}" data-sub="$${esc(s.code)}" data-rec="${recordIndex}" title="Click to edit">${esc(s.value)}</span></span>`;
+        }).join(' ');
+        fieldsHtml += `<div style="padding:3px 6px;border-radius:3px;${bg}">
+          <span style="color:var(--accent);font-weight:600">${esc(f.tag)}</span> <span class="text-dim">${esc(f.ind1 || ' ')}${esc(f.ind2 || ' ')}</span> ${subs}
+          ${tagIssues.map(i => `<div style="font-size:10px;color:var(--${i.severity === 'error' ? 'red' : 'amber'});margin-top:2px;display:flex;align-items:center;gap:4px">
+            <span>↳ ${esc(i.description)}</span>
+            ${i.suggested_fix ? `<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:0 4px;color:var(--green)" onclick="applyQ3Fix('${esc(i.id)}', '${esc(f.tag)}', '${esc(i.subfield || '')}', '${esc(i.suggested_fix)}', ${recordIndex})">Apply Fix</button>` : ''}
+          </div>`).join('')}
+        </div>`;
+      }
+    }
+
+    detail.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Record ${recordIndex}</span>
+          <span class="text-dim" style="font-size:11px">${r.total_issues} issue(s)</span>
+        </div>
+        <div style="font-size:12px;margin-bottom:8px;color:var(--text-secondary)">
+          Title: <strong>${esc(rec.title || '—')}</strong>
+        </div>
+        <div style="max-height:calc(100vh - 350px);overflow:auto;font-family:var(--font-mono);font-size:12px;line-height:1.6">
+          ${fieldsHtml}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          ${issues.filter(i => i.status === 'unresolved').length ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="ignoreAllRecordIssues(${recordIndex})">Ignore All for This Record</button>` : ''}
+        </div>
+      </div>`;
+
+    // Attach click handlers for editable fields via delegation
+    detail.querySelectorAll('.q3-editable').forEach(span => {
+      span.addEventListener('click', function() {
+        const tag = this.dataset.tag;
+        const sub = this.dataset.sub || null;
+        const recIdx = parseInt(this.dataset.rec);
+        const oldVal = this.textContent;
+        editQ3Field(this, tag, sub, oldVal, recIdx);
+      });
+    });
+
+  } catch(e) {
+    detail.innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`;
+  }
+}
+
+async function editQ3Field(spanEl, tag, subfield, oldValue, recordIndex) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = oldValue;
+  input.className = 'form-input mono';
+  input.style.cssText = 'font-size:11px;padding:2px 6px;width:100%;height:20px';
+  let committed = false;
+  const commit = async () => {
+    if (committed) return;
+    committed = true;
+    const newValue = input.value;
+    if (newValue !== oldValue) {
+      const p = state.currentProject;
+      const fid = window._q3CurrentFileId;
+      try {
+        let editUrl = `/projects/${p.id}/quality/record/${recordIndex}/edit`;
+        if (fid) editUrl += `?file_id=${encodeURIComponent(fid)}`;
+        await window.api('POST', editUrl, {
+          tag, subfield, old_value: oldValue, new_value: newValue
+        });
+        toast('Field saved', 'success');
+        loadQ3Record(recordIndex);
+      } catch(e) { toast('Save failed: ' + e.message, 'error'); if (input.parentNode) input.replaceWith(spanEl); }
+    } else {
+      if (input.parentNode) input.replaceWith(spanEl);
+    }
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') { committed = true; if (input.parentNode) input.replaceWith(spanEl); } });
+  input.addEventListener('blur', commit);
+  spanEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+async function applyQ3Fix(issueId, tag, subfield, fixValue, recordIndex) {
+  const p = state.currentProject;
+  const fid = window._q3CurrentFileId;
+  try {
+    let fixUrl = `/projects/${p.id}/quality/record/${recordIndex}/edit`;
+    if (fid) fixUrl += `?file_id=${encodeURIComponent(fid)}`;
+    await window.api('POST', fixUrl, {
+      tag, subfield, new_value: fixValue
+    });
+    toast('Fix applied', 'success');
+    loadQ3Record(recordIndex);
+  } catch(e) { toast('Fix failed: ' + e.message, 'error'); }
+}
+
+async function ignoreAllRecordIssues(recordIndex) {
   const p = state.currentProject;
   try {
-    const r = await window.api('POST', `/projects/${p.id}/quality/scan`, { scan_type: 'bib' });
+    const r = await window.api('POST', `/projects/${p.id}/quality/ignore-record/${recordIndex}`);
+    toast(`${r.ignored_count} issues ignored`, 'info');
+    loadQ3Record(recordIndex, window._q3CurrentFileId);
+  } catch(e) { console.error(e); }
+}
+
+async function runQualityScan() {
+  const p = state.currentProject;
+  const fileIds = [...document.querySelectorAll('.q3-file-check:checked')].map(cb => cb.value);
+  if (!fileIds.length) { toast('Select at least one file to scan', 'warn'); return; }
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/quality/scan`, { scan_type: 'bib', file_ids: fileIds });
     if (!r) return;
     _q3ScanTaskId = r.task_id;
     document.getElementById('q3-scan-status').innerHTML = renderProgressBar({ label: 'Scanning records…' });
@@ -4051,6 +4407,40 @@ async function approveQualityPass() {
 
 async function bulkFixCategory(category) {
   const p = state.currentProject;
+  // Show preview modal first
+  try {
+    const preview = await window.api('GET', `/projects/${p.id}/quality/bulk-fix/preview?category=${encodeURIComponent(category)}&sample_size=5`);
+    if (!preview) return;
+
+    let samplesHtml = '';
+    if (preview.samples.length) {
+      samplesHtml = `<table class="data-table" style="font-size:11px;width:100%;margin-top:8px">
+        <thead><tr><th>Record</th><th>Tag</th><th>Before</th><th>After</th></tr></thead>
+        <tbody>${preview.samples.map(s => `<tr>
+          <td class="mono">${s.record_index}</td>
+          <td class="mono">${esc(s.tag || '')}${s.subfield || ''}</td>
+          <td style="background:rgba(248,81,73,0.1);font-family:var(--font-mono);font-size:11px">${esc((s.before||'').slice(0, 60))}</td>
+          <td style="background:rgba(34,197,94,0.1);font-family:var(--font-mono);font-size:11px">${esc((s.after||'').slice(0, 60))}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+    }
+
+    openModal(`
+      <div class="modal-title">Bulk Fix Preview — ${esc(category.replace('_', ' '))}</div>
+      <div style="font-size:12px;margin-bottom:8px">
+        <strong>${preview.total_fixable.toLocaleString()}</strong> issues can be auto-fixed out of <strong>${preview.total_unresolved.toLocaleString()}</strong> unresolved.
+      </div>
+      ${preview.samples.length ? `<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Sample changes (${preview.samples.length} of ${preview.total_fixable.toLocaleString()}):</div>${samplesHtml}` : '<div class="text-dim" style="font-size:12px">No auto-fixable issues in this category.</div>'}
+      <div class="modal-footer" style="margin-top:16px">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        ${preview.total_fixable > 0 ? `<button class="btn btn-green" onclick="confirmBulkFix('${esc(category)}')">Apply ${preview.total_fixable.toLocaleString()} Fixes</button>` : ''}
+      </div>`);
+  } catch(e) { console.error(e); }
+}
+
+async function confirmBulkFix(category) {
+  closeModal();
+  const p = state.currentProject;
   try {
     const r = await window.api('POST', `/projects/${p.id}/quality/bulk-fix`, { category });
     if (r) {
@@ -4073,8 +4463,9 @@ async function ignoreCategoryQ3(category) {
 async function ignoreIssueQ3(issueId) {
   const p = state.currentProject;
   try {
-    await window.api('POST', `/projects/${p.id}/quality/ignore/${issueId}`);
-    renderQ3Issues();
+    const iss = await window.api('POST', `/projects/${p.id}/quality/ignore/${issueId}`);
+    // Update the row in the table without full re-render
+    toast('Issue ignored', 'info');
   } catch(e) { console.error(e); }
 }
 

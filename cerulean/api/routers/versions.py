@@ -190,8 +190,7 @@ async def start_version_diff(
     await db.flush()
 
     task = compute_version_diff_task.apply_async(
-        args=[project_id, body.version_a, body.version_b],
-        kwargs={"data_type": body.data_type},
+        args=[project_id, body.data_type, body.version_a, body.version_b],
         queue="analyze",
     )
 

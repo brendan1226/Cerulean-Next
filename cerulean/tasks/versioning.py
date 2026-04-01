@@ -99,6 +99,7 @@ def create_version_snapshot_task(
     project_id: str,
     data_type: str,
     source_path: str | None = None,
+    label: str | None = None,
 ) -> dict:
     """
     Copy the current output file to a versioned snapshot and record metadata.
@@ -174,6 +175,7 @@ def create_version_snapshot_task(
             project_id=project_id,
             data_type=data_type,
             version_number=version_number,
+            label=label,
             snapshot_path=str(snapshot_path),
             record_count=record_count,
             mapping_snapshot=mapping_snapshot,
