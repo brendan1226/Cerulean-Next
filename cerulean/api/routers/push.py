@@ -39,6 +39,7 @@ from cerulean.models import (
     ReconciliationScanResult,
 )
 from cerulean.schemas.push import (
+    ItemTypePushItem,
     KohaRefDataResponse,
     LibraryPushItem,
     NeededRefDataResponse,
@@ -46,6 +47,9 @@ from cerulean.schemas.push import (
     PatronCategoryPushItem,
     PreflightRequest,
     PreflightResponse,
+    PushItemTypeResult,
+    PushItemTypesRequest,
+    PushItemTypesResponse,
     PushLibrariesRequest,
     PushLibrariesResponse,
     PushLibraryResult,
@@ -628,6 +632,122 @@ async def push_patron_categories(
 
     return PushPatronCategoriesResponse(
         total=len(body.categories),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+@router.post("/{project_id}/push/item-types", response_model=PushItemTypesResponse)
+async def push_item_types(
+    project_id: str,
+    body: PushItemTypesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Push missing item types to Koha.
+
+    Tries REST API first (POST /api/v1/item_types).
+    Falls back to SQL via docker exec koha-mysql if REST returns 404.
+    """
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    base_url, headers = _koha_headers(project)
+    results = []
+    success_count = 0
+    failed_count = 0
+    use_sql = False
+
+    # Try REST API first with the first item type
+    if body.item_types:
+        first = body.item_types[0]
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            try:
+                resp = await client.post(
+                    f"{base_url}/api/v1/item_types",
+                    json={
+                        "item_type_id": first.item_type_id,
+                        "description": first.description,
+                    },
+                    headers=headers,
+                )
+                if resp.status_code == 404:
+                    use_sql = True  # endpoint doesn't exist, fall back to SQL
+                elif resp.status_code < 300:
+                    success_count += 1
+                    results.append(PushItemTypeResult(item_type_id=first.item_type_id, success=True))
+                else:
+                    failed_count += 1
+                    results.append(PushItemTypeResult(
+                        item_type_id=first.item_type_id, success=False,
+                        error=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    ))
+            except httpx.HTTPError:
+                use_sql = True
+
+    if use_sql:
+        # Fall back to SQL via Celery task (has docker CLI / DB access)
+        from cerulean.tasks.push import push_item_types_sql_task
+        item_types_data = [
+            {"item_type_id": it.item_type_id, "description": it.description}
+            for it in body.item_types
+        ]
+        celery_result = push_item_types_sql_task.apply_async(
+            args=[project_id, item_types_data],
+            queue="push",
+        )
+        try:
+            task_result = celery_result.get(timeout=60)
+        except Exception as exc:
+            raise HTTPException(500, detail={
+                "error": "TASK_FAILED",
+                "message": f"SQL push failed: {exc}",
+            })
+
+        success_count = task_result.get("success_count", 0)
+        failed_count = task_result.get("failed_count", 0)
+        results = [
+            PushItemTypeResult(
+                item_type_id=r["item_type_id"], success=r["success"],
+                error=r.get("error"),
+            )
+            for r in task_result.get("results", [])
+        ]
+    elif len(body.item_types) > 1:
+        # REST API worked for the first one, continue with the rest
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            for it in body.item_types[1:]:
+                try:
+                    resp = await client.post(
+                        f"{base_url}/api/v1/item_types",
+                        json={
+                            "item_type_id": it.item_type_id,
+                            "description": it.description,
+                        },
+                        headers=headers,
+                    )
+                    if resp.status_code < 300:
+                        success_count += 1
+                        results.append(PushItemTypeResult(item_type_id=it.item_type_id, success=True))
+                    else:
+                        failed_count += 1
+                        results.append(PushItemTypeResult(
+                            item_type_id=it.item_type_id, success=False,
+                            error=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                        ))
+                except httpx.HTTPError as exc:
+                    failed_count += 1
+                    results.append(PushItemTypeResult(
+                        item_type_id=it.item_type_id, success=False, error=str(exc),
+                    ))
+
+    method = "SQL (docker exec)" if use_sql else "REST API"
+    await audit_log(db, project_id, stage=7, level="info", tag="[setup]",
+                    message=f"Pushed {success_count}/{len(body.item_types)} item types to Koha via {method}")
+
+    return PushItemTypesResponse(
+        total=len(body.item_types),
         success_count=success_count,
         failed_count=failed_count,
         results=results,

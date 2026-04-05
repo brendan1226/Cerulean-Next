@@ -1189,6 +1189,72 @@ def push_patron_categories_sql_task(self, project_id: str, categories: list[dict
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# ITEM TYPES (ITYPES) SQL PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_item_types_sql_task",
+    max_retries=0,
+    queue="push",
+)
+def push_item_types_sql_task(self, project_id: str, item_types: list[dict]) -> dict:
+    """Insert item types into Koha MariaDB via direct SQL connection.
+
+    Koha REST API does not support POST /item_types, so we use SQL directly.
+    """
+    log = AuditLogger(project_id=project_id, stage=7, tag="[setup]")
+    log.info(f"Pushing {len(item_types)} item types via SQL")
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    try:
+        conn = _koha_mysql_conn(project_id)
+    except Exception as exc:
+        log.error(f"Failed to connect to Koha DB: {exc}")
+        return {
+            "success_count": 0,
+            "failed_count": len(item_types),
+            "results": [
+                {"item_type_id": it["item_type_id"], "success": False, "error": f"DB connection failed: {exc}"}
+                for it in item_types
+            ],
+        }
+
+    try:
+        cursor = conn.cursor()
+        for it in item_types:
+            itype = it["item_type_id"]
+            desc = it.get("description", itype)
+            try:
+                cursor.execute(
+                    "INSERT IGNORE INTO itemtypes "
+                    "(itemtype, description) "
+                    "VALUES (%s, %s)",
+                    (itype, desc),
+                )
+                conn.commit()
+                success_count += 1
+                results.append({"item_type_id": itype, "success": True})
+            except Exception as exc:
+                conn.rollback()
+                failed_count += 1
+                results.append({"item_type_id": itype, "success": False, "error": str(exc)[:200]})
+    finally:
+        conn.close()
+
+    log.info(f"Item types SQL push: {success_count} created, {failed_count} failed")
+    return {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ELASTICSEARCH REINDEX TASK
 # ══════════════════════════════════════════════════════════════════════════
 

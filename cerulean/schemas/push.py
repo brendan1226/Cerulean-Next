@@ -146,3 +146,27 @@ class PushPatronCategoriesResponse(BaseModel):
     success_count: int
     failed_count: int
     results: list[PushPatronCategoryResult]
+
+
+# ── Item Types Push ─────────────────────────────────────────────────
+
+class ItemTypePushItem(BaseModel):
+    item_type_id: str
+    description: str
+
+
+class PushItemTypesRequest(BaseModel):
+    item_types: list[ItemTypePushItem]
+
+
+class PushItemTypeResult(BaseModel):
+    item_type_id: str
+    success: bool
+    error: str | None = None
+
+
+class PushItemTypesResponse(BaseModel):
+    total: int
+    success_count: int
+    failed_count: int
+    results: list[PushItemTypeResult]
