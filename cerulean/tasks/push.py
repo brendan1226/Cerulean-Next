@@ -645,6 +645,1028 @@ def push_bulkmarcimport_task(
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# MIGRATION MODE — stop/start Koha daemons
+# ══════════════════════════════════════════════════════════════════════════
+#
+# During bulk MARC import + reindex, Koha's background daemons compete for
+# CPU, RAM, and ES resources.  Migration mode stops non-essential daemons
+# before the push and restarts them after.
+#
+# Daemons stopped:
+#   koha-es-indexer      — incremental ES indexer (biggest offender)
+#   koha-indexer         — Zebra indexer daemon
+#   koha-zebra           — Zebra search server
+#   koha-sip             — SIP2 circulation protocol
+#   koha-z3950-responder — Z39.50 search responder
+#
+# Daemons kept running:
+#   koha-worker          — processes background jobs (FastMARCImport, TurboIndex)
+#   koha-plack           — serves REST API
+# ══════════════════════════════════════════════════════════════════════════
+
+# Daemons to stop/start.  Order matters: stop ES indexer first (biggest
+# resource hog), start it last.
+_MIGRATION_DAEMONS = [
+    "koha-es-indexer",
+    "koha-indexer",
+    "koha-zebra",
+    "koha-sip",
+    "koha-z3950-responder",
+]
+
+
+def _koha_container_for_project(project_id: str) -> str:
+    """Resolve the Koha Docker container name for a project.
+
+    Tries: SandboxInstance table → Docker API container list → fallback.
+    """
+    from cerulean.models import SandboxInstance
+
+    # Check SandboxInstance first (if user has configured one)
+    with Session(_engine) as db:
+        instance = db.query(SandboxInstance).filter_by(
+            project_id=project_id, status="running"
+        ).first()
+        if instance and instance.container_name:
+            return instance.container_name
+
+    # Auto-detect: query Docker API for containers with "koha" in the name
+    # that are on the kohanet network.
+    try:
+        transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
+        with httpx.Client(transport=transport, timeout=5.0) as client:
+            r = client.get("http://localhost/containers/json")
+            if r.status_code == 200:
+                for c in r.json():
+                    names = [n.lstrip("/") for n in c.get("Names", [])]
+                    for name in names:
+                        # Match containers like "kohadev-koha-1", "koha-koha-1", etc.
+                        # Exclude db, es, memcached, selenium, cerulean
+                        if "koha" in name.lower() and name.endswith("-1"):
+                            exclude = ("db-", "es-", "memcached-", "selenium-",
+                                       "cerulean-", "redis-", "postgres-")
+                            if not any(x in name.lower() for x in exclude):
+                                return name
+    except Exception:
+        pass
+
+    # Last resort fallback
+    return "kohadev-koha-1"
+
+
+def _run_koha_cmd(container: str, cmd: str, timeout: int = 30) -> tuple[int, str, str]:
+    """Run a command inside the Koha container via Docker Engine API.
+
+    Uses the mounted Docker socket (/var/run/docker.sock) directly via
+    HTTP, so we don't need the Docker CLI binary installed.
+
+    Returns (returncode, stdout, stderr).
+    """
+    import httpx
+    import json
+    import time
+
+    socket = "/var/run/docker.sock"
+    base = "http://localhost"
+
+    transport = httpx.HTTPTransport(uds=socket)
+    with httpx.Client(transport=transport, timeout=float(timeout)) as client:
+        # Step 1: Create an exec instance
+        create_resp = client.post(
+            f"{base}/containers/{container}/exec",
+            json={
+                "Cmd": ["bash", "-c", cmd],
+                "AttachStdout": True,
+                "AttachStderr": True,
+            },
+        )
+        if create_resp.status_code != 201:
+            return -1, "", f"exec create failed: {create_resp.status_code} {create_resp.text[:200]}"
+        exec_id = create_resp.json()["Id"]
+
+        # Step 2: Start the exec and capture output
+        start_resp = client.post(
+            f"{base}/exec/{exec_id}/start",
+            json={"Detach": False, "Tty": False},
+        )
+        # Output comes as a raw stream with Docker multiplexing headers.
+        # For simplicity, grab the raw text and strip control chars.
+        raw = start_resp.content
+        # Docker multiplexing: each frame has an 8-byte header.
+        # Byte 0: stream type (1=stdout, 2=stderr), bytes 4-7: frame size (big-endian).
+        stdout_parts = []
+        stderr_parts = []
+        pos = 0
+        while pos + 8 <= len(raw):
+            stream_type = raw[pos]
+            frame_size = int.from_bytes(raw[pos+4:pos+8], 'big')
+            if pos + 8 + frame_size > len(raw):
+                # Incomplete frame — grab what's left
+                frame_data = raw[pos+8:]
+            else:
+                frame_data = raw[pos+8:pos+8+frame_size]
+            if stream_type == 1:
+                stdout_parts.append(frame_data)
+            elif stream_type == 2:
+                stderr_parts.append(frame_data)
+            pos += 8 + frame_size
+
+        # Step 3: Inspect to get exit code
+        inspect_resp = client.get(f"{base}/exec/{exec_id}/json")
+        exit_code = inspect_resp.json().get("ExitCode", -1) if inspect_resp.status_code == 200 else -1
+
+        stdout = b"".join(stdout_parts).decode("utf-8", errors="replace").strip()
+        stderr = b"".join(stderr_parts).decode("utf-8", errors="replace").strip()
+        return exit_code, stdout, stderr
+
+
+def _detect_koha_instance(container: str) -> str:
+    """Auto-detect the Koha instance name inside the container.
+
+    Koha containers can have any instance name (kohadev, library, prod, etc.).
+    We detect it by listing /etc/koha/sites/ — there's usually exactly one
+    instance directory.  Falls back to 'kohadev' if detection fails.
+    """
+    rc, stdout, stderr = _run_koha_cmd(
+        container,
+        "ls /etc/koha/sites/ 2>/dev/null | head -1",
+    )
+    instance = stdout.strip()
+    if instance and instance != "." and "/" not in instance:
+        return instance
+    # Fallback: try koha-list
+    rc, stdout, stderr = _run_koha_cmd(container, "koha-list 2>/dev/null | head -1")
+    instance = stdout.strip()
+    if instance:
+        return instance
+    return "kohadev"
+
+
+def migration_mode_status(project_id: str) -> dict:
+    """Check which daemons are running/stopped in the Koha container."""
+    container = _koha_container_for_project(project_id)
+    instance = _detect_koha_instance(container)
+    statuses = {}
+    for daemon in _MIGRATION_DAEMONS:
+        # Check via pidfile (avoids pgrep self-match issues).
+        # Koha daemons write pidfiles to /var/run/koha/{instance}/.
+        # Verify the PID is actually alive with kill -0.
+        rc, stdout, stderr = _run_koha_cmd(
+            container,
+            (
+                f"PIDFILE=/var/run/koha/{instance}/{instance}-{daemon}.pid && "
+                f"if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE 2>/dev/null) 2>/dev/null; then "
+                f"echo running; else echo stopped; fi"
+            ),
+        )
+        statuses[daemon] = stdout if stdout in ("running", "stopped") else "unknown"
+    return {"container": container, "instance": instance, "daemons": statuses}
+
+
+def _daemon_cmd(action: str, daemon: str, instance: str, container: str) -> dict:
+    """Build and run the appropriate stop/start command for a Koha daemon."""
+    # Map daemon names to koha-* commands.  These commands are standard
+    # across all Koha installations (packages, KTD, manual installs).
+    cmd_map = {
+        "koha-es-indexer":       f"koha-es-indexer --{action} {instance}",
+        "koha-zebra":            f"koha-zebra --{action} {instance}",
+        "koha-sip":              f"koha-sip --{action} {instance}",
+        "koha-z3950-responder":  f"koha-z3950-responder --{action} {instance}",
+    }
+
+    if daemon in cmd_map:
+        cmd = f"{cmd_map[daemon]} 2>&1 || true"
+    elif daemon == "koha-indexer":
+        # The Zebra indexer daemon doesn't have a koha-* wrapper in all
+        # installations.  Use the daemon utility directly.
+        if action == "stop":
+            cmd = f"daemon --name={instance}-koha-indexer --stop 2>&1 || true"
+        else:
+            # Restart — find the script path dynamically
+            cmd = (
+                f"KOHA_HOME=$(xmlstarlet sel -t -v '//config/intranetdir' "
+                f"/etc/koha/sites/{instance}/koha-conf.xml 2>/dev/null || echo /usr/share/koha) && "
+                f"daemon --name={instance}-koha-indexer "
+                f"--errlog=/var/log/koha/{instance}/indexer-error.log "
+                f"--output=/var/log/koha/{instance}/indexer-output.log "
+                f"--pidfiles=/var/run/koha/{instance}/ "
+                f"--verbose=1 --respawn --delay=30 "
+                f"--user={instance}-koha.{instance}-koha "
+                f"-- $KOHA_HOME/misc/migration_tools/rebuild_zebra.pl -daemon -sleep 5 "
+                f"2>&1 || true"
+            )
+    else:
+        return {"action": action, "returncode": -1, "output": f"Unknown daemon: {daemon}"}
+
+    rc, stdout, stderr = _run_koha_cmd(container, cmd, timeout=30)
+    return {
+        "action": action,
+        "returncode": rc,
+        "output": (stdout or stderr)[:200],
+    }
+
+
+@celery_app.task(name="cerulean.tasks.push.migration_mode_status_task", queue="push")
+def migration_mode_status_task(project_id: str) -> dict:
+    """Celery wrapper for migration_mode_status (needs Docker socket)."""
+    return migration_mode_status(project_id)
+
+
+@celery_app.task(name="cerulean.tasks.push.migration_mode_enable_task", queue="push")
+def migration_mode_enable_task(project_id: str) -> dict:
+    """Celery wrapper for migration_mode_enable (needs Docker socket)."""
+    return migration_mode_enable(project_id)
+
+
+@celery_app.task(name="cerulean.tasks.push.migration_mode_disable_task", queue="push")
+def migration_mode_disable_task(project_id: str) -> dict:
+    """Celery wrapper for migration_mode_disable (needs Docker socket)."""
+    return migration_mode_disable(project_id)
+
+
+def migration_mode_enable(project_id: str) -> dict:
+    """Stop non-essential Koha daemons for migration."""
+    container = _koha_container_for_project(project_id)
+    instance = _detect_koha_instance(container)
+    results = {}
+    for daemon in _MIGRATION_DAEMONS:
+        results[daemon] = _daemon_cmd("stop", daemon, instance, container)
+    return {"container": container, "instance": instance, "results": results}
+
+
+def migration_mode_disable(project_id: str) -> dict:
+    """Restart non-essential Koha daemons after migration."""
+    container = _koha_container_for_project(project_id)
+    instance = _detect_koha_instance(container)
+    results = {}
+    # Restart in reverse order (ES indexer last — let everything else
+    # stabilize first so the indexer doesn't immediately choke on a
+    # half-started Zebra or SIP)
+    for daemon in reversed(_MIGRATION_DAEMONS):
+        results[daemon] = _daemon_cmd("start", daemon, instance, container)
+    return {"container": container, "instance": instance, "results": results}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BULK BIBLIOS API PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _iter_file_chunks(path: Path, chunk_size: int = 1 << 20):
+    """Stream a file in chunks for upload (default 1 MB chunks).
+
+    Keeps peak memory bounded regardless of file size.  Using a generator
+    here causes httpx to set a fixed Content-Length (from the caller-supplied
+    header) and write the body incrementally rather than buffering.
+    """
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+def _poll_interval(elapsed_secs: float) -> float:
+    """Exponential-ish backoff for Koha job polling.
+
+    0-60s   → 3s   (responsive for small jobs)
+    60-300s → 10s  (medium jobs — cut poll rate ~3x)
+    300s+   → 30s  (long-running jobs — don't waste cycles)
+    """
+    if elapsed_secs < 60:
+        return 3.0
+    if elapsed_secs < 300:
+        return 10.0
+    return 30.0
+
+
+def _poll_koha_job(client: httpx.Client, base_url: str, headers: dict,
+                   job_id: int, celery_task, project_id: str,
+                   step_label: str, timeout: float = 14400.0,
+                   on_progress=None) -> dict:
+    """Poll GET /api/v1/jobs/{job_id} until finished/failed.
+
+    Updates Celery task state with progress, optionally calls on_progress(job)
+    for custom handling (e.g. persisting to manifest).  Returns the final job
+    JSON.  Uses adaptive backoff: 3s -> 10s -> 30s as elapsed time grows.
+    Raises RuntimeError on failure or timeout.
+    """
+    import time
+    elapsed = 0.0
+    status = ""
+    while elapsed < timeout:
+        _check_paused(project_id, celery_task)
+        resp = client.get(f"{base_url}/api/v1/jobs/{job_id}", headers=headers)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Job poll returned HTTP {resp.status_code}: {resp.text[:500]}")
+        job = resp.json()
+        status = job.get("status", "")
+        # Koha returns progress/size as either int or str depending on the
+        # job type — coerce defensively.
+        try:
+            progress = int(job.get("progress") or 0)
+        except (TypeError, ValueError):
+            progress = 0
+        try:
+            size = int(job.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+
+        celery_task.update_state(state="PROGRESS", meta={
+            "step": step_label,
+            "job_id": job_id,
+            "job_status": status,
+            "records_done": progress,
+            "records_total": size,
+            "elapsed_secs": int(elapsed),
+        })
+
+        if on_progress is not None:
+            try:
+                on_progress(job)
+            except Exception:
+                pass  # progress callbacks must never abort polling
+
+        if status == "finished":
+            return job
+        if status == "failed":
+            # Koha stores errors in various places depending on job type.  Try
+            # the common ones and fall back to the raw data blob so the user
+            # always sees *something* actionable.
+            jdata = job.get("data") or {}
+            jreport = jdata.get("report") or {}
+            err = (
+                jreport.get("errors")
+                or jreport.get("error")
+                or jdata.get("messages")
+                or jdata.get("error")
+            )
+            if not err:
+                # Last resort: dump the whole data blob (truncated)
+                import json as _json
+                err = _json.dumps(jdata, default=str)[:500]
+            raise RuntimeError(
+                f"Koha background job {job_id} failed at progress={progress}/{size}: {str(err)[:500]}"
+            )
+
+        interval = _poll_interval(elapsed)
+        time.sleep(interval)
+        elapsed += interval
+
+    raise RuntimeError(f"Koha job {job_id} timed out after {timeout}s (last status: {status})")
+
+
+def _persist_bulk_state(manifest_id: str, files_state: list[dict],
+                         dry_run: bool, current_idx: int) -> None:
+    """Write per-file bulk-api state to the PushManifest.result_data field.
+
+    Called after every state transition so a restart can recover Koha job IDs
+    and (for post-mortem) a dashboard can show which file is currently active.
+    """
+    totals = {
+        "records_total": sum(f.get("records_total", 0) or 0 for f in files_state),
+        "num_added": sum(f.get("num_added", 0) or 0 for f in files_state),
+        "num_updated": sum(f.get("num_updated", 0) or 0 for f in files_state),
+        "num_ignored": sum(f.get("num_ignored", 0) or 0 for f in files_state),
+    }
+    result_data = {
+        "method": "bulk_api",
+        "dry_run": dry_run,
+        "current_file_index": current_idx,
+        "file_count": len(files_state),
+        "files": files_state,
+        "totals": totals,
+    }
+    with Session(_engine) as db:
+        _update_push_manifest(db, manifest_id, result_data=result_data)
+
+
+def _stage_one_file(
+    client: httpx.Client, base_url: str, headers: dict,
+    marc_path: Path, params: dict, celery_task, project_id: str,
+    file_idx: int, file_count: int, log: AuditLogger,
+) -> tuple[int, int, dict]:
+    """Upload (streaming) + poll staging for one MARC file.
+
+    Returns (staging_job_id, import_batch_id, staging_report).
+    Raises RuntimeError on any failure.
+    """
+    file_size = marc_path.stat().st_size
+    log.info(f"[{file_idx + 1}/{file_count}] Staging {marc_path.name} ({file_size:,} bytes)")
+
+    celery_task.update_state(state="PROGRESS", meta={
+        "step": "uploading",
+        "file": marc_path.name,
+        "file_index": file_idx,
+        "file_count": file_count,
+        "file_size": file_size,
+    })
+
+    stage_headers = {
+        **headers,
+        "Content-Type": "application/marc",
+        "Content-Length": str(file_size),
+        "x-file-name": marc_path.name,
+    }
+
+    # Stream the file in 1 MB chunks — peak memory stays bounded
+    resp = client.post(
+        f"{base_url}/api/v1/biblios/import",
+        content=_iter_file_chunks(marc_path),
+        headers=stage_headers,
+        params=params,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Staging failed: HTTP {resp.status_code} — {resp.text[:500]}")
+
+    stage_data = resp.json()
+    staging_job_id = stage_data.get("job_id")
+    if not staging_job_id:
+        raise RuntimeError(f"No job_id in staging response: {stage_data}")
+
+    log.info(f"[{file_idx + 1}/{file_count}] Staging job started: job_id={staging_job_id}")
+
+    staging_result = _poll_koha_job(
+        client, base_url, headers,
+        staging_job_id, celery_task, project_id,
+        step_label=f"staging [{file_idx + 1}/{file_count}]",
+    )
+    report = staging_result.get("data", {}).get("report", {}) or {}
+    import_batch_id = report.get("import_batch_id")
+    return staging_job_id, import_batch_id, report
+
+
+def _commit_one_batch(
+    client: httpx.Client, base_url: str, headers: dict,
+    import_batch_id: int, bib_options: dict, celery_task, project_id: str,
+    file_idx: int, file_count: int, log: AuditLogger,
+) -> tuple[int, dict]:
+    """POST /import_batches/{id}/commit then poll the commit job.
+
+    Returns (commit_job_id, commit_report).  Raises RuntimeError on failure.
+    """
+    celery_task.update_state(state="PROGRESS", meta={
+        "step": f"committing [{file_idx + 1}/{file_count}]",
+        "import_batch_id": import_batch_id,
+    })
+
+    commit_body: dict = {}
+    if bib_options.get("framework"):
+        commit_body["framework"] = bib_options["framework"]
+
+    commit_resp = client.post(
+        f"{base_url}/api/v1/import_batches/{import_batch_id}/commit",
+        json=commit_body,
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    if commit_resp.status_code >= 400:
+        raise RuntimeError(
+            f"Commit failed: HTTP {commit_resp.status_code} — {commit_resp.text[:500]}"
+        )
+
+    commit_data = commit_resp.json()
+    commit_job_id = commit_data.get("job_id")
+    if not commit_job_id:
+        raise RuntimeError(f"No job_id in commit response: {commit_data}")
+
+    log.info(f"[{file_idx + 1}/{file_count}] Commit job started: job_id={commit_job_id}")
+
+    commit_result = _poll_koha_job(
+        client, base_url, headers,
+        commit_job_id, celery_task, project_id,
+        step_label=f"committing [{file_idx + 1}/{file_count}]",
+    )
+    commit_report = commit_result.get("data", {}).get("report", {}) or {}
+    return commit_job_id, commit_report
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_bulk_api_task",
+    max_retries=0,
+    queue="push",
+)
+def push_bulk_api_task(
+    self, project_id: str, manifest_id: str,
+    dry_run: bool = True, bib_options: dict | None = None,
+) -> dict:
+    """Push MARC records via Koha Bulk Biblios Import API.
+
+    Iterates over every MARC file found in the project (each becomes its own
+    import batch).  For each file:
+        1. POST /api/v1/biblios/import  — stream MARC file (chunked upload)
+        2. Poll GET /api/v1/jobs/{job_id} with exponential backoff
+        3. POST /api/v1/import_batches/{batch_id}/commit (skipped if dry_run)
+        4. Poll commit job
+
+    Per-file state (staging_job_id, import_batch_id, commit_job_id, status)
+    is persisted to PushManifest.result_data on every transition, enabling
+    recovery / dashboards after a worker crash.
+    """
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-bibs-bulk]")
+    bib_options = bib_options or {}
+    log.info(f"Bulk API push starting (dry_run={dry_run}, options={bib_options})")
+
+    try:
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            error_msg = "No transformed or merged MARC files found"
+            log.error(error_msg)
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      status="error", error_message=error_msg,
+                                      completed_at=datetime.utcnow())
+            return {"error": error_msg}
+
+        base_url, headers = _koha_client(project_id)
+
+        # ── Build staging query params (shared across all files) ─────
+        params: dict = {
+            "record_type": bib_options.get("record_type", "biblio"),
+            "encoding": bib_options.get("encoding", "UTF-8"),
+            "parse_items": str(bib_options.get("parse_items", True)).lower(),
+        }
+        if bib_options.get("matcher_id"):
+            params["matcher_id"] = bib_options["matcher_id"]
+        if bib_options.get("overlay_action"):
+            params["overlay_action"] = bib_options["overlay_action"]
+        if bib_options.get("nomatch_action"):
+            params["nomatch_action"] = bib_options["nomatch_action"]
+        if bib_options.get("item_action"):
+            params["item_action"] = bib_options["item_action"]
+        if bib_options.get("comments"):
+            params["comments"] = bib_options["comments"]
+        if bib_options.get("framework"):
+            params["framework"] = bib_options["framework"]
+
+        # auto_commit + dry_run is nonsense — dry_run wins
+        auto_commit = bool(bib_options.get("auto_commit", False)) and not dry_run
+        if auto_commit:
+            params["auto_commit"] = "true"
+
+        # ── Initialize per-file state ────────────────────────────────
+        files_state: list[dict] = [
+            {
+                "filename": p.name,
+                "file_size": p.stat().st_size,
+                "status": "pending",  # pending|staging|staged|committing|committed|error
+                "staging_job_id": None,
+                "import_batch_id": None,
+                "commit_job_id": None,
+                "records_total": 0,
+                "num_added": 0,
+                "num_updated": 0,
+                "num_ignored": 0,
+                "error": None,
+            }
+            for p in marc_paths
+        ]
+        _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=0)
+
+        log.info(f"Pushing {len(marc_paths)} file(s): {[p.name for p in marc_paths]}")
+
+        # ── Process each file sequentially ───────────────────────────
+        with httpx.Client(timeout=600.0, verify=False) as client:
+            for idx, marc_path in enumerate(marc_paths):
+                fstate = files_state[idx]
+                try:
+                    # Stage
+                    fstate["status"] = "staging"
+                    _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=idx)
+
+                    staging_job_id, import_batch_id, staging_report = _stage_one_file(
+                        client, base_url, headers, marc_path, params,
+                        self, project_id, idx, len(marc_paths), log,
+                    )
+                    fstate["staging_job_id"] = staging_job_id
+                    fstate["import_batch_id"] = import_batch_id
+                    # Number of records staged (not committed yet).  Koha
+                    # uses "staged" and "total" in the staging report.
+                    records_staged = (
+                        staging_report.get("staged")
+                        or staging_report.get("total")
+                        or staging_report.get("num_records")
+                        or 0
+                    )
+                    fstate["records_total"] = records_staged
+                    fstate["status"] = "staged"
+                    _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=idx)
+                    log.info(f"[{idx + 1}/{len(marc_paths)}] Staged: batch_id={import_batch_id}, records={records_staged}")
+
+                    if dry_run:
+                        # Count staged records as "success" for dry-run totals
+                        fstate["num_added"] = records_staged
+                        continue
+
+                    # Commit
+                    fstate["status"] = "committing"
+                    _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=idx)
+
+                    if auto_commit:
+                        commit_job_id = staging_report.get("commit_job_id")
+                        if not commit_job_id:
+                            raise RuntimeError(
+                                f"auto_commit set but no commit_job_id in staging report: {staging_report}"
+                            )
+                        # Still poll the commit job to pick up its report
+                        commit_result = _poll_koha_job(
+                            client, base_url, headers,
+                            commit_job_id, self, project_id,
+                            step_label=f"committing [{idx + 1}/{len(marc_paths)}]",
+                        )
+                        commit_report = commit_result.get("data", {}).get("report", {}) or {}
+                    else:
+                        if not import_batch_id:
+                            raise RuntimeError("No import_batch_id from staging — cannot commit")
+                        commit_job_id, commit_report = _commit_one_batch(
+                            client, base_url, headers, import_batch_id, bib_options,
+                            self, project_id, idx, len(marc_paths), log,
+                        )
+
+                    fstate["commit_job_id"] = commit_job_id
+                    fstate["num_added"] = commit_report.get("num_added", 0) or 0
+                    fstate["num_updated"] = commit_report.get("num_updated", 0) or 0
+                    fstate["num_ignored"] = commit_report.get("num_ignored", 0) or 0
+                    fstate["status"] = "committed"
+                    _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=idx)
+                    log.info(
+                        f"[{idx + 1}/{len(marc_paths)}] Committed: "
+                        f"{fstate['num_added']} added, {fstate['num_updated']} updated, "
+                        f"{fstate['num_ignored']} ignored"
+                    )
+
+                except Exception as file_exc:
+                    fstate["status"] = "error"
+                    fstate["error"] = str(file_exc)[:500]
+                    _persist_bulk_state(manifest_id, files_state, dry_run, current_idx=idx)
+                    log.error(f"[{idx + 1}/{len(marc_paths)}] Failed: {file_exc}")
+                    raise  # bubble up — stop processing further files
+
+        # ── Aggregate final counts ───────────────────────────────────
+        total_records = sum(f["records_total"] for f in files_state)
+        total_added = sum(f["num_added"] for f in files_state)
+        total_updated = sum(f["num_updated"] for f in files_state)
+        total_ignored = sum(f["num_ignored"] for f in files_state)
+        records_success = total_added + total_updated
+        records_failed = total_ignored
+
+        # Final manifest write with canonical columns + structured result_data
+        result_data = {
+            "method": "bulk_api",
+            "dry_run": dry_run,
+            "file_count": len(files_state),
+            "files": files_state,
+            "totals": {
+                "records_total": total_records,
+                "num_added": total_added,
+                "num_updated": total_updated,
+                "num_ignored": total_ignored,
+            },
+        }
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=total_records,
+                                  records_success=records_success if not dry_run else total_records,
+                                  records_failed=records_failed,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+            if not dry_run:
+                project = db.get(Project, project_id)
+                if project:
+                    project.bib_count_pushed = records_success
+                    db.commit()
+
+        if dry_run:
+            log.complete(
+                f"Bulk API dry run complete — {len(files_state)} file(s), "
+                f"{total_records:,} records staged"
+            )
+        else:
+            log.complete(
+                f"Bulk API push complete — {len(files_state)} file(s), {total_records:,} records: "
+                f"{total_added:,} added, {total_updated:,} updated, {total_ignored:,} ignored"
+            )
+        return result_data
+
+    except Exception as exc:
+        log.error(f"Bulk API push failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FAST MARC IMPORT (Koha plugin) PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Uses the Koha `fastmarcimport` plugin which does staging + commit in a
+# single call with N parallel worker processes.  Much faster than the core
+# bulk API (which does row-by-row inserts in one transaction).
+#
+# Plugin endpoint: POST /api/v1/contrib/fastmarcimport/import
+#     Body: raw MARC (application/marc) or MARCXML (application/marcxml+xml)
+#     Returns: { "job_id": N }
+# Poll:  GET /api/v1/jobs/{id}
+# Report fields: num_added, num_errors, duration_sec, records_per_sec,
+#                worker_count, biblio_ids
+# ══════════════════════════════════════════════════════════════════════════
+
+_FASTMARC_PATH = "/api/v1/contrib/fastmarcimport/import"
+
+
+def _fastmarc_plugin_available(client: httpx.Client, base_url: str, headers: dict) -> bool:
+    """Return True if the fastmarcimport plugin endpoint is installed.
+
+    Uses OPTIONS which Mojolicious answers with 200 for any method on an
+    existing route, and 404 for missing routes — no side effects, no
+    spurious log entries.
+    """
+    try:
+        resp = client.request(
+            "OPTIONS",
+            f"{base_url}{_FASTMARC_PATH}",
+            headers=headers,
+            timeout=10.0,
+        )
+        return resp.status_code != 404
+    except httpx.HTTPError:
+        return False
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_fastmarc_plugin_task",
+    max_retries=0,
+    queue="push",
+)
+def push_fastmarc_plugin_task(
+    self, project_id: str, manifest_id: str,
+    dry_run: bool = False, bib_options: dict | None = None,
+) -> dict:
+    """Push MARC records via the Koha fastmarcimport plugin.
+
+    Single POST per file (no separate commit step).  The plugin shards
+    records across N parallel workers and does everything in one background
+    job, so wall time is roughly (staging + commit) / worker_count.
+
+    Args:
+        project_id: UUID of the project.
+        manifest_id: UUID of the PushManifest row.
+        dry_run: NOT SUPPORTED by the plugin — the endpoint always commits.
+                 We reject dry_run=True to avoid surprising the user.
+        bib_options: Dict (unused by plugin; settings are plugin-side config).
+    """
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[push-bibs-fast]")
+    bib_options = bib_options or {}
+    log.info(f"Fast MARC plugin push starting (dry_run={dry_run})")
+
+    if dry_run:
+        error_msg = "Fast MARC plugin does not support dry_run — use bulk_api method instead"
+        log.error(error_msg)
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=error_msg,
+                                  completed_at=datetime.utcnow())
+        return {"error": error_msg}
+
+    try:
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            error_msg = "No transformed or merged MARC files found"
+            log.error(error_msg)
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      status="error", error_message=error_msg,
+                                      completed_at=datetime.utcnow())
+            return {"error": error_msg}
+
+        base_url, headers = _koha_client(project_id)
+
+        # Initialize per-file state (same shape as bulk_api for consistency)
+        files_state: list[dict] = [
+            {
+                "filename": p.name,
+                "file_size": p.stat().st_size,
+                "status": "pending",
+                "job_id": None,
+                "records_total": 0,
+                "num_added": 0,
+                "num_errors": 0,
+                "num_items_added": 0,
+                "num_item_errors": 0,
+                "duplicate_barcodes": 0,
+                "records_processed": 0,
+                "slices_completed": 0,
+                "skipped_in_split": 0,
+                "chunks_rolled_back": 0,
+                "first_error_message": None,
+                "failed_records": [],
+                # v0.5.0 fields
+                "error_mode": None,
+                "wide_char_warnings": 0,
+                "sidecar_records": 0,
+                "sidecar_recovered": 0,
+                "duration_sec": None,
+                "records_per_sec": None,
+                "worker_count": None,
+                "error": None,
+            }
+            for p in marc_paths
+        ]
+        _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=0)
+
+        log.info(f"Pushing {len(marc_paths)} file(s) via fastmarcimport plugin")
+
+        with httpx.Client(timeout=600.0, verify=False) as client:
+            # Preflight check
+            if not _fastmarc_plugin_available(client, base_url, headers):
+                error_msg = (
+                    "fastmarcimport plugin endpoint not found at "
+                    f"{base_url}{_FASTMARC_PATH} — is the plugin installed?"
+                )
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+
+            for idx, marc_path in enumerate(marc_paths):
+                fstate = files_state[idx]
+                try:
+                    file_size = marc_path.stat().st_size
+                    log.info(f"[{idx + 1}/{len(marc_paths)}] Uploading {marc_path.name} ({file_size:,} bytes)")
+
+                    self.update_state(state="PROGRESS", meta={
+                        "step": "uploading",
+                        "file": marc_path.name,
+                        "file_index": idx,
+                        "file_count": len(marc_paths),
+                        "file_size": file_size,
+                    })
+
+                    # Stream the file in 1 MB chunks — bounded memory
+                    upload_headers = {
+                        **headers,
+                        "Content-Type": "application/marc",
+                        "Content-Length": str(file_size),
+                        "x-file-name": marc_path.name,
+                    }
+                    resp = client.post(
+                        f"{base_url}{_FASTMARC_PATH}",
+                        content=_iter_file_chunks(marc_path),
+                        headers=upload_headers,
+                    )
+                    if resp.status_code >= 400:
+                        raise RuntimeError(
+                            f"Upload failed: HTTP {resp.status_code} — {resp.text[:500]}"
+                        )
+
+                    resp_data = resp.json()
+                    job_id = resp_data.get("job_id")
+                    if not job_id:
+                        raise RuntimeError(f"No job_id in response: {resp_data}")
+
+                    fstate["job_id"] = job_id
+                    fstate["status"] = "running"
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.info(f"[{idx + 1}/{len(marc_paths)}] Plugin job started: job_id={job_id}")
+
+                    # Poll the plugin's job until complete
+                    job_result = _poll_koha_job(
+                        client, base_url, headers,
+                        job_id, self, project_id,
+                        step_label=f"importing [{idx + 1}/{len(marc_paths)}]",
+                    )
+                    report = job_result.get("data", {}).get("report", {}) or {}
+
+                    # Plugin returns numeric fields as strings — coerce.
+                    def _as_int(v, default=0):
+                        try:
+                            return int(v) if v is not None else default
+                        except (TypeError, ValueError):
+                            return default
+
+                    def _as_float(v):
+                        try:
+                            return float(v) if v is not None else None
+                        except (TypeError, ValueError):
+                            return None
+
+                    fstate["records_total"] = _as_int(
+                        job_result.get("size") or report.get("num_added"), 0
+                    )
+                    fstate["num_added"] = _as_int(report.get("num_added"), 0)
+                    fstate["num_errors"] = _as_int(report.get("num_errors"), 0)
+                    fstate["num_items_added"] = _as_int(report.get("num_items_added"), 0)
+                    fstate["num_item_errors"] = _as_int(report.get("num_item_errors"), 0)
+                    # v0.4.0+ fields
+                    fstate["duplicate_barcodes"] = _as_int(report.get("duplicate_barcodes"), 0)
+                    fstate["records_processed"] = _as_int(report.get("records_processed"), 0)
+                    fstate["slices_completed"] = _as_int(report.get("slices_completed"), 0)
+                    fstate["skipped_in_split"] = _as_int(report.get("skipped_in_split"), 0)
+                    fstate["chunks_rolled_back"] = _as_int(report.get("chunks_rolled_back"), 0)
+                    fstate["first_error_message"] = report.get("first_error_message")
+                    # Cap failed_records list — can be up to 5000 per slice * workers
+                    failed = report.get("failed_records") or []
+                    fstate["failed_records"] = failed[:2000]
+                    # v0.5.0 fields
+                    fstate["error_mode"] = report.get("error_mode")
+                    fstate["wide_char_warnings"] = _as_int(report.get("wide_char_warnings"), 0)
+                    fstate["sidecar_records"] = _as_int(report.get("sidecar_records"), 0)
+                    fstate["sidecar_recovered"] = _as_int(report.get("sidecar_recovered"), 0)
+                    fstate["duration_sec"] = _as_float(report.get("duration_sec"))
+                    fstate["records_per_sec"] = _as_float(report.get("records_per_sec"))
+                    fstate["worker_count"] = _as_int(report.get("worker_count"), 0) or None
+                    fstate["status"] = "committed"
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.info(
+                        f"[{idx + 1}/{len(marc_paths)}] Imported: "
+                        f"{fstate['num_added']:,} bibs added ({fstate['num_errors']:,} errors), "
+                        f"{fstate['num_items_added']:,} items added ({fstate['num_item_errors']:,} errors), "
+                        f"{fstate['duration_sec']}s, {fstate['records_per_sec']} rec/s, "
+                        f"{fstate['worker_count']} workers"
+                    )
+
+                except Exception as file_exc:
+                    fstate["status"] = "error"
+                    fstate["error"] = str(file_exc)[:500]
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.error(f"[{idx + 1}/{len(marc_paths)}] Failed: {file_exc}")
+                    raise
+
+        # Aggregate totals
+        total_records = sum(f["records_total"] for f in files_state)
+        total_added = sum(f["num_added"] for f in files_state)
+        total_errors = sum(f["num_errors"] for f in files_state)
+        total_items_added = sum(f["num_items_added"] for f in files_state)
+        total_item_errors = sum(f["num_item_errors"] for f in files_state)
+        total_duplicate_barcodes = sum(f["duplicate_barcodes"] for f in files_state)
+        total_records_processed = sum(f["records_processed"] for f in files_state)
+        total_skipped_in_split = sum(f["skipped_in_split"] for f in files_state)
+        total_chunks_rolled_back = sum(f["chunks_rolled_back"] for f in files_state)
+        total_sidecar_records = sum(f["sidecar_records"] for f in files_state)
+        total_sidecar_recovered = sum(f["sidecar_recovered"] for f in files_state)
+        total_wide_char_warnings = sum(f["wide_char_warnings"] for f in files_state)
+
+        result_data = {
+            "method": "plugin_fast",
+            "dry_run": False,
+            "file_count": len(files_state),
+            "files": files_state,
+            "totals": {
+                "records_total": total_records,
+                "num_added": total_added,
+                "num_errors": total_errors,
+                "num_items_added": total_items_added,
+                "num_item_errors": total_item_errors,
+                "duplicate_barcodes": total_duplicate_barcodes,
+                "records_processed": total_records_processed,
+                "skipped_in_split": total_skipped_in_split,
+                "chunks_rolled_back": total_chunks_rolled_back,
+                "sidecar_records": total_sidecar_records,
+                "sidecar_recovered": total_sidecar_recovered,
+                "wide_char_warnings": total_wide_char_warnings,
+            },
+        }
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=total_records,
+                                  records_success=total_added,
+                                  records_failed=total_errors,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+            project = db.get(Project, project_id)
+            if project:
+                project.bib_count_pushed = total_added
+                db.commit()
+
+        log.complete(
+            f"Fast MARC plugin push complete — {len(files_state)} file(s): "
+            f"{total_added:,} bibs ({total_errors:,} err), "
+            f"{total_items_added:,} items ({total_item_errors:,} err)"
+        )
+        return result_data
+
+    except Exception as exc:
+        log.error(f"Fast MARC plugin push failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # PATRONS PUSH TASK
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -1252,6 +2274,241 @@ def push_item_types_sql_task(self, project_id: str, item_types: list[dict]) -> d
         "failed_count": failed_count,
         "results": results,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TURBOINDEX (Koha plugin) REINDEX TASK
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Companion to FastMARCImport.  fastmarcimport adds biblios with index
+# writes deferred; turboindex rebuilds the Elasticsearch index in a single
+# parallel pass afterwards.
+#
+# Plugin endpoint: POST /api/v1/contrib/turboindex/biblios/reindex
+#     Body: {"reset":true, "processes":4, "commit":5000, "force_merge":true}
+#     All fields optional.
+#     Returns: {"job_id": N}
+# Poll:  GET /api/v1/jobs/{id}
+# Report fields: num_indexed, num_errors, duration_sec, records_per_sec,
+#                saved_settings.{refresh_interval, number_of_replicas}
+# ══════════════════════════════════════════════════════════════════════════
+
+_TURBOINDEX_PATH = "/api/v1/contrib/turboindex/biblios/reindex"
+
+
+def _turboindex_plugin_available(client: httpx.Client, base_url: str, headers: dict) -> bool:
+    """Return True if the turboindex plugin endpoint is installed.
+
+    Uses OPTIONS which Mojolicious answers with 200 for any method on an
+    existing route, and 404 for missing routes — without triggering
+    side effects (unlike POST, which would create a real job).
+    """
+    try:
+        resp = client.request(
+            "OPTIONS",
+            f"{base_url}{_TURBOINDEX_PATH}",
+            headers=headers,
+            timeout=10.0,
+        )
+        return resp.status_code != 404
+    except httpx.HTTPError:
+        return False
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.turboindex_task",
+    max_retries=0,
+    queue="push",
+)
+def turboindex_task(
+    self, project_id: str, manifest_id: str,
+    reset: bool = True, processes: int = 4,
+    commit: int = 5000, force_merge: bool = True,
+) -> dict:
+    """Rebuild the Elasticsearch biblio index via the turboindex plugin.
+
+    Args:
+        project_id: UUID of the project.
+        manifest_id: UUID of the PushManifest row (task_type="reindex").
+        reset: Drop and recreate the index before reindexing.
+        processes: Parallel worker count (1-8 typical).
+        commit: ES bulk-commit chunk size.
+        force_merge: Run force-merge after indexing (consolidates segments).
+    """
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[turboindex]")
+    log.info(
+        f"TurboIndex reindex starting (reset={reset}, processes={processes}, "
+        f"commit={commit}, force_merge={force_merge})"
+    )
+
+    def _as_int(v, default=0):
+        try:
+            return int(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _as_float(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        base_url, headers = _koha_client(project_id)
+
+        with httpx.Client(timeout=600.0, verify=False) as client:
+            if not _turboindex_plugin_available(client, base_url, headers):
+                error_msg = (
+                    "turboindex plugin endpoint not found at "
+                    f"{base_url}{_TURBOINDEX_PATH} — is the plugin installed?"
+                )
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+
+            body = {
+                "reset": bool(reset),
+                "processes": int(processes),
+                "commit": int(commit),
+                "force_merge": bool(force_merge),
+            }
+            self.update_state(state="PROGRESS", meta={
+                "step": "dispatching",
+                "config": body,
+            })
+
+            resp = client.post(
+                f"{base_url}{_TURBOINDEX_PATH}",
+                json=body,
+                headers={**headers, "Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Reindex dispatch failed: HTTP {resp.status_code} — {resp.text[:500]}"
+                )
+            data = resp.json()
+            job_id = data.get("job_id")
+            if not job_id:
+                raise RuntimeError(f"No job_id in response: {data}")
+
+            log.info(f"TurboIndex job started: job_id={job_id}")
+
+            # Mutable live-state dict persisted on every poll so the UI can
+            # stream messages + counters as they arrive from Koha.
+            live_state = {
+                "method": "turboindex",
+                "job_id": job_id,
+                "config": body,
+                "status": "running",
+                "progress": 0,
+                "size": 0,
+                "messages": [],
+                "report": {},
+            }
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id, result_data=live_state)
+
+            # Track which messages we've already seen — Koha returns the full
+            # array every poll, but we only want to append new ones.
+            _seen_msg_count = [0]
+
+            def _on_progress(job):
+                jdata = job.get("data") or {}
+                jmsgs = jdata.get("messages") or []
+                jreport = jdata.get("report") or {}
+                # Append any new messages
+                new_msgs = jmsgs[_seen_msg_count[0]:]
+                _seen_msg_count[0] = len(jmsgs)
+                # Cap the stored list at 500 entries total to bound memory
+                live_state["messages"].extend(new_msgs)
+                if len(live_state["messages"]) > 500:
+                    live_state["messages"] = live_state["messages"][-500:]
+                # Merge latest report snapshot
+                if jreport:
+                    live_state["report"] = jreport
+                live_state["status"] = job.get("status", "running")
+                try:
+                    live_state["progress"] = int(job.get("progress") or 0)
+                    live_state["size"] = int(job.get("size") or 0)
+                except (TypeError, ValueError):
+                    pass
+                # Persist to manifest
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id, result_data=dict(live_state))
+                # Log any new error/warning messages to audit log too
+                for m in new_msgs:
+                    mtype = (m.get("type") or "").lower()
+                    mtxt = (m.get("message") or "")[:500]
+                    if mtype == "error":
+                        log.error(f"[koha job] {mtxt}")
+                    elif mtype == "warning":
+                        log.warn(f"[koha job] {mtxt}")
+                    else:
+                        log.info(f"[koha job] {mtxt}")
+
+            job_result = _poll_koha_job(
+                client, base_url, headers,
+                job_id, self, project_id,
+                step_label="turboindex",
+                on_progress=_on_progress,
+            )
+            report = job_result.get("data", {}).get("report", {}) or {}
+
+        num_indexed = _as_int(report.get("num_indexed"), 0)
+        num_errors = _as_int(report.get("num_errors"), 0)
+        duration_sec = _as_float(report.get("duration_sec"))
+        records_per_sec = _as_float(report.get("records_per_sec"))
+        saved_settings = report.get("saved_settings") or {}
+
+        result_data = {
+            "method": "turboindex",
+            "job_id": job_id,
+            "config": body,
+            "status": "finished",
+            "num_indexed": num_indexed,
+            "num_errors": num_errors,
+            "duration_sec": duration_sec,
+            "records_per_sec": records_per_sec,
+            "saved_settings": saved_settings,
+            "report": report,
+            "messages": live_state.get("messages") or [],
+            "progress": num_indexed + num_errors,
+            "size": num_indexed + num_errors,
+        }
+
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=num_indexed + num_errors,
+                                  records_success=num_indexed,
+                                  records_failed=num_errors,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+            project = db.get(Project, project_id)
+            if project:
+                project.stage_7_complete = True
+                project.current_stage = 8
+                db.commit()
+
+        log.complete(
+            f"TurboIndex complete — {num_indexed:,} indexed, {num_errors:,} errors, "
+            f"{duration_sec}s ({records_per_sec} rec/s)"
+        )
+        return result_data
+
+    except Exception as exc:
+        log.error(f"TurboIndex reindex failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
 
 
 # ══════════════════════════════════════════════════════════════════════════

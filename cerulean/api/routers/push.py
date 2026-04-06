@@ -41,6 +41,8 @@ from cerulean.models import (
 from cerulean.schemas.push import (
     ItemTypePushItem,
     KohaRefDataResponse,
+    TurboIndexRequest,
+    TurboIndexResponse,
     LibraryPushItem,
     NeededRefDataResponse,
     NeededRefValue,
@@ -64,12 +66,15 @@ from cerulean.schemas.push import (
 from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.push import (
     es_reindex_task,
+    push_bulk_api_task,
     push_bulkmarc_task,
     push_bulkmarcimport_task,
     push_circ_task,
+    push_fastmarc_plugin_task,
     push_holds_task,
     push_patrons_task,
     push_preflight_task,
+    turboindex_task,
 )
 from cerulean.utils.marc import record_to_dict
 
@@ -183,6 +188,10 @@ async def start_push(
         bib_method = (body.bib_options.method if body.bib_options else "rest_api") or "rest_api"
         if bib_method == "bulkmarcimport":
             tasks_to_dispatch.append(("bulkmarc", push_bulkmarcimport_task, True))
+        elif bib_method == "bulk_api":
+            tasks_to_dispatch.append(("bulkmarc", push_bulk_api_task, True))
+        elif bib_method == "plugin_fast":
+            tasks_to_dispatch.append(("bulkmarc", push_fastmarc_plugin_task, True))
         else:
             tasks_to_dispatch.append(("bulkmarc", push_bulkmarc_task, True))
     if body.push_patrons:
@@ -215,7 +224,7 @@ async def start_push(
         task_kwargs = {}
         if needs_dry_run:
             task_kwargs["dry_run"] = body.dry_run
-        if task_type == "bulkmarc" and body.bib_options and body.bib_options.method == "bulkmarcimport":
+        if task_type == "bulkmarc" and body.bib_options and body.bib_options.method in ("bulkmarcimport", "bulk_api", "plugin_fast"):
             task_kwargs["bib_options"] = body.bib_options.model_dump()
         if task_type == "reindex" and body.reindex_engine:
             task_kwargs["reindex_engine"] = body.reindex_engine
@@ -295,6 +304,29 @@ async def list_manifests(
 
     result = await db.execute(q)
     return result.scalars().all()
+
+
+@router.get("/{project_id}/push/manifests/{manifest_id}", response_model=PushManifestOut)
+async def get_manifest(
+    project_id: str,
+    manifest_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a single push manifest with its full result_data.
+
+    Used by the UI to live-poll job status, message streams, counters,
+    and per-slice breakdowns while a push/reindex is running.
+    """
+    await require_project(project_id, db)
+    m = (await db.execute(
+        select(PushManifest).where(
+            PushManifest.project_id == project_id,
+            PushManifest.id == manifest_id,
+        )
+    )).scalar_one_or_none()
+    if not m:
+        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": f"Manifest {manifest_id} not found"})
+    return m
 
 
 @router.get("/{project_id}/push/log", response_model=list[PushManifestOut])
@@ -752,6 +784,252 @@ async def push_item_types(
         failed_count=failed_count,
         results=results,
     )
+
+
+# ── Migration mode (stop/start Koha daemons) ────────────────────────────
+
+
+@router.get("/{project_id}/push/migration-mode")
+async def migration_mode_status_endpoint(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check which Koha daemons are running/stopped.
+
+    Dispatches via Celery worker (which has the Docker socket).
+    """
+    await require_project(project_id, db)
+    from cerulean.tasks.push import migration_mode_status_task
+    try:
+        result = migration_mode_status_task.apply_async(
+            args=[project_id], queue="push"
+        ).get(timeout=30)
+        return result
+    except Exception as exc:
+        raise HTTPException(500, detail={"error": "MIGRATION_MODE_FAILED", "message": str(exc)})
+
+
+@router.post("/{project_id}/push/migration-mode/enable")
+async def migration_mode_enable_endpoint(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop non-essential Koha daemons for migration.
+
+    Stops: ES indexer, Zebra indexer, Zebra search, SIP, Z39.50.
+    Keeps: background workers (process import/reindex jobs), Plack (REST API).
+    """
+    await require_project(project_id, db)
+    from cerulean.tasks.push import migration_mode_enable_task
+    try:
+        result = migration_mode_enable_task.apply_async(
+            args=[project_id], queue="push"
+        ).get(timeout=60)
+    except Exception as exc:
+        raise HTTPException(500, detail={"error": "MIGRATION_MODE_FAILED", "message": str(exc)})
+    await audit_log(db, project_id, stage=7, level="info", tag="[migration-mode]",
+                    message="Migration mode ENABLED — non-essential Koha daemons stopped")
+    return result
+
+
+@router.post("/{project_id}/push/migration-mode/disable")
+async def migration_mode_disable_endpoint(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restart non-essential Koha daemons after migration.
+
+    Restarts everything that was stopped by migration-mode/enable.
+    """
+    await require_project(project_id, db)
+    from cerulean.tasks.push import migration_mode_disable_task
+    try:
+        result = migration_mode_disable_task.apply_async(
+            args=[project_id], queue="push"
+        ).get(timeout=60)
+    except Exception as exc:
+        raise HTTPException(500, detail={"error": "MIGRATION_MODE_FAILED", "message": str(exc)})
+    await audit_log(db, project_id, stage=7, level="info", tag="[migration-mode]",
+                    message="Migration mode DISABLED — Koha daemons restarted")
+    return result
+
+
+# ── TurboIndex (plugin) reindex ──────────────────────────────────────────
+
+
+@router.post("/{project_id}/push/turboindex", response_model=TurboIndexResponse, status_code=202)
+async def turboindex_start(
+    project_id: str,
+    body: TurboIndexRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispatch a TurboIndex reindex job.
+
+    Runs the turboindex plugin (POST /api/v1/contrib/turboindex/biblios/reindex)
+    to rebuild the Elasticsearch biblio index in a single parallel pass.
+    Use this after a fastmarcimport push, which defers index writes.
+    """
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    # Reject if a reindex is already running
+    already_running = (
+        await db.execute(
+            select(PushManifest).where(
+                PushManifest.project_id == project_id,
+                PushManifest.status == "running",
+                PushManifest.task_type == "reindex",
+            )
+        )
+    ).scalars().all()
+    if already_running:
+        raise HTTPException(409, detail={
+            "error": "TASK_ALREADY_RUNNING",
+            "message": "A reindex is already running. Wait for it to finish.",
+        })
+
+    manifest = PushManifest(
+        project_id=project_id,
+        task_type="reindex",
+        status="running",
+        dry_run=False,
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await db.flush()
+    await db.refresh(manifest)
+
+    task = turboindex_task.apply_async(
+        args=[project_id, manifest.id],
+        kwargs={
+            "reset": body.reset,
+            "processes": body.processes,
+            "commit": body.commit,
+            "force_merge": body.force_merge,
+        },
+        queue="push",
+    )
+    manifest.celery_task_id = task.id
+    await db.flush()
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[turboindex]",
+                    message=(
+                        f"TurboIndex dispatched (processes={body.processes}, "
+                        f"reset={body.reset}, commit={body.commit}, "
+                        f"force_merge={body.force_merge})"
+                    ))
+
+    return TurboIndexResponse(
+        task_id=task.id,
+        manifest_id=manifest.id,
+        message="TurboIndex reindex dispatched.",
+    )
+
+
+# ── UTF-8 preflight endpoints ────────────────────────────────────────────
+
+
+def _best_marc_path(project_id: str) -> Path | None:
+    """Resolve the single best push-ready MARC file for a project."""
+    project_dir = Path(settings.data_root) / project_id
+    for name in ["Biblios-mapped-items.mrc", "merged_deduped.mrc", "output.mrc", "merged.mrc"]:
+        candidate = project_dir / name
+        if candidate.is_file():
+            return candidate
+    transformed_dir = project_dir / "transformed"
+    if transformed_dir.is_dir():
+        transformed = sorted(transformed_dir.glob("*_transformed.mrc"))
+        if transformed:
+            return transformed[0]
+    return None
+
+
+@router.get("/{project_id}/push/utf8-scan")
+async def utf8_scan(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan the push-ready MARC file for records that will fail strict UTF-8
+    decode downstream in Koha.
+
+    Returns a count of bad records plus sample error info.  Safe to run
+    repeatedly — does not modify any files.
+    """
+    await require_project(project_id, db)
+    from cerulean.utils.marc import scan_utf8_issues
+
+    marc_path = _best_marc_path(project_id)
+    if not marc_path:
+        raise HTTPException(409, detail={
+            "error": "NO_MARC_FILE",
+            "message": "No push-ready MARC file found.",
+        })
+
+    result = scan_utf8_issues(str(marc_path))
+    return {
+        "filename": marc_path.name,
+        "total_records": result["total_records"],
+        "bad_record_count": result["bad_record_count"],
+        "bad_record_indices": result["bad_record_indices"][:50],  # cap list
+        "nonascii_record_count": result.get("nonascii_record_count", 0),
+        "samples": result["samples"],
+    }
+
+
+@router.post("/{project_id}/push/utf8-repair")
+async def utf8_repair(
+    project_id: str,
+    mode: str = Query("transliterate", pattern="^(skip|transliterate|replace)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Repair UTF-8 hazards in the push-ready MARC file.
+
+    Rewrites the push-ready file in place (original is preserved as a
+    ``.pre-utf8-repair`` sibling).
+
+    Modes:
+        skip           — drop bad records entirely
+        transliterate  — ASCII-fold non-ASCII in affected fields (default)
+        replace        — substitute undecodable bytes with U+FFFD
+    """
+    await require_project(project_id, db)
+    from cerulean.utils.marc import repair_utf8
+
+    marc_path = _best_marc_path(project_id)
+    if not marc_path:
+        raise HTTPException(409, detail={
+            "error": "NO_MARC_FILE",
+            "message": "No push-ready MARC file found.",
+        })
+
+    backup_path = marc_path.with_suffix(marc_path.suffix + ".pre-utf8-repair")
+    tmp_path = marc_path.with_suffix(marc_path.suffix + ".utf8-fixed")
+    try:
+        result = repair_utf8(str(marc_path), str(tmp_path), mode=mode)
+    except Exception as exc:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise HTTPException(500, detail={"error": "REPAIR_FAILED", "message": str(exc)})
+
+    # Atomic swap: original -> backup, tmp -> original
+    if backup_path.exists():
+        backup_path.unlink()
+    marc_path.rename(backup_path)
+    tmp_path.rename(marc_path)
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[utf8]",
+                    message=(
+                        f"UTF-8 repair ({mode}): {result['bad_record_count']} bad records, "
+                        f"kept={result['kept']}, skipped={result.get('skipped', 0)}, "
+                        f"repaired_fields={result.get('repaired_fields', 0)}"
+                    ))
+
+    return {
+        "filename": marc_path.name,
+        "backup": backup_path.name,
+        **result,
+    }
 
 
 # ── File review endpoints ────────────────────────────────────────────────

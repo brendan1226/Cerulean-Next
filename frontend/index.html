@@ -7194,6 +7194,36 @@ async function renderS7Bibs() {
     <div class="alert alert-warn">
       Preflight first — confirms Koha is reachable and detects version/search engine.
     </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">Migration Mode</span>
+        <span id="migration-mode-badge"></span>
+      </div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Stops non-essential Koha daemons (ES indexer, Zebra, SIP, Z39.50) to free resources for bulk import. Re-enable after import + reindex are complete.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="enableMigrationMode()">Enable (Stop Daemons)</button>
+        <button class="btn btn-ghost btn-sm" onclick="disableMigrationMode()">Disable (Restart Daemons)</button>
+        <button class="btn btn-ghost btn-sm" onclick="checkMigrationMode()">Check Status</button>
+      </div>
+      <div id="migration-mode-status" style="margin-top:12px"></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">UTF-8 Preflight</span>
+        <span style="font-size:11px;color:var(--text-dim)">Catches records that will break Koha's Perl MARC parser</span>
+      </div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Scans the push-ready MARC file for records with invalid UTF-8 sequences that cause downstream Koha import failures. Run this before every push.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="runUtf8Scan()">▶ Scan for UTF-8 Issues</button>
+        <select id="utf8-repair-mode" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          <option value="transliterate">Transliterate (é → e)</option>
+          <option value="skip">Skip bad records</option>
+          <option value="replace">Replace (U+FFFD)</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" id="utf8-repair-btn" onclick="runUtf8Repair()" disabled>▶ Repair</button>
+      </div>
+      <div id="utf8-status" style="margin-top:12px"></div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header"><span class="card-title">Preflight</span></div>
@@ -7207,6 +7237,8 @@ async function renderS7Bibs() {
           <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Push Method</label>
           <select id="bib-push-method" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)" onchange="toggleBibImportOptions()">
             <option value="rest_api">REST API (POST /biblios)</option>
+            <option value="bulk_api">Bulk Import API (stage + commit)</option>
+            <option value="plugin_fast">Fast Import Plugin (parallel workers)</option>
             <option value="bulkmarcimport">bulkmarcimport.pl (Docker)</option>
           </select>
         </div>
@@ -7234,6 +7266,60 @@ async function renderS7Bibs() {
           <div>
             <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Container Name</label>
             <input type="text" id="bib-container" placeholder="auto-detect" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+        </div>
+        <div id="bib-bulk-api-options" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Overlay Action</label>
+              <select id="bulk-overlay-action" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+                <option value="create_new">Create new</option>
+                <option value="replace">Replace</option>
+                <option value="ignore">Ignore</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">No-Match Action</label>
+              <select id="bulk-nomatch-action" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+                <option value="create_new">Create new</option>
+                <option value="ignore">Ignore</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Item Action</label>
+              <select id="bulk-item-action" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+                <option value="always_add">Always add</option>
+                <option value="add_only_for_matches">Add only for matches</option>
+                <option value="add_only_for_new">Add only for new</option>
+                <option value="ignore">Ignore items</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Framework</label>
+              <input type="text" id="bulk-framework" placeholder="e.g. FA, BKS" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Matcher ID</label>
+              <input type="number" id="bulk-matcher-id" placeholder="none" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Comments</label>
+              <input type="text" id="bulk-comments" placeholder="optional" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            </div>
+          </div>
+          <div style="display:flex;gap:16px">
+            <div style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="bulk-parse-items" checked>
+              <label for="bulk-parse-items" style="font-size:12px;color:var(--text-secondary)">Parse items (952)</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="bulk-auto-commit">
+              <label for="bulk-auto-commit" style="font-size:12px;color:var(--text-secondary)">Auto-commit (skip staging review)</label>
+            </div>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
@@ -7428,10 +7514,153 @@ async function runPreflight() {
   } catch (e) { console.error(e); }
 }
 
+// ─── Migration mode ──────────────────────────────────────────
+async function checkMigrationMode() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('migration-mode-status');
+  const badgeEl = document.getElementById('migration-mode-badge');
+  statusEl.innerHTML = '<div class="spinner"></div> Checking daemon status…';
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/push/migration-mode`);
+    if (!r) return;
+    const daemons = r.daemons || {};
+    const running = Object.values(daemons).filter(s => s === 'running').length;
+    const stopped = Object.values(daemons).filter(s => s === 'stopped').length;
+    const total = Object.keys(daemons).length;
+
+    if (running === 0 && stopped > 0) {
+      badgeEl.innerHTML = '<span class="badge badge-yellow" style="font-size:10px">MIGRATION MODE</span>';
+    } else if (stopped === 0) {
+      badgeEl.innerHTML = '<span class="badge badge-green" style="font-size:10px">NORMAL</span>';
+    } else {
+      badgeEl.innerHTML = '<span class="badge badge-dim" style="font-size:10px">PARTIAL</span>';
+    }
+
+    let html = `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Instance: <span class="mono">${esc(r.instance || '?')}</span> | Container: <span class="mono">${esc(r.container || '?')}</span></div>`;
+    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>Daemon</th><th>Status</th></tr></thead><tbody>';
+    for (const [name, status] of Object.entries(daemons)) {
+      const cls = status === 'running' ? 'badge-green' : status === 'stopped' ? 'badge-red' : 'badge-dim';
+      html += `<tr><td class="mono">${esc(name)}</td><td><span class="badge ${cls}">${esc(status)}</span></td></tr>`;
+    }
+    html += '</tbody></table>';
+    statusEl.innerHTML = html;
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function enableMigrationMode() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('migration-mode-status');
+  if (!confirm('Stop non-essential Koha daemons?\n\nThis will stop: ES indexer, Zebra indexer, Zebra search, SIP, Z39.50.\nKeeps running: background workers (for import jobs), Plack (REST API).')) return;
+  statusEl.innerHTML = '<div class="spinner"></div> Stopping daemons…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/enable`, {});
+    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Migration mode enabled — daemons stopped.</div>';
+    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
+    for (const [name, info] of Object.entries(r.results || {})) {
+      const ok = info.returncode === 0;
+      html += `<tr><td class="mono">${esc(name)}</td><td>${esc(info.action)}</td><td>${ok ? '<span class="text-green">OK</span>' : '<span class="text-red">'+esc(info.output)+'</span>'}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    statusEl.innerHTML = html;
+    document.getElementById('migration-mode-badge').innerHTML = '<span class="badge badge-yellow" style="font-size:10px">MIGRATION MODE</span>';
+    toast('Migration mode enabled', 'info');
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function disableMigrationMode() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('migration-mode-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Restarting daemons…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/disable`, {});
+    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Daemons restarted — normal operations resumed.</div>';
+    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
+    for (const [name, info] of Object.entries(r.results || {})) {
+      const ok = info.returncode === 0;
+      html += `<tr><td class="mono">${esc(name)}</td><td>${esc(info.action)}</td><td>${ok ? '<span class="text-green">OK</span>' : '<span class="text-red">'+esc(info.output)+'</span>'}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    statusEl.innerHTML = html;
+    document.getElementById('migration-mode-badge').innerHTML = '<span class="badge badge-green" style="font-size:10px">NORMAL</span>';
+    toast('Daemons restarted', 'success');
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function runUtf8Scan() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('utf8-status');
+  const repairBtn = document.getElementById('utf8-repair-btn');
+  statusEl.innerHTML = '<div class="spinner"></div> Scanning MARC file for UTF-8 issues…';
+  repairBtn.disabled = true;
+  try {
+    const r = await window.api('GET', `/projects/${p.id}/push/utf8-scan`);
+    if (!r) return;
+    const bad = r.bad_record_count;
+    const total = r.total_records;
+    const nonascii = r.nonascii_record_count || 0;
+    if (bad === 0) {
+      let msg = `<span class="text-green" style="font-size:12px">✓ Clean — all ${total.toLocaleString()} records decode as strict UTF-8.</span>`;
+      if (nonascii > 0) {
+        msg += `<div class="text-dim" style="font-size:11px;margin-top:4px">${nonascii.toLocaleString()} record(s) contain non-ASCII characters (diacritics, etc.). These usually import fine, but if the plugin chokes on specific characters you can transliterate to ASCII.</div>`;
+      }
+      statusEl.innerHTML = msg;
+    } else {
+      let html = `<div class="text-red" style="font-size:12px;margin-bottom:8px">⚠️ ${bad.toLocaleString()} of ${total.toLocaleString()} records have UTF-8 issues that will fail in Koha's Perl MARC parser.</div>`;
+      if (r.samples && r.samples.length) {
+        html += '<details style="font-size:11px;color:var(--text-secondary)"><summary style="cursor:pointer">Sample errors</summary><div style="margin-top:4px;padding:8px;background:var(--bg-main);border-radius:4px"><ul style="margin:0;padding-left:18px">';
+        for (const s of r.samples) {
+          html += `<li style="margin-bottom:4px"><span class="mono">record ${s.index}</span>: ${esc(s.error || '')}`;
+          if (s.sample_field) html += `<br><span class="text-dim" style="font-size:10px">${esc(s.sample_field)}</span>`;
+          html += '</li>';
+        }
+        html += '</ul></div></details>';
+      }
+      statusEl.innerHTML = html;
+      repairBtn.disabled = false;
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Scan failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function runUtf8Repair() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('utf8-status');
+  const mode = document.getElementById('utf8-repair-mode').value;
+  if (!confirm(`Repair MARC file (mode: ${mode})?\n\nThe original file will be preserved with a .pre-utf8-repair suffix.`)) return;
+  statusEl.innerHTML = '<div class="spinner"></div> Repairing…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/utf8-repair?mode=${mode}`, {});
+    if (!r) return;
+    let summary = `<span class="text-green" style="font-size:12px">✓ Repair complete (${mode})</span>`;
+    summary += `<div style="font-size:11px;color:var(--text-secondary);margin-top:6px">`;
+    summary += `Bad records: ${(r.bad_record_count||0).toLocaleString()}<br>`;
+    summary += `Kept: ${(r.kept||0).toLocaleString()}<br>`;
+    if (r.skipped) summary += `Skipped: ${(r.skipped||0).toLocaleString()}<br>`;
+    if (r.repaired_fields) summary += `Fields repaired: ${(r.repaired_fields||0).toLocaleString()}<br>`;
+    summary += `Original backed up as: <span class="mono">${esc(r.backup || '')}</span>`;
+    summary += `</div>`;
+    statusEl.innerHTML = summary;
+    document.getElementById('utf8-repair-btn').disabled = true;
+    // Reload the file list so the new size shows
+    s7LoadFiles();
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Repair failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
 function toggleBibImportOptions() {
   const method = document.getElementById('bib-push-method').value;
   const opts = document.getElementById('bib-import-options');
+  const bulkOpts = document.getElementById('bib-bulk-api-options');
   if (opts) opts.style.display = method === 'bulkmarcimport' ? 'block' : 'none';
+  if (bulkOpts) bulkOpts.style.display = method === 'bulk_api' ? 'block' : 'none';
 }
 
 async function runPushBibs() {
@@ -7460,6 +7689,25 @@ async function runPushBibs() {
       framework: framework || null,
       container: container || null,
     };
+  } else if (method === 'plugin_fast') {
+    // Plugin handles everything server-side; no client options
+    body.dry_run = false;  // plugin doesn't support dry-run
+    body.bib_options = { method: 'plugin_fast' };
+  } else if (method === 'bulk_api') {
+    const matcherId = document.getElementById('bulk-matcher-id').value.trim();
+    const framework = document.getElementById('bulk-framework').value.trim();
+    const comments = document.getElementById('bulk-comments').value.trim();
+    body.bib_options = {
+      method: 'bulk_api',
+      matcher_id: matcherId ? parseInt(matcherId) : null,
+      overlay_action: document.getElementById('bulk-overlay-action').value,
+      nomatch_action: document.getElementById('bulk-nomatch-action').value,
+      item_action: document.getElementById('bulk-item-action').value,
+      parse_items: document.getElementById('bulk-parse-items').checked,
+      framework: framework || null,
+      comments: comments || null,
+      auto_commit: document.getElementById('bulk-auto-commit').checked,
+    };
   }
 
   try {
@@ -7467,7 +7715,8 @@ async function runPushBibs() {
     if (!r) return;
     const taskId = r.task_ids?.bulkmarc;
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
-    const methodLabel = method === 'bulkmarcimport' ? 'bulkmarcimport.pl' : 'REST API';
+    const methodLabels = { bulkmarcimport: 'bulkmarcimport.pl', bulk_api: 'Bulk Import API', plugin_fast: 'Fast Import Plugin', rest_api: 'REST API' };
+    const methodLabel = methodLabels[method] || 'REST API';
     document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `${methodLabel} push ${dryRun ? '(dry run)' : ''} running…` });
     pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
   } catch (e) { console.error(e); }
@@ -7545,23 +7794,214 @@ async function runPushHolds() {
 
 function renderS7Reindex() {
   document.getElementById('s7-tab').innerHTML = `
-    <div class="card" style="max-width:480px">
-      <div class="card-header"><span class="card-title">Reindex</span></div>
-      <div class="alert alert-warn">Run this AFTER all bibs are imported. Marks Stage 7 as complete.</div>
-      <div style="margin-bottom:12px">
-        <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Search Engine</label>
-        <select id="reindex-engine" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
-          <option value="elasticsearch">Elasticsearch</option>
-          <option value="zebra">Zebra</option>
-        </select>
+    <div class="alert alert-warn" style="margin-bottom:16px">Run this AFTER all bibs are imported. Marks Stage 7 as complete.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">TurboIndex Plugin</span>
+          <span class="badge badge-green" style="font-size:10px;margin-left:8px">recommended</span>
+        </div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Fast parallel Elasticsearch rebuild via the turboindex plugin. Use this after a fastmarcimport push (which defers index writes).</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Processes (1-8)</label>
+            <input type="number" id="turbo-processes" value="4" min="1" max="8" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Bulk commit size</label>
+            <input type="number" id="turbo-commit" value="5000" min="100" max="50000" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="turbo-reset" checked>
+            <label for="turbo-reset" style="font-size:12px;color:var(--text-secondary)">Reset index first</label>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="turbo-force-merge" checked>
+            <label for="turbo-force-merge" style="font-size:12px;color:var(--text-secondary)">Force merge after</label>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="runTurboIndex()">▶ Run TurboIndex</button>
+        <div id="turbo-status" style="margin-top:12px"></div>
       </div>
-      <div id="reindex-cmd-preview" style="margin-bottom:12px;padding:8px;border-radius:4px;background:var(--bg-main);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)"></div>
-      <button class="btn btn-primary" onclick="runReindex()">▶ Rebuild Index</button>
-      <div id="reindex-status" style="margin-top:12px"></div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Manual Reindex</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Emits the command to run inside the Koha container (koha-elasticsearch or koha-rebuild-zebra). Does not dispatch any background job.</p>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Search Engine</label>
+          <select id="reindex-engine" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            <option value="elasticsearch">Elasticsearch</option>
+            <option value="zebra">Zebra</option>
+          </select>
+        </div>
+        <div id="reindex-cmd-preview" style="margin-bottom:12px;padding:8px;border-radius:4px;background:var(--bg-main);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)"></div>
+        <button class="btn btn-ghost" onclick="runReindex()">▶ Log Command + Mark Complete</button>
+        <div id="reindex-status" style="margin-top:12px"></div>
+      </div>
     </div>`;
-  // Show command preview on load and on change
   updateReindexPreview();
   document.getElementById('reindex-engine').addEventListener('change', updateReindexPreview);
+}
+
+// ─── TurboIndex live-log panel ───────────────────────────────────────
+// Polls the manifest every 2s while the job is running, renders a
+// phase header, progress bar, running counters, and a scrollable message
+// stream so the operator can see exactly what Koha is doing.
+
+window._turboPoller = null;
+
+async function runTurboIndex() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('turbo-status');
+  const processes = parseInt(document.getElementById('turbo-processes').value) || 4;
+  const commit = parseInt(document.getElementById('turbo-commit').value) || 5000;
+  const reset = document.getElementById('turbo-reset').checked;
+  const force_merge = document.getElementById('turbo-force-merge').checked;
+
+  statusEl.innerHTML = '<div class="spinner"></div> Dispatching TurboIndex…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/turboindex`, {
+      reset, processes, commit, force_merge,
+    });
+    if (!r) return;
+    toast('TurboIndex dispatched', 'info');
+    // Begin live-polling the manifest for detailed state
+    _startTurboLivePoll(p.id, r.manifest_id, { processes, commit, reset, force_merge });
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+function _startTurboLivePoll(projectId, manifestId, config) {
+  if (window._turboPoller) clearInterval(window._turboPoller);
+  const statusEl = document.getElementById('turbo-status');
+  statusEl.innerHTML = _renderTurboLivePanel({
+    status: 'running', progress: 0, size: 0,
+    messages: [], report: {}, config,
+  });
+
+  const tick = async () => {
+    try {
+      const m = await window.api('GET', `/projects/${projectId}/push/manifests/${manifestId}`);
+      if (!m) return;
+      const rd = m.result_data || {};
+      const isDone = m.status === 'complete' || m.status === 'error' || rd.status === 'finished';
+      // Preserve log-stream scroll position — only snap to bottom if user is near the bottom
+      const priorLog = statusEl.querySelector('[data-log-stream]');
+      const wasAtBottom = priorLog ? (priorLog.scrollTop + priorLog.clientHeight >= priorLog.scrollHeight - 10) : true;
+      statusEl.innerHTML = _renderTurboLivePanel({
+        status: isDone ? (m.status === 'error' ? 'error' : 'finished') : 'running',
+        progress: rd.progress || 0,
+        size: rd.size || 0,
+        messages: rd.messages || [],
+        report: rd.report || rd,
+        config: rd.config || config,
+        errorMsg: m.error_message,
+      });
+      // Restore scroll position / auto-scroll to bottom
+      const newLog = statusEl.querySelector('[data-log-stream]');
+      if (newLog && wasAtBottom) newLog.scrollTop = newLog.scrollHeight;
+      if (isDone) {
+        clearInterval(window._turboPoller);
+        window._turboPoller = null;
+        if (m.status === 'error') {
+          toast('TurboIndex failed — see log', 'warn');
+        } else {
+          const n = rd.num_indexed || (rd.report && rd.report.num_indexed) || 0;
+          toast(`TurboIndex complete — ${Number(n).toLocaleString()} records indexed`, 'success');
+        }
+      }
+    } catch (e) {
+      console.error('turbo poll error', e);
+    }
+  };
+  tick();
+  window._turboPoller = setInterval(tick, 2000);
+}
+
+function _renderTurboLivePanel(state) {
+  const { status, progress, size, messages, report, config, errorMsg } = state;
+  const pct = size > 0 ? Math.min(100, Math.round((progress / size) * 100)) : 0;
+
+  // Phase header
+  const badgeClass = status === 'finished' ? 'badge-green'
+    : status === 'error' ? 'badge-red' : 'badge-yellow';
+  const badgeText = status === 'finished' ? 'COMPLETE'
+    : status === 'error' ? 'FAILED' : 'RUNNING';
+
+  let html = `<div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-main);overflow:hidden">`;
+
+  // Top bar
+  html += `<div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--surface-dim)">`;
+  html += `<div><span class="badge ${badgeClass}" style="font-size:10px">${badgeText}</span>`;
+  html += ` <span class="mono" style="font-size:11px;color:var(--text-secondary);margin-left:6px">job ${report.job_id || '?'}</span></div>`;
+  html += `<span style="font-size:11px;color:var(--text-dim)">`;
+  if (config) html += `${config.processes} workers · reset=${config.reset} · commit=${config.commit}`;
+  html += `</span></div>`;
+
+  // Progress bar
+  html += `<div style="padding:10px 12px;border-bottom:1px solid var(--border)">`;
+  html += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:4px">`;
+  html += `<span>${Number(progress).toLocaleString()} / ${Number(size).toLocaleString()} records</span>`;
+  if (report.records_per_sec) html += `<span>${report.records_per_sec} rec/s${report.duration_sec ? ' · '+report.duration_sec+'s' : ''}</span>`;
+  html += `</div>`;
+  html += `<div style="height:6px;background:var(--bg-card);border-radius:3px;overflow:hidden">`;
+  html += `<div style="height:100%;width:${pct}%;background:${status === 'error' ? 'var(--red,#e55)' : status === 'finished' ? 'var(--green,#5a5)' : 'var(--primary,#5aa)'};transition:width 0.3s"></div>`;
+  html += `</div></div>`;
+
+  // Counters grid (after finished or when we have report data)
+  if (report && (report.num_indexed !== undefined || report.num_errors !== undefined)) {
+    html += `<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:11px">`;
+    const counters = [
+      ['Indexed', report.num_indexed, 'text-green'],
+      ['Errors', report.num_errors, (report.num_errors||0) > 0 ? 'text-red' : ''],
+      ['Rate', report.records_per_sec ? report.records_per_sec + '/s' : '—', ''],
+      ['Duration', report.duration_sec ? report.duration_sec + 's' : '—', ''],
+    ];
+    for (const [label, val, cls] of counters) {
+      html += `<div><div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div class="mono ${cls}" style="font-size:13px">${val !== undefined && val !== null ? (typeof val === 'number' ? Number(val).toLocaleString() : val) : '—'}</div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Saved ES settings (shown when finished)
+  if (report && report.saved_settings) {
+    const s = report.saved_settings;
+    html += `<div style="padding:6px 12px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-secondary)">`;
+    html += `Restored ES settings: refresh_interval=<span class="mono">${esc(String(s.refresh_interval||'?'))}</span> replicas=<span class="mono">${esc(String(s.number_of_replicas||'?'))}</span>`;
+    html += `</div>`;
+  }
+
+  // Error banner
+  if (errorMsg) {
+    html += `<div style="padding:8px 12px;background:rgba(200,60,60,0.1);border-bottom:1px solid var(--border);color:var(--red,#e55);font-size:11px">`;
+    html += esc(errorMsg);
+    html += `</div>`;
+  }
+
+  // Message log stream
+  html += `<div style="padding:8px 12px;font-size:11px">`;
+  html += `<div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Log stream${messages.length ? ' ('+messages.length+' entries)' : ''}</div>`;
+  html += `<div data-log-stream style="max-height:240px;overflow-y:auto;background:var(--bg-card);border-radius:4px;padding:6px 8px;font-family:var(--font-mono);font-size:10px;line-height:1.5">`;
+  if (!messages.length) {
+    html += `<span style="color:var(--text-dim)">waiting for messages from Koha…</span>`;
+  } else {
+    // most recent last, auto-scroll to bottom
+    for (const m of messages) {
+      const t = (m.type || 'info').toLowerCase();
+      const color = t === 'error' ? 'var(--red,#e55)'
+        : t === 'warning' ? 'var(--yellow,#d90)'
+        : t === 'info' ? 'var(--text-primary)' : 'var(--text-secondary)';
+      html += `<div style="color:${color};white-space:pre-wrap;word-break:break-word">`;
+      html += `<span style="color:var(--text-dim);font-weight:600">[${esc(t)}]</span> ${esc(m.message || '')}`;
+      html += `</div>`;
+    }
+  }
+  html += `</div></div>`;
+
+  html += `</div>`;  // card
+  return html;
 }
 
 function updateReindexPreview() {

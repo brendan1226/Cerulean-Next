@@ -24,12 +24,20 @@ class PreflightResponse(BaseModel):
 # ── Push start ───────────────────────────────────────────────────────────
 
 class BibPushOptions(BaseModel):
-    method: str = "rest_api"           # "rest_api" | "bulkmarcimport"
-    match_field: str | None = None     # e.g. "001", "020a", "999c"
-    insert: bool = True                # --insert: insert new records
-    update: bool = False               # --update: update matched records
-    framework: str | None = None       # --framework CODE
-    container: str | None = None       # Docker container name (auto-detect if None)
+    method: str = "rest_api"           # "rest_api" | "bulkmarcimport" | "bulk_api" | "plugin_fast"
+    match_field: str | None = None     # e.g. "001", "020a", "999c"  (bulkmarcimport)
+    insert: bool = True                # --insert: insert new records (bulkmarcimport)
+    update: bool = False               # --update: update matched records (bulkmarcimport)
+    framework: str | None = None       # Framework code (bulkmarcimport + bulk_api)
+    container: str | None = None       # Docker container name (bulkmarcimport only)
+    # ── bulk_api options ─────────────────────────────────────────────
+    matcher_id: int | None = None          # Koha matching rule ID for dedup
+    overlay_action: str | None = None      # "replace" | "create_new" | "ignore"
+    nomatch_action: str | None = None      # "create_new" | "ignore"
+    item_action: str | None = None         # "always_add" | "add_only_for_matches" | "add_only_for_new" | "ignore"
+    parse_items: bool = True               # Parse 952 item data from MARC
+    comments: str | None = None            # Import batch comments
+    auto_commit: bool = False              # Auto-commit after staging (skip explicit commit step)
 
 
 class PushStartRequest(BaseModel):
@@ -170,3 +178,18 @@ class PushItemTypesResponse(BaseModel):
     success_count: int
     failed_count: int
     results: list[PushItemTypeResult]
+
+
+# ── TurboIndex (plugin) reindex ─────────────────────────────────────
+
+class TurboIndexRequest(BaseModel):
+    reset: bool = True
+    processes: int = 4
+    commit: int = 5000
+    force_merge: bool = True
+
+
+class TurboIndexResponse(BaseModel):
+    task_id: str
+    manifest_id: str
+    message: str

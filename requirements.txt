@@ -21,6 +21,7 @@ celery-redbeat==2.2.0           # Redis-backed beat scheduler (no Django)
 
 # MARC processing
 pymarc==5.1.2
+unidecode==1.3.8                # ASCII-fold non-ASCII chars for UTF-8 repair
 
 # AI
 anthropic==0.26.0
