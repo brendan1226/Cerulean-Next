@@ -873,9 +873,9 @@ def migration_mode_status_task(project_id: str) -> dict:
 
 
 @celery_app.task(name="cerulean.tasks.push.migration_mode_enable_task", queue="push")
-def migration_mode_enable_task(project_id: str) -> dict:
+def migration_mode_enable_task(project_id: str, buffer_pool_mb: int = 2048) -> dict:
     """Celery wrapper for migration_mode_enable (needs Docker socket)."""
-    return migration_mode_enable(project_id)
+    return migration_mode_enable(project_id, buffer_pool_mb=buffer_pool_mb)
 
 
 @celery_app.task(name="cerulean.tasks.push.migration_mode_disable_task", queue="push")
@@ -884,27 +884,138 @@ def migration_mode_disable_task(project_id: str) -> dict:
     return migration_mode_disable(project_id)
 
 
-def migration_mode_enable(project_id: str) -> dict:
-    """Stop non-essential Koha daemons for migration."""
+def _tune_koha_db(project_id: str, mode: str = "fast",
+                   buffer_pool_mb: int = 2048) -> dict:
+    """Tune the Koha MariaDB for migration speed or restore defaults.
+
+    Args:
+        project_id: UUID of the project (used to find the DB container).
+        mode: "fast" — relax durability + grow buffer pool for import speed.
+              "safe" — restore production-safe defaults.
+        buffer_pool_mb: InnoDB buffer pool size in MB (only used in "fast" mode).
+
+    Returns dict with original values (for restore) and what was set.
+    """
+    # Need SUPER privilege for SET GLOBAL — the koha_* user doesn't have
+    # it, so we connect as root.  Derive the DB hostname the same way
+    # _koha_mysql_conn does (kohadev-koha-1 → kohadev-db-1).
+    try:
+        import pymysql
+        from cerulean.models import SandboxInstance
+
+        db_host = "kohadev-db-1"
+        with Session(_engine) as db:
+            instance = db.query(SandboxInstance).filter_by(
+                project_id=project_id, status="running"
+            ).first()
+            if instance and instance.container_name:
+                parts = instance.container_name.rsplit("-", 2)
+                if len(parts) >= 2:
+                    db_host = f"{parts[0]}-db-1"
+
+        conn = pymysql.connect(
+            host=db_host,
+            user="root",
+            password="password",
+            port=3306,
+            connect_timeout=10,
+        )
+    except Exception as exc:
+        return {"error": f"DB connection failed: {exc}", "tuned": False}
+
+    result = {"tuned": True, "mode": mode, "settings": {}}
+    try:
+        cursor = conn.cursor()
+        if mode == "fast":
+            # Save originals
+            cursor.execute("SELECT @@innodb_flush_log_at_trx_commit")
+            orig_flush = cursor.fetchone()[0]
+            cursor.execute("SELECT @@innodb_buffer_pool_size")
+            orig_pool = cursor.fetchone()[0]
+
+            result["original"] = {
+                "innodb_flush_log_at_trx_commit": orig_flush,
+                "innodb_buffer_pool_size": orig_pool,
+            }
+
+            # Apply fast settings
+            cursor.execute("SET GLOBAL innodb_flush_log_at_trx_commit = 2")
+            pool_bytes = buffer_pool_mb * 1024 * 1024
+            cursor.execute(f"SET GLOBAL innodb_buffer_pool_size = {pool_bytes}")
+            conn.commit()
+
+            # Verify
+            cursor.execute("SELECT @@innodb_flush_log_at_trx_commit")
+            new_flush = cursor.fetchone()[0]
+            cursor.execute("SELECT @@innodb_buffer_pool_size")
+            new_pool = cursor.fetchone()[0]
+
+            result["settings"] = {
+                "innodb_flush_log_at_trx_commit": new_flush,
+                "innodb_buffer_pool_size": new_pool,
+                "innodb_buffer_pool_size_mb": round(new_pool / (1024 * 1024)),
+            }
+
+        elif mode == "safe":
+            # Restore production defaults
+            cursor.execute("SET GLOBAL innodb_flush_log_at_trx_commit = 1")
+            # Don't shrink buffer pool — leave it as-is. Shrinking can be
+            # slow and disruptive. The DBA can resize manually if needed.
+            conn.commit()
+
+            cursor.execute("SELECT @@innodb_flush_log_at_trx_commit")
+            new_flush = cursor.fetchone()[0]
+            cursor.execute("SELECT @@innodb_buffer_pool_size")
+            current_pool = cursor.fetchone()[0]
+
+            result["settings"] = {
+                "innodb_flush_log_at_trx_commit": new_flush,
+                "innodb_buffer_pool_size": current_pool,
+                "innodb_buffer_pool_size_mb": round(current_pool / (1024 * 1024)),
+            }
+    except Exception as exc:
+        result["error"] = str(exc)[:200]
+        result["tuned"] = False
+    finally:
+        conn.close()
+
+    return result
+
+
+def migration_mode_enable(project_id: str, buffer_pool_mb: int = 2048) -> dict:
+    """Stop non-essential Koha daemons and tune DB for migration."""
     container = _koha_container_for_project(project_id)
     instance = _detect_koha_instance(container)
-    results = {}
+    daemon_results = {}
     for daemon in _MIGRATION_DAEMONS:
-        results[daemon] = _daemon_cmd("stop", daemon, instance, container)
-    return {"container": container, "instance": instance, "results": results}
+        daemon_results[daemon] = _daemon_cmd("stop", daemon, instance, container)
+
+    db_tuning = _tune_koha_db(project_id, mode="fast", buffer_pool_mb=buffer_pool_mb)
+
+    return {
+        "container": container,
+        "instance": instance,
+        "results": daemon_results,
+        "db_tuning": db_tuning,
+    }
 
 
 def migration_mode_disable(project_id: str) -> dict:
-    """Restart non-essential Koha daemons after migration."""
+    """Restart non-essential Koha daemons and restore DB defaults."""
     container = _koha_container_for_project(project_id)
     instance = _detect_koha_instance(container)
-    results = {}
-    # Restart in reverse order (ES indexer last — let everything else
-    # stabilize first so the indexer doesn't immediately choke on a
-    # half-started Zebra or SIP)
+    daemon_results = {}
     for daemon in reversed(_MIGRATION_DAEMONS):
-        results[daemon] = _daemon_cmd("start", daemon, instance, container)
-    return {"container": container, "instance": instance, "results": results}
+        daemon_results[daemon] = _daemon_cmd("start", daemon, instance, container)
+
+    db_tuning = _tune_koha_db(project_id, mode="safe")
+
+    return {
+        "container": container,
+        "instance": instance,
+        "results": daemon_results,
+        "db_tuning": db_tuning,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════

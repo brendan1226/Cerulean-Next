@@ -7199,10 +7199,19 @@ async function renderS7Bibs() {
         <span class="card-title">Migration Mode</span>
         <span id="migration-mode-badge"></span>
       </div>
-      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Stops non-essential Koha daemons (ES indexer, Zebra, SIP, Z39.50) to free resources for bulk import. Re-enable after import + reindex are complete.</p>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Stops non-essential Koha daemons (ES indexer, Zebra, SIP, Z39.50) and tunes MariaDB for bulk import speed. Re-enable after import + reindex are complete.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">InnoDB Buffer Pool (MB)</label>
+          <input type="number" id="migration-buffer-pool" value="2048" min="128" max="16384" step="256" style="font-size:12px;padding:4px 8px;width:120px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);max-width:260px;line-height:1.4;padding-top:14px">
+          Also sets innodb_flush_log_at_trx_commit=2 (relaxed durability, ~2x faster writes). Restored to safe defaults on disable.
+        </div>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" onclick="enableMigrationMode()">Enable (Stop Daemons)</button>
-        <button class="btn btn-ghost btn-sm" onclick="disableMigrationMode()">Disable (Restart Daemons)</button>
+        <button class="btn btn-primary btn-sm" onclick="enableMigrationMode()">Enable (Stop Daemons + Tune DB)</button>
+        <button class="btn btn-ghost btn-sm" onclick="disableMigrationMode()">Disable (Restart + Restore DB)</button>
         <button class="btn btn-ghost btn-sm" onclick="checkMigrationMode()">Check Status</button>
       </div>
       <div id="migration-mode-status" style="margin-top:12px"></div>
@@ -7552,17 +7561,34 @@ async function checkMigrationMode() {
 async function enableMigrationMode() {
   const p = state.currentProject;
   const statusEl = document.getElementById('migration-mode-status');
-  if (!confirm('Stop non-essential Koha daemons?\n\nThis will stop: ES indexer, Zebra indexer, Zebra search, SIP, Z39.50.\nKeeps running: background workers (for import jobs), Plack (REST API).')) return;
-  statusEl.innerHTML = '<div class="spinner"></div> Stopping daemons…';
+  const bufferPool = parseInt(document.getElementById('migration-buffer-pool').value) || 2048;
+  if (!confirm(`Enable migration mode?\n\nDaemons stopped: ES indexer, Zebra, SIP, Z39.50\nDB tuning: innodb_buffer_pool=${bufferPool}MB, flush_log=2\n\nKeeps running: background workers, Plack (REST API).`)) return;
+  statusEl.innerHTML = '<div class="spinner"></div> Stopping daemons + tuning DB…';
   try {
-    const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/enable`, {});
-    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Migration mode enabled — daemons stopped.</div>';
-    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
+    const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/enable?buffer_pool_mb=${bufferPool}`, {});
+    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Migration mode enabled.</div>';
+    // Daemon results
+    html += '<table class="data-table" style="font-size:11px;width:100%;margin-bottom:8px"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
     for (const [name, info] of Object.entries(r.results || {})) {
       const ok = info.returncode === 0;
       html += `<tr><td class="mono">${esc(name)}</td><td>${esc(info.action)}</td><td>${ok ? '<span class="text-green">OK</span>' : '<span class="text-red">'+esc(info.output)+'</span>'}</td></tr>`;
     }
     html += '</tbody></table>';
+    // DB tuning results
+    const db = r.db_tuning || {};
+    if (db.tuned) {
+      const s = db.settings || {};
+      html += '<div style="font-size:11px;color:var(--text-secondary);padding:6px 8px;background:var(--bg-main);border-radius:4px">';
+      html += '<strong>DB tuned:</strong> ';
+      html += `buffer_pool=<span class="mono">${s.innodb_buffer_pool_size_mb || '?'}MB</span> `;
+      html += `flush_log=<span class="mono">${s.innodb_flush_log_at_trx_commit || '?'}</span>`;
+      if (db.original) {
+        html += `<br><span class="text-dim">was: buffer_pool=${Math.round((db.original.innodb_buffer_pool_size||0)/1024/1024)}MB flush_log=${db.original.innodb_flush_log_at_trx_commit}</span>`;
+      }
+      html += '</div>';
+    } else if (db.error) {
+      html += `<div class="text-red" style="font-size:11px">DB tuning failed: ${esc(db.error)}</div>`;
+    }
     statusEl.innerHTML = html;
     document.getElementById('migration-mode-badge').innerHTML = '<span class="badge badge-yellow" style="font-size:10px">MIGRATION MODE</span>';
     toast('Migration mode enabled', 'info');
@@ -7574,19 +7600,24 @@ async function enableMigrationMode() {
 async function disableMigrationMode() {
   const p = state.currentProject;
   const statusEl = document.getElementById('migration-mode-status');
-  statusEl.innerHTML = '<div class="spinner"></div> Restarting daemons…';
+  statusEl.innerHTML = '<div class="spinner"></div> Restarting daemons + restoring DB…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/disable`, {});
-    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Daemons restarted — normal operations resumed.</div>';
-    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
+    let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Normal operations restored.</div>';
+    html += '<table class="data-table" style="font-size:11px;width:100%;margin-bottom:8px"><thead><tr><th>Daemon</th><th>Action</th><th>Result</th></tr></thead><tbody>';
     for (const [name, info] of Object.entries(r.results || {})) {
       const ok = info.returncode === 0;
       html += `<tr><td class="mono">${esc(name)}</td><td>${esc(info.action)}</td><td>${ok ? '<span class="text-green">OK</span>' : '<span class="text-red">'+esc(info.output)+'</span>'}</td></tr>`;
     }
     html += '</tbody></table>';
+    const db = r.db_tuning || {};
+    if (db.tuned) {
+      const s = db.settings || {};
+      html += `<div style="font-size:11px;color:var(--text-secondary);padding:6px 8px;background:var(--bg-main);border-radius:4px"><strong>DB restored:</strong> flush_log=<span class="mono">${s.innodb_flush_log_at_trx_commit || '?'}</span> (safe durability)</div>`;
+    }
     statusEl.innerHTML = html;
     document.getElementById('migration-mode-badge').innerHTML = '<span class="badge badge-green" style="font-size:10px">NORMAL</span>';
-    toast('Daemons restarted', 'success');
+    toast('Normal mode restored', 'success');
   } catch (e) {
     statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
   }

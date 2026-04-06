@@ -812,23 +812,31 @@ async def migration_mode_status_endpoint(
 @router.post("/{project_id}/push/migration-mode/enable")
 async def migration_mode_enable_endpoint(
     project_id: str,
+    buffer_pool_mb: int = Query(2048, ge=128, le=16384,
+                                 description="InnoDB buffer pool size in MB (migration fast mode)"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stop non-essential Koha daemons for migration.
+    """Stop non-essential Koha daemons and tune DB for migration.
 
     Stops: ES indexer, Zebra indexer, Zebra search, SIP, Z39.50.
     Keeps: background workers (process import/reindex jobs), Plack (REST API).
+    DB tuning: sets innodb_flush_log_at_trx_commit=2, grows buffer pool.
     """
     await require_project(project_id, db)
     from cerulean.tasks.push import migration_mode_enable_task
     try:
         result = migration_mode_enable_task.apply_async(
-            args=[project_id], queue="push"
+            args=[project_id],
+            kwargs={"buffer_pool_mb": buffer_pool_mb},
+            queue="push",
         ).get(timeout=60)
     except Exception as exc:
         raise HTTPException(500, detail={"error": "MIGRATION_MODE_FAILED", "message": str(exc)})
     await audit_log(db, project_id, stage=7, level="info", tag="[migration-mode]",
-                    message="Migration mode ENABLED — non-essential Koha daemons stopped")
+                    message=(
+                        f"Migration mode ENABLED — daemons stopped, "
+                        f"DB tuned (buffer_pool={buffer_pool_mb}MB, flush=2)"
+                    ))
     return result
 
 
