@@ -7327,8 +7327,24 @@ function s7RenderSetupGrid() {
     if (!needed.length) {
       html += '<p class="text-dim" style="font-size:12px;padding:8px 0">No values found in project data. Run Stage 5/6 scans first.</p>';
     } else {
+      // Build a lookup for existing Koha descriptions
+      let kohaDescriptions = {};
+      if (_s7KohaRefs) {
+        if (cat.kohaKey && _s7KohaRefs[cat.kohaKey]) {
+          _s7KohaRefs[cat.kohaKey].forEach(item => {
+            const id = item[cat.kohaIdField] || item.value || '';
+            kohaDescriptions[id] = item[cat.kohaNameField] || item.description || item.lib || '';
+          });
+        } else if (cat.avKey && _s7KohaRefs.authorised_values && _s7KohaRefs.authorised_values[cat.avKey]) {
+          _s7KohaRefs.authorised_values[cat.avKey].forEach(item => {
+            const id = item.value || item.authorised_value || '';
+            kohaDescriptions[id] = item.description || item.lib || '';
+          });
+        }
+      }
+
       html += '<table class="data-table" style="font-size:12px;width:100%">'
-        + '<thead><tr><th>Value</th><th>Records</th>' + (_s7KohaRefs ? '<th>Status</th>' : '') + '</tr></thead><tbody>';
+        + '<thead><tr><th style="width:120px">Code</th><th>Description</th><th style="width:80px">Records</th>' + (_s7KohaRefs ? '<th style="width:80px">Status</th>' : '') + '</tr></thead><tbody>';
       for (const n of needed) {
         const exists = kohaValues.has(n.value);
         const statusBadge = _s7KohaRefs
@@ -7336,8 +7352,13 @@ function s7RenderSetupGrid() {
             ? '<span class="badge badge-green">exists</span>'
             : '<span class="badge badge-red">MISSING</span>')
           : '';
+        const existingDesc = kohaDescriptions[n.value] || '';
+        // All items get an editable description — existing ones pre-filled from Koha, missing default to code
+        const descValue = exists ? existingDesc : n.value;
+        const descCell = '<input type="text" class="s7-desc-input" data-category="' + esc(cat.key) + '" data-code="' + esc(n.value) + '" value="' + esc(descValue) + '" placeholder="' + esc(n.value) + '" style="font-size:11px;padding:2px 6px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:3px;background:var(--bg-card);color:var(--text-primary)' + (exists ? ';opacity:0.7' : '') + '">';
         html += '<tr><td class="mono">' + esc(n.value) + '</td>'
-          + '<td class="mono">' + n.record_count.toLocaleString() + '</td>'
+          + '<td>' + descCell + '</td>'
+          + '<td class="mono" style="text-align:right">' + n.record_count.toLocaleString() + '</td>'
           + (_s7KohaRefs ? '<td>' + statusBadge + '</td>' : '')
           + '</tr>';
       }
@@ -7382,7 +7403,7 @@ async function s7PushMissingLibraries() {
 
   const missing = (_s7NeededRefs.libraries || [])
     .filter(n => !existing.has(n.value))
-    .map(n => ({ library_id: n.value, name: n.value }));
+    .map(n => ({ library_id: n.value, name: _s7GetDescription('libraries', n.value) }));
 
   if (!missing.length) {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All libraries already exist.</span>';
@@ -7412,7 +7433,7 @@ async function s7PushMissingPatronCategories() {
 
   const missing = (_s7NeededRefs.patron_categories || [])
     .filter(n => !existing.has(n.value))
-    .map(n => ({ category_id: n.value, name: n.value, enrolmentperiod: 99 }));
+    .map(n => ({ category_id: n.value, name: _s7GetDescription('patron_categories', n.value), enrolmentperiod: 99 }));
 
   if (!missing.length) {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All patron categories already exist.</span>';
@@ -7435,6 +7456,12 @@ async function s7PushMissingPatronCategories() {
   }
 }
 
+// Helper: read user-entered descriptions from the editable inputs in the setup grid
+function _s7GetDescription(categoryKey, code) {
+  const input = document.querySelector(`.s7-desc-input[data-category="${categoryKey}"][data-code="${code}"]`);
+  return input ? input.value.trim() || code : code;
+}
+
 async function s7PushMissingAuthorisedValues(category) {
   const p = state.currentProject;
   const key = category === 'LOC' ? 'locations' : category === 'CCODE' ? 'ccodes' : category.toLowerCase();
@@ -7451,7 +7478,7 @@ async function s7PushMissingAuthorisedValues(category) {
   const neededKey = key;
   const missing = (_s7NeededRefs[neededKey] || [])
     .filter(n => !existing.has(n.value))
-    .map(n => ({ value: n.value, description: n.value }));
+    .map(n => ({ value: n.value, description: _s7GetDescription(key, n.value) }));
 
   if (!missing.length) {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All values already exist.</span>';
@@ -7487,7 +7514,7 @@ async function s7PushMissingItemTypes() {
 
   const missing = (_s7NeededRefs.item_types || [])
     .filter(n => !existing.has(n.value))
-    .map(n => ({ item_type_id: n.value, description: n.value }));
+    .map(n => ({ item_type_id: n.value, description: _s7GetDescription('item_types', n.value) }));
 
   if (!missing.length) {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All item types already exist.</span>';
