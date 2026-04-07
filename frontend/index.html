@@ -1468,7 +1468,7 @@ async function renderStage1(el) {
         <div class="card-header">
           <span class="card-title">Upload MARC Files</span>
         </div>
-        <div class="alert alert-info">Accepted: .mrc, .marc, .mrk, .csv · Max 500 MB per file</div>
+        <div class="alert alert-info">Accepted: .mrc, .marc, .mrk, .csv, .xml · Max 2 GB per file</div>
         <div id="drop-zone" style="border:2px dashed var(--border-mid);border-radius:var(--radius-lg);padding:32px;text-align:center;cursor:pointer;transition:all 0.2s"
           onclick="document.getElementById('file-input').click()"
           ondragover="event.preventDefault();this.style.borderColor='var(--cerulean)'"
@@ -1963,12 +1963,38 @@ async function renderStage2(el) {
       <div class="card-header"><span class="card-title">Files Summary</span></div>
       <div id="s2-files-summary"><div class="spinner"></div></div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="card-title">Data Preview</span>
+        <span class="text-dim" style="font-size:11px">Browse records to verify structure before configuring</span>
+      </div>
+      <div id="s2-preview-controls" style="margin-bottom:12px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="s2-preview-file" class="form-select" style="max-width:300px;font-size:12px" onchange="s2LoadPreview(0)">
+            <option value="">Select a file…</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="s2LoadPreview(Math.max(0, (window._s2PreviewIdx||0) - 1))">← Prev</button>
+          <input type="number" id="s2-preview-jump" class="form-input mono" min="1" value="1" style="width:60px;padding:2px 4px;font-size:11px;text-align:center" onchange="s2LoadPreview(parseInt(this.value)-1)" onkeydown="if(event.key==='Enter'){event.preventDefault();s2LoadPreview(parseInt(this.value)-1)}">
+          <span id="s2-preview-count" class="mono text-dim" style="font-size:11px"></span>
+          <button class="btn btn-ghost btn-sm" onclick="s2LoadPreview((window._s2PreviewIdx||0) + 1)">Next →</button>
+        </div>
+      </div>
+      <div id="s2-preview-content" style="font-size:12px;color:var(--text-dim)">Select a file above to preview records.</div>
+    </div>
+    <div class="card" style="margin-top:16px;border:2px solid var(--cerulean-dim);background:rgba(0,188,212,0.02)">
+      <div class="card-header"><span class="card-title">Quick Path</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">If your MARC file is clean and doesn't need field mapping, dedup, or reconciliation — skip straight to push. This marks the selected file as the push-ready output for Stage 7.</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="markFileReady()">Mark as Ready to Load → Stage 7</button>
+        <div id="mark-ready-status"></div>
+      </div>
+    </div>
     <div style="margin-top:16px;display:flex;gap:8px">
       ${gateHtml}
       <button class="btn btn-ghost" onclick="navigate('stage5')">Go to Field Mapping →</button>
     </div>`;
 
-  // Load file summary
+  // Load file summary + data preview
   try {
     const files = await api('GET', `/projects/${p.id}/files`);
     const marc = (files || []).filter(f => f.file_category === 'marc' && f.status === 'indexed');
@@ -1982,6 +2008,9 @@ async function renderStage2(el) {
         </div>`;
     }
   } catch(e) {}
+
+  // Populate data preview file selector
+  s2PopulateFileSelector();
 }
 
 async function saveS2Config() {
@@ -1998,6 +2027,124 @@ async function approveS2Config() {
     await refreshProject();
     navigate('stage3');
   } catch(e) { console.error(e); }
+}
+
+// ── Stage 2 — Mark Ready to Load ────────────────────────────────────
+
+async function markFileReady() {
+  const p = state.currentProject;
+  const fileId = document.getElementById('s2-preview-file')?.value;
+  const statusEl = document.getElementById('mark-ready-status');
+  if (!fileId) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Select a file first.</span>';
+    return;
+  }
+  const file = (window._s2PreviewFiles || []).find(f => f.id === fileId);
+  const fname = file ? file.filename : fileId;
+  if (!confirm(`Mark "${fname}" as ready to load?\n\nThis skips field mapping, dedup, and reconciliation.\nThe file will appear directly in Stage 7 for push.`)) return;
+
+  statusEl.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await api('POST', `/projects/${p.id}/files/${fileId}/mark-ready`);
+    statusEl.innerHTML = `<span class="text-green" style="font-size:12px">${esc(r.message)}</span>`;
+    toast(`${fname} ready to load`, 'success');
+  } catch(e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+// ── Stage 2 — Data Preview ──────────────────────────────────────────
+
+window._s2PreviewIdx = 0;
+window._s2PreviewFiles = [];
+
+async function s2PopulateFileSelector() {
+  const p = state.currentProject;
+  try {
+    const files = await api('GET', `/projects/${p.id}/files`);
+    const indexed = (files || []).filter(f => f.status === 'indexed');
+    window._s2PreviewFiles = indexed;
+    const sel = document.getElementById('s2-preview-file');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Select a file…</option>';
+    for (const f of indexed) {
+      sel.innerHTML += `<option value="${esc(f.id)}">${esc(f.filename)} (${(f.record_count||0).toLocaleString()} records)</option>`;
+    }
+    // Auto-select first file
+    if (indexed.length) {
+      sel.value = indexed[0].id;
+      s2LoadPreview(0);
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function s2LoadPreview(idx) {
+  const p = state.currentProject;
+  const fileId = document.getElementById('s2-preview-file')?.value;
+  const contentEl = document.getElementById('s2-preview-content');
+  if (!fileId || !contentEl) return;
+
+  if (idx < 0) idx = 0;
+  window._s2PreviewIdx = idx;
+  const jumpEl = document.getElementById('s2-preview-jump');
+  if (jumpEl) jumpEl.value = idx + 1;
+
+  contentEl.innerHTML = '<div class="spinner"></div>';
+  try {
+    const rec = await api('GET', `/projects/${p.id}/files/${fileId}/records/${idx}`);
+    if (!rec) { contentEl.innerHTML = '<span class="text-dim">No record at this index.</span>'; return; }
+
+    const file = window._s2PreviewFiles.find(f => f.id === fileId);
+    const total = file ? file.record_count : '?';
+    const countEl = document.getElementById('s2-preview-count');
+    if (countEl) countEl.textContent = `of ${typeof total === 'number' ? total.toLocaleString() : total}`;
+
+    // Check for item fields (952, 852, 949, 999)
+    const itemTags = ['952', '949', '999', '852'];
+    const foundItems = (rec.fields || []).filter(f => itemTags.includes(f.tag));
+    const hasItems = foundItems.length > 0;
+
+    let html = '';
+
+    // Item detection banner
+    if (hasItems) {
+      html += `<div style="padding:8px 12px;margin-bottom:12px;background:rgba(0,188,212,0.08);border:1px solid rgba(0,188,212,0.2);border-radius:6px;font-size:12px">`;
+      html += `<strong style="color:var(--cerulean)">Items detected in this record:</strong> `;
+      const tagCounts = {};
+      for (const f of foundItems) { tagCounts[f.tag] = (tagCounts[f.tag] || 0) + 1; }
+      html += Object.entries(tagCounts).map(([t, c]) => `<span class="mono">${t}</span> (${c})`).join(', ');
+      html += ` — consider setting Item Record Structure to <strong>embedded</strong>`;
+      html += `</div>`;
+    }
+
+    // Title + leader
+    html += `<div style="margin-bottom:8px;font-size:13px"><strong>${esc(rec.title || '(no title)')}</strong></div>`;
+    html += `<div class="mono text-dim" style="font-size:10px;margin-bottom:12px">Leader: ${esc(rec.leader || '')}</div>`;
+
+    // Fields table
+    html += '<div style="max-height:450px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">';
+    html += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th style="width:50px">Tag</th><th style="width:30px">Ind</th><th>Content</th></tr></thead><tbody>';
+
+    for (const f of (rec.fields || [])) {
+      const isItem = itemTags.includes(f.tag);
+      const rowStyle = isItem ? 'background:rgba(0,188,212,0.04)' : '';
+
+      if (f.subfields && f.subfields.length) {
+        const sfHtml = f.subfields.map(sf =>
+          `<span class="mono" style="color:var(--cerulean);font-weight:600">$${esc(sf.code)}</span> ${esc(sf.value)}`
+        ).join(' ');
+        const ind = (f.ind1 || ' ') + (f.ind2 || ' ');
+        html += `<tr style="${rowStyle}"><td class="mono" style="font-weight:600">${esc(f.tag)}</td><td class="mono">${esc(ind)}</td><td>${sfHtml}</td></tr>`;
+      } else if (f.data !== undefined) {
+        html += `<tr style="${rowStyle}"><td class="mono" style="font-weight:600">${esc(f.tag)}</td><td></td><td class="mono">${esc(f.data)}</td></tr>`;
+      }
+    }
+    html += '</tbody></table></div>';
+
+    contentEl.innerHTML = html;
+  } catch(e) {
+    contentEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed to load record: ${esc(e.message || String(e))}</span>`;
+  }
 }
 
 // ── Stage 5 — Field Mapping (Three-Panel Layout) ─────────────────────
@@ -4081,6 +4228,18 @@ async function renderQ3Summary() {
       <div id="q3-scan-status" style="margin-left:8px"></div>
     </div>
 
+    <div class="card" style="margin-bottom:16px;border:2px solid var(--cerulean-dim);background:rgba(0,188,212,0.02)">
+      <div class="card-header"><span class="card-title">Quick Path</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Data looks good? Skip field mapping, dedup, and reconciliation — go straight to push.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="s3-ready-file" class="form-select" style="max-width:300px;font-size:12px">
+          ${marcFiles.map(f => `<option value="${esc(f.id)}">${esc(f.filename)} (${(f.record_count||0).toLocaleString()} records)</option>`).join('')}
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="markFileReadyS3()">Mark as Ready to Load → Stage 7</button>
+        <div id="s3-mark-ready-status"></div>
+      </div>
+    </div>
+
     ${hasScan ? `
     <div class="stat-grid" style="margin-bottom:16px">
       <div class="stat-card"><div class="stat-label">Total Issues</div><div class="stat-value">${summary.total_issues.toLocaleString()}</div></div>
@@ -4389,6 +4548,24 @@ async function clearQualityResults() {
     await refreshProject();
     renderQ3Summary();
   } catch(e) { console.error(e); }
+}
+
+async function markFileReadyS3() {
+  const p = state.currentProject;
+  const fileId = document.getElementById('s3-ready-file')?.value;
+  const statusEl = document.getElementById('s3-mark-ready-status');
+  if (!fileId) { statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Select a file.</span>'; return; }
+  const sel = document.getElementById('s3-ready-file');
+  const fname = sel.options[sel.selectedIndex]?.text || fileId;
+  if (!confirm(`Mark this file as ready to load?\n\n${fname}\n\nSkips field mapping, dedup, and reconciliation.\nFile will appear in Stage 7 for push.`)) return;
+  statusEl.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await api('POST', `/projects/${p.id}/files/${fileId}/mark-ready`);
+    statusEl.innerHTML = `<span class="text-green" style="font-size:12px">${esc(r.message)}</span>`;
+    toast('File ready to load', 'success');
+  } catch(e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
+  }
 }
 
 async function approveQualityPass() {
@@ -7247,7 +7424,8 @@ async function renderS7Bibs() {
           <select id="bib-push-method" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)" onchange="toggleBibImportOptions()">
             <option value="rest_api">REST API (POST /biblios)</option>
             <option value="bulk_api">Bulk Import API (stage + commit)</option>
-            <option value="plugin_fast">Fast Import Plugin (parallel workers)</option>
+            <option value="toolkit">Migration Toolkit (recommended)</option>
+            <option value="plugin_fast">Fast Import Plugin (legacy)</option>
             <option value="bulkmarcimport">bulkmarcimport.pl (Docker)</option>
           </select>
         </div>
@@ -7720,9 +7898,11 @@ async function runPushBibs() {
       framework: framework || null,
       container: container || null,
     };
+  } else if (method === 'toolkit') {
+    body.dry_run = false;
+    body.bib_options = { method: 'toolkit', db_tuning: true };
   } else if (method === 'plugin_fast') {
-    // Plugin handles everything server-side; no client options
-    body.dry_run = false;  // plugin doesn't support dry-run
+    body.dry_run = false;
     body.bib_options = { method: 'plugin_fast' };
   } else if (method === 'bulk_api') {
     const matcherId = document.getElementById('bulk-matcher-id').value.trim();
@@ -7746,7 +7926,7 @@ async function runPushBibs() {
     if (!r) return;
     const taskId = r.task_ids?.bulkmarc;
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
-    const methodLabels = { bulkmarcimport: 'bulkmarcimport.pl', bulk_api: 'Bulk Import API', plugin_fast: 'Fast Import Plugin', rest_api: 'REST API' };
+    const methodLabels = { toolkit: 'Migration Toolkit', bulkmarcimport: 'bulkmarcimport.pl', bulk_api: 'Bulk Import API', plugin_fast: 'Fast Import Plugin', rest_api: 'REST API' };
     const methodLabel = methodLabels[method] || 'REST API';
     document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `${methodLabel} push ${dryRun ? '(dry run)' : ''} running…` });
     pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');

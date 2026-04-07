@@ -24,7 +24,7 @@ class PreflightResponse(BaseModel):
 # ── Push start ───────────────────────────────────────────────────────────
 
 class BibPushOptions(BaseModel):
-    method: str = "rest_api"           # "rest_api" | "bulkmarcimport" | "bulk_api" | "plugin_fast"
+    method: str = "rest_api"           # "rest_api" | "bulkmarcimport" | "bulk_api" | "plugin_fast" | "toolkit"
     match_field: str | None = None     # e.g. "001", "020a", "999c"  (bulkmarcimport)
     insert: bool = True                # --insert: insert new records (bulkmarcimport)
     update: bool = False               # --update: update matched records (bulkmarcimport)

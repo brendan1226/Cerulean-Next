@@ -2623,6 +2623,488 @@ def turboindex_task(
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# MIGRATION TOOLKIT PLUGIN — unified Koha migration plugin
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Replaces the separate FastMARCImport + TurboIndex plugins with a single
+# combined plugin:  Koha::Plugin::BWS::MigrationToolkit
+#
+# Base path: /api/v1/contrib/migrationtoolkit
+# Endpoints: /preflight, /db-tuning, /import, /stage, /batches/{id}/commit, /reindex
+# ══════════════════════════════════════════════════════════════════════════
+
+_TOOLKIT_BASE = "/api/v1/contrib/migrationtoolkit"
+
+
+def _toolkit_available(client: httpx.Client, base_url: str, headers: dict) -> bool:
+    """Check if the Migration Toolkit plugin is installed via GET /preflight."""
+    try:
+        resp = client.get(
+            f"{base_url}{_TOOLKIT_BASE}/preflight",
+            headers=headers,
+            timeout=10.0,
+        )
+        return resp.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def _toolkit_preflight(client: httpx.Client, base_url: str, headers: dict) -> dict:
+    """Fetch Koha reference data counts from the toolkit preflight endpoint."""
+    resp = client.get(
+        f"{base_url}{_TOOLKIT_BASE}/preflight",
+        headers=headers,
+        timeout=10.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Preflight failed: HTTP {resp.status_code} — {resp.text[:300]}")
+    return resp.json()
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.toolkit_import_task",
+    max_retries=0,
+    queue="push",
+)
+def toolkit_import_task(
+    self, project_id: str, manifest_id: str,
+    dry_run: bool = False, bib_options: dict | None = None,
+) -> dict:
+    """Push MARC records via the Migration Toolkit plugin's fast import.
+
+    Flow:
+        1. (Optional) POST /db-tuning {action: "apply"}
+        2. POST /import with raw MARC body (streaming upload)
+        3. Poll GET /jobs/{id} until finished
+        4. (Optional) POST /db-tuning {action: "restore"}
+
+    The plugin handles daemon stop/start internally (daemons_stopped=1).
+    """
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[toolkit-import]")
+    bib_options = bib_options or {}
+    log.info(f"Migration Toolkit import starting (dry_run={dry_run})")
+
+    if dry_run:
+        error_msg = "Migration Toolkit fast import does not support dry_run"
+        log.error(error_msg)
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=error_msg,
+                                  completed_at=datetime.utcnow())
+        return {"error": error_msg}
+
+    def _as_int(v, default=0):
+        try:
+            return int(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _as_float(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        marc_paths = _find_marc_paths(project_id)
+        if not marc_paths:
+            error_msg = "No transformed or merged MARC files found"
+            log.error(error_msg)
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      status="error", error_message=error_msg,
+                                      completed_at=datetime.utcnow())
+            return {"error": error_msg}
+
+        base_url, headers = _koha_client(project_id)
+
+        # Per-file state
+        files_state: list[dict] = [
+            {
+                "filename": p.name,
+                "file_size": p.stat().st_size,
+                "status": "pending",
+                "job_id": None,
+                "num_added": 0,
+                "num_errors": 0,
+                "num_items_added": 0,
+                "num_item_errors": 0,
+                "duplicate_barcodes": 0,
+                "records_processed": 0,
+                "slices_completed": 0,
+                "skipped_in_split": 0,
+                "sidecar_records": 0,
+                "sidecar_recovered": 0,
+                "chunks_rolled_back": 0,
+                "first_error_message": None,
+                "failed_records": [],
+                "error_mode": None,
+                "daemons_stopped": 0,
+                "wide_char_warnings": 0,
+                "worker_count": None,
+                "duration_sec": None,
+                "records_per_sec": None,
+                "error": None,
+            }
+            for p in marc_paths
+        ]
+        _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=0)
+
+        with httpx.Client(timeout=600.0, verify=False) as client:
+            # Verify plugin
+            if not _toolkit_available(client, base_url, headers):
+                error_msg = f"Migration Toolkit plugin not found at {base_url}{_TOOLKIT_BASE}"
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+
+            # Optional: apply DB tuning
+            db_tuning_result = None
+            if bib_options.get("db_tuning", True):
+                try:
+                    resp = client.post(
+                        f"{base_url}{_TOOLKIT_BASE}/db-tuning",
+                        json={"action": "apply"},
+                        headers={**headers, "Content-Type": "application/json"},
+                    )
+                    if resp.status_code == 200:
+                        db_tuning_result = resp.json()
+                        log.info(f"DB tuning applied: {db_tuning_result.get('messages', [])}")
+                except Exception as exc:
+                    log.warn(f"DB tuning failed (non-fatal): {exc}")
+
+            for idx, marc_path in enumerate(marc_paths):
+                fstate = files_state[idx]
+                try:
+                    file_size = marc_path.stat().st_size
+                    log.info(f"[{idx + 1}/{len(marc_paths)}] Uploading {marc_path.name} ({file_size:,} bytes)")
+
+                    self.update_state(state="PROGRESS", meta={
+                        "step": "uploading",
+                        "file": marc_path.name,
+                        "file_index": idx,
+                        "file_count": len(marc_paths),
+                        "file_size": file_size,
+                    })
+
+                    upload_headers = {
+                        **headers,
+                        "Content-Type": "application/marc",
+                        "Content-Length": str(file_size),
+                        "x-file-name": marc_path.name,
+                    }
+                    resp = client.post(
+                        f"{base_url}{_TOOLKIT_BASE}/import",
+                        content=_iter_file_chunks(marc_path),
+                        headers=upload_headers,
+                    )
+                    if resp.status_code >= 400:
+                        raise RuntimeError(f"Upload failed: HTTP {resp.status_code} — {resp.text[:500]}")
+
+                    job_id = resp.json().get("job_id")
+                    if not job_id:
+                        raise RuntimeError(f"No job_id in response: {resp.json()}")
+
+                    fstate["job_id"] = job_id
+                    fstate["status"] = "running"
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.info(f"[{idx + 1}/{len(marc_paths)}] Import job started: job_id={job_id}")
+
+                    # Poll with live state persistence
+                    live_state = {"messages": []}
+                    _seen_msgs = [0]
+
+                    def _on_progress(job):
+                        jdata = job.get("data") or {}
+                        jmsgs = jdata.get("messages") or []
+                        new_msgs = jmsgs[_seen_msgs[0]:]
+                        _seen_msgs[0] = len(jmsgs)
+                        live_state["messages"].extend(new_msgs)
+                        if len(live_state["messages"]) > 500:
+                            live_state["messages"] = live_state["messages"][-500:]
+                        _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+
+                    job_result = _poll_koha_job(
+                        client, base_url, headers,
+                        job_id, self, project_id,
+                        step_label=f"importing [{idx + 1}/{len(marc_paths)}]",
+                        on_progress=_on_progress,
+                    )
+                    report = job_result.get("data", {}).get("report", {}) or {}
+
+                    # Extract all report fields (coerce strings to ints)
+                    fstate["records_total"] = _as_int(job_result.get("size") or report.get("num_added"), 0)
+                    fstate["num_added"] = _as_int(report.get("num_added"), 0)
+                    fstate["num_errors"] = _as_int(report.get("num_errors"), 0)
+                    fstate["num_items_added"] = _as_int(report.get("num_items_added"), 0)
+                    fstate["num_item_errors"] = _as_int(report.get("num_item_errors"), 0)
+                    fstate["duplicate_barcodes"] = _as_int(report.get("duplicate_barcodes"), 0)
+                    fstate["records_processed"] = _as_int(report.get("records_processed"), 0)
+                    fstate["slices_completed"] = _as_int(report.get("slices_completed"), 0)
+                    fstate["skipped_in_split"] = _as_int(report.get("skipped_in_split"), 0)
+                    fstate["sidecar_records"] = _as_int(report.get("sidecar_records"), 0)
+                    fstate["sidecar_recovered"] = _as_int(report.get("sidecar_recovered"), 0)
+                    fstate["chunks_rolled_back"] = _as_int(report.get("chunks_rolled_back"), 0)
+                    fstate["first_error_message"] = report.get("first_error_message")
+                    fstate["failed_records"] = (report.get("failed_records") or [])[:2000]
+                    fstate["error_mode"] = report.get("error_mode")
+                    fstate["daemons_stopped"] = _as_int(report.get("daemons_stopped"), 0)
+                    fstate["wide_char_warnings"] = _as_int(report.get("wide_char_warnings"), 0)
+                    fstate["worker_count"] = _as_int(report.get("worker_count"), 0) or None
+                    fstate["duration_sec"] = _as_float(report.get("duration_sec"))
+                    fstate["records_per_sec"] = _as_float(report.get("records_per_sec"))
+                    fstate["messages"] = live_state["messages"]
+                    fstate["status"] = "committed"
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.info(
+                        f"[{idx + 1}/{len(marc_paths)}] Imported: "
+                        f"{fstate['num_added']:,} bibs ({fstate['num_errors']:,} err), "
+                        f"{fstate['num_items_added']:,} items ({fstate['num_item_errors']:,} err), "
+                        f"{fstate['duration_sec']}s, {fstate['records_per_sec']} rec/s, "
+                        f"{fstate['worker_count']} workers"
+                    )
+
+                except Exception as file_exc:
+                    fstate["status"] = "error"
+                    fstate["error"] = str(file_exc)[:500]
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
+                    log.error(f"[{idx + 1}/{len(marc_paths)}] Failed: {file_exc}")
+                    raise
+
+            # Restore DB tuning
+            if db_tuning_result and db_tuning_result.get("saved_flush") is not None:
+                try:
+                    resp = client.post(
+                        f"{base_url}{_TOOLKIT_BASE}/db-tuning",
+                        json={
+                            "action": "restore",
+                            "saved_flush": db_tuning_result["saved_flush"],
+                            "saved_pool": db_tuning_result.get("saved_pool"),
+                        },
+                        headers={**headers, "Content-Type": "application/json"},
+                    )
+                    if resp.status_code == 200:
+                        log.info(f"DB tuning restored: {resp.json().get('messages', [])}")
+                except Exception as exc:
+                    log.warn(f"DB tuning restore failed (non-fatal): {exc}")
+
+        # Aggregate
+        total_records = sum(f.get("records_total", 0) or f.get("num_added", 0) for f in files_state)
+        total_added = sum(f["num_added"] for f in files_state)
+        total_errors = sum(f["num_errors"] for f in files_state)
+        total_items_added = sum(f["num_items_added"] for f in files_state)
+        total_item_errors = sum(f["num_item_errors"] for f in files_state)
+
+        result_data = {
+            "method": "toolkit",
+            "dry_run": False,
+            "file_count": len(files_state),
+            "files": files_state,
+            "db_tuning": db_tuning_result,
+            "totals": {
+                "records_total": total_records,
+                "num_added": total_added,
+                "num_errors": total_errors,
+                "num_items_added": total_items_added,
+                "num_item_errors": total_item_errors,
+                "duplicate_barcodes": sum(f["duplicate_barcodes"] for f in files_state),
+                "records_processed": sum(f["records_processed"] for f in files_state),
+                "skipped_in_split": sum(f["skipped_in_split"] for f in files_state),
+            },
+        }
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=total_records,
+                                  records_success=total_added,
+                                  records_failed=total_errors,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+            project = db.get(Project, project_id)
+            if project:
+                project.bib_count_pushed = total_added
+                db.commit()
+
+        log.complete(
+            f"Toolkit import complete — {len(files_state)} file(s): "
+            f"{total_added:,} bibs ({total_errors:,} err), "
+            f"{total_items_added:,} items ({total_item_errors:,} err)"
+        )
+        return result_data
+
+    except Exception as exc:
+        log.error(f"Toolkit import failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.toolkit_reindex_task",
+    max_retries=0,
+    queue="push",
+)
+def toolkit_reindex_task(
+    self, project_id: str, manifest_id: str,
+    reset: bool = True, processes: int = 4,
+    commit: int = 5000, force_merge: bool = True,
+) -> dict:
+    """Rebuild ES index via the Migration Toolkit plugin's /reindex endpoint."""
+    from cerulean.models import Project
+
+    log = AuditLogger(project_id=project_id, stage=7, tag="[toolkit-reindex]")
+    log.info(f"Toolkit reindex starting (reset={reset}, processes={processes})")
+
+    def _as_int(v, default=0):
+        try:
+            return int(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _as_float(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        base_url, headers = _koha_client(project_id)
+
+        with httpx.Client(timeout=600.0, verify=False) as client:
+            if not _toolkit_available(client, base_url, headers):
+                error_msg = f"Migration Toolkit plugin not found at {base_url}{_TOOLKIT_BASE}"
+                log.error(error_msg)
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id,
+                                          status="error", error_message=error_msg,
+                                          completed_at=datetime.utcnow())
+                return {"error": error_msg}
+
+            body = {
+                "reset": bool(reset),
+                "processes": int(processes),
+                "commit": int(commit),
+                "force_merge": bool(force_merge),
+            }
+
+            resp = client.post(
+                f"{base_url}{_TOOLKIT_BASE}/reindex",
+                json=body,
+                headers={**headers, "Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Reindex dispatch failed: HTTP {resp.status_code} — {resp.text[:500]}")
+
+            job_id = resp.json().get("job_id")
+            if not job_id:
+                raise RuntimeError(f"No job_id in response: {resp.json()}")
+
+            log.info(f"Toolkit reindex job started: job_id={job_id}")
+
+            # Live state for UI
+            live_state = {
+                "method": "toolkit_reindex",
+                "job_id": job_id,
+                "config": body,
+                "status": "running",
+                "progress": 0,
+                "size": 0,
+                "messages": [],
+                "report": {},
+            }
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id, result_data=live_state)
+
+            _seen_msgs = [0]
+
+            def _on_progress(job):
+                jdata = job.get("data") or {}
+                jmsgs = jdata.get("messages") or []
+                jreport = jdata.get("report") or {}
+                new_msgs = jmsgs[_seen_msgs[0]:]
+                _seen_msgs[0] = len(jmsgs)
+                live_state["messages"].extend(new_msgs)
+                if len(live_state["messages"]) > 500:
+                    live_state["messages"] = live_state["messages"][-500:]
+                if jreport:
+                    live_state["report"] = jreport
+                live_state["status"] = job.get("status", "running")
+                try:
+                    live_state["progress"] = int(job.get("progress") or 0)
+                    live_state["size"] = int(job.get("size") or 0)
+                except (TypeError, ValueError):
+                    pass
+                with Session(_engine) as db:
+                    _update_push_manifest(db, manifest_id, result_data=dict(live_state))
+
+            job_result = _poll_koha_job(
+                client, base_url, headers,
+                job_id, self, project_id,
+                step_label="toolkit_reindex",
+                on_progress=_on_progress,
+            )
+            report = job_result.get("data", {}).get("report", {}) or {}
+
+        num_indexed = _as_int(report.get("num_indexed"), 0)
+        num_errors = _as_int(report.get("num_errors"), 0)
+        duration_sec = _as_float(report.get("duration_sec"))
+        records_per_sec = _as_float(report.get("records_per_sec"))
+
+        result_data = {
+            "method": "toolkit_reindex",
+            "job_id": job_id,
+            "config": body,
+            "status": "finished",
+            "num_indexed": num_indexed,
+            "num_errors": num_errors,
+            "duration_sec": duration_sec,
+            "records_per_sec": records_per_sec,
+            "saved_settings": report.get("saved_settings") or {},
+            "report": report,
+            "messages": live_state.get("messages") or [],
+            "progress": num_indexed + num_errors,
+            "size": num_indexed + num_errors,
+        }
+
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=num_indexed + num_errors,
+                                  records_success=num_indexed,
+                                  records_failed=num_errors,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+            project = db.get(Project, project_id)
+            if project:
+                project.stage_7_complete = True
+                project.current_stage = 8
+                db.commit()
+
+        log.complete(
+            f"Toolkit reindex complete — {num_indexed:,} indexed, {num_errors:,} errors, "
+            f"{duration_sec}s ({records_per_sec} rec/s)"
+        )
+        return result_data
+
+    except Exception as exc:
+        log.error(f"Toolkit reindex failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ELASTICSEARCH REINDEX TASK
 # ══════════════════════════════════════════════════════════════════════════
 

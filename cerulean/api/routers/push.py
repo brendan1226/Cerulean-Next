@@ -74,6 +74,8 @@ from cerulean.tasks.push import (
     push_holds_task,
     push_patrons_task,
     push_preflight_task,
+    toolkit_import_task,
+    toolkit_reindex_task,
     turboindex_task,
 )
 from cerulean.utils.marc import record_to_dict
@@ -192,6 +194,8 @@ async def start_push(
             tasks_to_dispatch.append(("bulkmarc", push_bulk_api_task, True))
         elif bib_method == "plugin_fast":
             tasks_to_dispatch.append(("bulkmarc", push_fastmarc_plugin_task, True))
+        elif bib_method == "toolkit":
+            tasks_to_dispatch.append(("bulkmarc", toolkit_import_task, True))
         else:
             tasks_to_dispatch.append(("bulkmarc", push_bulkmarc_task, True))
     if body.push_patrons:
@@ -224,7 +228,7 @@ async def start_push(
         task_kwargs = {}
         if needs_dry_run:
             task_kwargs["dry_run"] = body.dry_run
-        if task_type == "bulkmarc" and body.bib_options and body.bib_options.method in ("bulkmarcimport", "bulk_api", "plugin_fast"):
+        if task_type == "bulkmarc" and body.bib_options and body.bib_options.method in ("bulkmarcimport", "bulk_api", "plugin_fast", "toolkit"):
             task_kwargs["bib_options"] = body.bib_options.model_dump()
         if task_type == "reindex" and body.reindex_engine:
             task_kwargs["reindex_engine"] = body.reindex_engine
@@ -932,6 +936,93 @@ async def turboindex_start(
         task_id=task.id,
         manifest_id=manifest.id,
         message="TurboIndex reindex dispatched.",
+    )
+
+
+# ── Migration Toolkit preflight ──────────────────────────────────────────
+
+
+@router.get("/{project_id}/push/toolkit-preflight")
+async def toolkit_preflight_endpoint(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Check if the Migration Toolkit plugin is installed and fetch Koha reference data counts."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+        try:
+            resp = await client.get(
+                f"{base_url}/api/v1/contrib/migrationtoolkit/preflight",
+                headers=hdrs,
+            )
+            if resp.status_code == 200:
+                return {"installed": True, "data": resp.json()}
+            return {"installed": False, "status_code": resp.status_code}
+        except httpx.HTTPError as exc:
+            return {"installed": False, "error": str(exc)}
+
+
+@router.post("/{project_id}/push/toolkit-reindex", response_model=TurboIndexResponse, status_code=202)
+async def toolkit_reindex_endpoint(
+    project_id: str,
+    body: TurboIndexRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispatch a reindex via the Migration Toolkit plugin's /reindex endpoint."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL", "message": "Set koha_url first."})
+
+    already_running = (
+        await db.execute(
+            select(PushManifest).where(
+                PushManifest.project_id == project_id,
+                PushManifest.status == "running",
+                PushManifest.task_type == "reindex",
+            )
+        )
+    ).scalars().all()
+    if already_running:
+        raise HTTPException(409, detail={
+            "error": "TASK_ALREADY_RUNNING",
+            "message": "A reindex is already running.",
+        })
+
+    manifest = PushManifest(
+        project_id=project_id,
+        task_type="reindex",
+        status="running",
+        dry_run=False,
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await db.flush()
+    await db.refresh(manifest)
+
+    task = toolkit_reindex_task.apply_async(
+        args=[project_id, manifest.id],
+        kwargs={
+            "reset": body.reset,
+            "processes": body.processes,
+            "commit": body.commit,
+            "force_merge": body.force_merge,
+        },
+        queue="push",
+    )
+    manifest.celery_task_id = task.id
+    await db.flush()
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[toolkit-reindex]",
+                    message=f"Toolkit reindex dispatched (processes={body.processes}, reset={body.reset})")
+
+    return TurboIndexResponse(
+        task_id=task.id,
+        manifest_id=manifest.id,
+        message="Migration Toolkit reindex dispatched.",
     )
 
 

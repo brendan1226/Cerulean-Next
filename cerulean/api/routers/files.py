@@ -35,7 +35,7 @@ settings = get_settings()
 router = APIRouter(prefix="/projects", tags=["files"])
 
 ALLOWED_EXTENSIONS = {".mrc", ".marc", ".mrk", ".txt", ".csv", ".dat", ".tsv", ".xml", ".json"}
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 
 
 @router.post("/{project_id}/files", response_model=MARCFileUploadResponse, status_code=201)
@@ -103,7 +103,7 @@ async def upload_file(
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(413, detail={"error": "FILE_TOO_LARGE", "message": "File exceeds 500 MB limit."})
+        raise HTTPException(413, detail={"error": "FILE_TOO_LARGE", "message": "File exceeds 2 GB limit."})
 
     with open(storage_path, "wb") as fh:
         fh.write(content)
@@ -311,6 +311,60 @@ async def search_project_records(
         raise HTTPException(400, detail={"error": "MISSING_QUERY", "message": "Query parameter 'q' is required."})
 
     return search_records(es, project_id, q, offset=offset, limit=limit)
+
+
+# ── Mark Ready to Load ────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/files/{file_id}/mark-ready")
+async def mark_file_ready(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a MARC file as ready to push, skipping stages 4-6.
+
+    Creates a symlink from the uploaded raw file to ``output.mrc`` in the
+    project directory.  Stage 7's push file finder already looks for
+    ``output.mrc``, so the file will immediately appear as a push candidate.
+
+    Use this when the MARC data is clean and doesn't need field mapping,
+    dedup, or reconciliation — common for well-structured exports.
+    """
+    from pathlib import Path
+    from cerulean.core.config import get_settings
+
+    settings = get_settings()
+    marc_file = await db.get(MARCFile, file_id)
+    if not marc_file or marc_file.project_id != project_id:
+        raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "File not found."})
+    if marc_file.status != "indexed":
+        raise HTTPException(409, detail={
+            "error": "NOT_INDEXED",
+            "message": "File must be fully indexed before marking ready.",
+        })
+
+    source = Path(marc_file.storage_path)
+    if not source.is_file():
+        raise HTTPException(404, detail={"error": "FILE_MISSING", "message": "Source file not found on disk."})
+
+    project_dir = Path(settings.data_root) / project_id
+    output = project_dir / "output.mrc"
+
+    # Remove any existing output.mrc (symlink or file)
+    if output.is_symlink() or output.is_file():
+        output.unlink()
+
+    # Symlink — no 1.2 GB copy needed
+    output.symlink_to(source)
+
+    return {
+        "file_id": file_id,
+        "filename": marc_file.filename,
+        "output_path": "output.mrc",
+        "record_count": marc_file.record_count,
+        "message": f"'{marc_file.filename}' marked as ready to load. Available in Stage 7.",
+    }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
