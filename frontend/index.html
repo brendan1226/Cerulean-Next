@@ -1060,8 +1060,12 @@
           <span class="stage-badge" id="badge-s10">—</span>
         </div>
         <div class="nav-item" data-view="stage11" onclick="navigate('stage11')">
-          <span class="nav-icon">⑪</span> Holds &amp; Data
+          <span class="stage-num">11</span> Holds
           <span class="stage-badge" id="badge-s11">—</span>
+        </div>
+        <div class="nav-item" data-view="stage12" onclick="navigate('stage12')">
+          <span class="stage-num">12</span> Aspen
+          <span class="stage-badge" id="badge-s12">—</span>
         </div>
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
@@ -1173,6 +1177,7 @@ function navigate(view, params = {}) {
     stage9:       window.renderStage9_Patrons,
     stage10:      window.renderStage10_PatronVersions,
     stage11:      window.renderStage11_Holds,
+    stage12:      renderStage12_Aspen,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
@@ -1198,6 +1203,7 @@ function updateBreadcrumb(view) {
     stage9: 'Stage 9 — Patrons',
     stage10: 'Stage 10 — Patron Versions',
     stage11: 'Stage 11 — Holds & Data',
+    stage12: 'Stage 12 — Aspen Discovery',
     'project-log': 'Project Log',
     'project-settings': 'Settings',
     templates: 'Templates',
@@ -9095,6 +9101,210 @@ window.navigate = function(view, params = {}) {
   document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
   document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
 
+// ── Stage 12 — Aspen Discovery ──────────────────────────────────────
+
+async function renderStage12_Aspen(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 12 — Aspen Discovery</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Aspen Connection</span></div>
+      <div style="display:flex;gap:8px;align-items:end;margin-bottom:8px">
+        <div style="flex:1">
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Aspen URL</label>
+          <input type="text" id="aspen-url" value="${esc(p.aspen_url || '')}" placeholder="http://aspen.example.com:85" style="font-size:12px;padding:6px 10px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveAspenUrl()">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="checkAspenCounts()">Check Counts</button>
+      </div>
+      <div id="aspen-config-status"></div>
+    </div>
+
+    <div id="aspen-counts-card" class="card" style="margin-bottom:16px;display:none">
+      <div class="card-header"><span class="card-title">Record Counts</span></div>
+      <div id="aspen-counts"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Turbo Migration</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Bulk extract from Koha → Aspen DB. Pulls all bibs + items into Aspen's ils_records table using parallel threads.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Workers (1-16)</label>
+            <input type="number" id="aspen-migrate-workers" value="4" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Batch Size</label>
+            <input type="number" id="aspen-migrate-batch" value="500" min="100" max="5000" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="startAspenMigration()">▶ Start Turbo Migration</button>
+        <div id="aspen-migrate-status" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Turbo Reindex</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Parallel Solr reindex of all grouped works in Aspen. Run after Turbo Migration to make records searchable in the OPAC.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Workers (1-16)</label>
+            <input type="number" id="aspen-reindex-workers" value="8" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+          <div style="display:flex;align-items:end;padding-bottom:4px">
+            <div style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="aspen-reindex-clear">
+              <label for="aspen-reindex-clear" style="font-size:12px;color:var(--text-secondary)">Clear Solr first</label>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="startAspenReindex()">▶ Start Turbo Reindex</button>
+        <div id="aspen-reindex-status" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+}
+
+async function saveAspenUrl() {
+  const p = state.currentProject;
+  const url = document.getElementById('aspen-url').value.trim();
+  const statusEl = document.getElementById('aspen-config-status');
+  if (!url) { statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Enter a URL</span>'; return; }
+  try {
+    await window.api('PATCH', '/projects/' + p.id + '/aspen/config', { aspen_url: url });
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Saved</span>';
+    await refreshProject();
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
+async function checkAspenCounts() {
+  const p = state.currentProject;
+  const card = document.getElementById('aspen-counts-card');
+  const el = document.getElementById('aspen-counts');
+  card.style.display = '';
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/aspen/counts');
+    const koha = r.koha || {};
+    const aspen = r.aspen || {};
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;font-size:12px">
+        <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Bibs</div><div class="mono" style="font-size:16px">${(koha.bibs||0).toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Items</div><div class="mono" style="font-size:16px">${(koha.items||0).toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Aspen ILS Records</div><div class="mono" style="font-size:16px">${(aspen.ilsRecords||0).toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Grouped Works</div><div class="mono" style="font-size:16px">${(aspen.groupedWorks||0).toLocaleString()}</div></div>
+        <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Connected</div><div class="mono" style="font-size:16px">${koha.connected ? '<span class="text-green">Yes</span>' : '<span class="text-red">No</span>'}</div></div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(e.message) + '</span>';
+  }
+}
+
+window._aspenPoller = null;
+
+async function startAspenMigration() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('aspen-migrate-status');
+  const workers = parseInt(document.getElementById('aspen-migrate-workers').value) || 4;
+  const batch = parseInt(document.getElementById('aspen-migrate-batch').value) || 500;
+  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Migration…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-migration', {
+      worker_threads: workers, batch_size: batch,
+    });
+    toast('Turbo Migration started', 'info');
+    _pollAspenJob(p.id, r.task_id, 'aspen-migrate-status', 'Turbo Migration');
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
+async function startAspenReindex() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('aspen-reindex-status');
+  const workers = parseInt(document.getElementById('aspen-reindex-workers').value) || 8;
+  const clear = document.getElementById('aspen-reindex-clear').checked;
+  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Reindex…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-reindex', {
+      worker_threads: workers, clear_index: clear,
+    });
+    toast('Turbo Reindex started', 'info');
+    _pollAspenJob(p.id, r.task_id, 'aspen-reindex-status', 'Turbo Reindex');
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
+function _pollAspenJob(projectId, taskId, statusElId, label) {
+  const statusEl = document.getElementById(statusElId);
+  const startTime = Date.now();
+  const tick = async () => {
+    try {
+      const r = await window.api('GET', '/projects/' + projectId + '/push/status?task_id=' + taskId);
+      const state = r?.state || 'PENDING';
+      const p = r?.progress || {};
+
+      if (state === 'PROGRESS') {
+        const progress = p.progress || 0;
+        const total = p.total || 0;
+        const rate = p.rate || 0;
+        const elapsed = p.elapsed_secs || Math.round((Date.now() - startTime) / 1000);
+        const pct = total > 0 ? Math.round(progress / total * 100) : 0;
+        const lastLine = p.last_line || '';
+        const eta = rate > 0 && total > progress ? Math.round((total - progress) / rate) : 0;
+        const etaStr = eta > 60 ? Math.round(eta / 60) + 'm' : eta + 's';
+
+        let html = '<div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-main);overflow:hidden">';
+        html += '<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;background:var(--surface-dim)">';
+        html += '<span class="badge badge-yellow" style="font-size:10px">RUNNING</span>';
+        html += '<span class="mono" style="font-size:11px;color:var(--text-dim)">' + elapsed + 's elapsed</span>';
+        html += '</div>';
+        html += '<div style="padding:8px 12px;border-bottom:1px solid var(--border)">';
+        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:4px">';
+        html += '<span>' + progress.toLocaleString() + ' / ' + total.toLocaleString() + '</span>';
+        html += '<span>' + (rate > 0 ? rate.toLocaleString() + '/s' : '') + (eta > 0 ? ' · ETA ' + etaStr : '') + '</span>';
+        html += '</div>';
+        html += '<div style="height:6px;background:var(--bg-card);border-radius:3px;overflow:hidden">';
+        html += '<div style="height:100%;width:' + pct + '%;background:var(--cerulean);transition:width 0.5s"></div>';
+        html += '</div></div>';
+        if (lastLine) {
+          html += '<div style="padding:6px 12px;font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word">' + esc(lastLine) + '</div>';
+        }
+        html += '</div>';
+        statusEl.innerHTML = html;
+      } else if (state === 'SUCCESS') {
+        const result = r.result || {};
+        const elapsed = result.elapsed_secs || Math.round((Date.now() - startTime) / 1000);
+        statusEl.innerHTML = '<div style="border:1px solid var(--border);border-radius:6px;padding:12px;background:var(--bg-main)">'
+          + '<span class="badge badge-green" style="font-size:10px">COMPLETE</span>'
+          + '<span class="mono" style="font-size:11px;color:var(--text-dim);margin-left:8px">' + elapsed + 's</span>'
+          + '<div style="margin-top:8px;font-size:12px">' + esc(JSON.stringify(result.aspen_ils_records || result.aspen_grouped_works || result, null, 0).substring(0, 200)) + '</div>'
+          + '</div>';
+        toast(label + ' complete', 'success');
+        checkAspenCounts();
+        return;
+      } else if (state === 'FAILURE') {
+        statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(r.error || 'Unknown error') + '</span>';
+        toast(label + ' failed', 'warn');
+        return;
+      }
+    } catch (e) {
+      console.error('aspen poll error', e);
+    }
+    setTimeout(tick, 5000);
+  };
+  tick();
+}
+
   const viewEl = document.getElementById('view');
   const renders = {
     dashboard:     renderDashboard,
@@ -9110,6 +9320,7 @@ window.navigate = function(view, params = {}) {
     stage9:        window.renderStage9_Patrons,
     stage10:       window.renderStage10_PatronVersions,
     stage11:       window.renderStage11_Holds,
+    stage12:       renderStage12_Aspen,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,

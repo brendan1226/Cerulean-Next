@@ -91,6 +91,10 @@ class Project(Base):
     stage_9_complete: Mapped[bool] = mapped_column(Boolean, default=False)   # Patron Data Quality
     stage_10_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Versioned Run — Patrons
     stage_11_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Holds & Remaining Data
+    stage_12_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Aspen Discovery
+
+    # Target Aspen Discovery
+    aspen_url: Mapped[str | None] = mapped_column(String(500))  # e.g. http://aspen:85
 
     # Stage 8 — Reconciliation
     reconcile_source_file: Mapped[str | None] = mapped_column(String(500))
