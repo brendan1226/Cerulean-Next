@@ -38,6 +38,9 @@ class BibPushOptions(BaseModel):
     parse_items: bool = True               # Parse 952 item data from MARC
     comments: str | None = None            # Import batch comments
     auto_commit: bool = False              # Auto-commit after staging (skip explicit commit step)
+    # ── toolkit / plugin options ─────────────────────────────────────
+    db_tuning: bool = True                     # Apply DB tuning before import (toolkit)
+    worker_count: int | None = None            # Parallel workers (toolkit/plugin_fast, 1-16)
 
 
 class PushStartRequest(BaseModel):

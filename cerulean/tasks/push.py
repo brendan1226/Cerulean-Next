@@ -2876,10 +2876,19 @@ def toolkit_import_task(
                         "Content-Length": str(file_size),
                         "x-file-name": marc_path.name,
                     }
+                    # Pass worker_count as query param if specified
+                    import_params = {}
+                    worker_count = bib_options.get("worker_count")
+                    if worker_count and int(worker_count) > 0:
+                        import_params["workers"] = int(worker_count)
+                    if bib_options.get("comments"):
+                        import_params["comments"] = bib_options["comments"]
+
                     resp = client.post(
                         f"{base_url}{_TOOLKIT_BASE}/import",
                         content=_iter_file_chunks(marc_path),
                         headers=upload_headers,
+                        params=import_params if import_params else None,
                     )
                     if resp.status_code >= 400:
                         raise RuntimeError(f"Upload failed: HTTP {resp.status_code} — {resp.text[:500]}")
