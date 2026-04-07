@@ -2965,13 +2965,12 @@ def toolkit_import_task(
                         "Content-Length": str(file_size),
                         "x-file-name": marc_path.name,
                     }
-                    # Pass worker_count as query param if specified
+                    # Only pass query params the plugin actually accepts
                     import_params = {}
-                    worker_count = bib_options.get("worker_count")
-                    if worker_count and int(worker_count) > 0:
-                        import_params["workers"] = int(worker_count)
                     if bib_options.get("comments"):
                         import_params["comments"] = bib_options["comments"]
+                    if bib_options.get("encoding"):
+                        import_params["encoding"] = bib_options["encoding"]
 
                     resp = client.post(
                         f"{base_url}{_TOOLKIT_BASE}/import",
