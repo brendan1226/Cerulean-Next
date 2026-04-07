@@ -7148,16 +7148,71 @@ async function renderS7Setup() {
     <div class="alert alert-warn" style="margin-bottom:16px">
       Before pushing data, ensure Koha has the required reference data (libraries, patron categories, item types, authorised values).
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary" onclick="s7ScanMarcFile()">Scan MARC File</button>
       <button class="btn btn-primary" onclick="s7FetchKohaRefs()">Fetch from Koha</button>
       <button class="btn btn-ghost" onclick="s7FetchNeededRefs()">Refresh Comparison</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red,#e55)" onclick="s7TruncateKoha()">Clear Koha Data</button>
+      <button class="btn btn-ghost btn-sm" onclick="s7VerifyKoha()">Verify Counts</button>
     </div>
     <div id="s7-setup-status" style="margin-bottom:12px"></div>
     <div id="s7-setup-grid"></div>`;
 
   // Auto-load needed refs
   s7FetchNeededRefs();
+}
+
+async function s7TruncateKoha() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-setup-status');
+  if (!confirm('DELETE ALL biblios + items from Koha?\n\nThis cannot be undone. Only use this for re-migration.\n\nType YES_DELETE_ALL_DATA to confirm.')) return;
+  statusEl.innerHTML = '<div class="spinner"></div> Truncating Koha data…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/cerulean/truncate`, {
+      tables: ['biblio', 'items', 'import_batches'],
+      confirm: 'YES_DELETE_ALL_DATA',
+    });
+    statusEl.innerHTML = `<span class="text-green" style="font-size:12px">Koha data cleared: ${(r.truncated || []).join(', ')}</span>`;
+    toast('Koha data truncated', 'info');
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Truncate failed: ${e.message}. (Cerulean Endpoints plugin may not be installed.)</span>`;
+  }
+}
+
+async function s7VerifyKoha() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-setup-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Verifying Koha counts…';
+  try {
+    // Try plugin endpoint first
+    let dbStats, esStatus;
+    try {
+      dbStats = await window.api('GET', `/projects/${p.id}/push/cerulean/db-stats`);
+      esStatus = await window.api('GET', `/projects/${p.id}/push/cerulean/es-status`);
+    } catch (e) {
+      statusEl.innerHTML = '<span class="text-dim" style="font-size:12px">Cerulean plugin not available — cannot verify.</span>';
+      return;
+    }
+    let html = '<div style="font-size:12px;padding:8px;background:var(--bg-main);border-radius:6px;margin-top:4px">';
+    html += '<strong>Koha Database:</strong> ';
+    html += `biblios=<span class="mono">${(dbStats.biblios||0).toLocaleString()}</span> `;
+    html += `items=<span class="mono">${(dbStats.items||0).toLocaleString()}</span> `;
+    html += `patrons=<span class="mono">${(dbStats.patrons||0).toLocaleString()}</span>`;
+    if (dbStats.background_jobs_pending > 0) {
+      html += ` <span class="text-red">bg_jobs_pending=${dbStats.background_jobs_pending}</span>`;
+    }
+    html += '<br><strong>Elasticsearch:</strong> ';
+    html += `docs=<span class="mono">${(esStatus.doc_count||0).toLocaleString()}</span> `;
+    html += `status=<span class="mono">${esStatus.cluster_status||'?'}</span>`;
+    const match = (dbStats.biblios || 0) === (esStatus.doc_count || 0);
+    html += match ? ' <span class="badge badge-green" style="font-size:10px">ES = DB</span>'
+      : ' <span class="badge badge-red" style="font-size:10px">ES ≠ DB — reindex needed</span>';
+    html += '</div>';
+    statusEl.innerHTML = html;
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Verify failed: ${e.message}</span>`;
+  }
 }
 
 async function s7ScanMarcFile() {
@@ -7179,8 +7234,37 @@ async function s7FetchKohaRefs() {
   const statusEl = document.getElementById('s7-setup-status');
   statusEl.innerHTML = '<div class="spinner"></div> Fetching from Koha…';
   try {
-    _s7KohaRefs = await window.api('GET', `/projects/${p.id}/push/koha-refs`);
-    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Koha data loaded.</span>';
+    // Try Cerulean Endpoints plugin first (one call for everything)
+    try {
+      const pluginData = await window.api('GET', `/projects/${p.id}/push/cerulean/refdata`);
+      // Normalize plugin response to match our existing _s7KohaRefs shape
+      _s7KohaRefs = {
+        libraries: pluginData.libraries || [],
+        patron_categories: pluginData.patron_categories || [],
+        item_types: (pluginData.item_types || []).map(t => ({
+          item_type_id: t.itemtype || t.item_type_id || t.code,
+          description: t.description,
+        })),
+        authorised_values: {},
+      };
+      // Map authorised values
+      for (const [cat, vals] of Object.entries(pluginData.authorised_values || {})) {
+        _s7KohaRefs.authorised_values[cat] = (vals || []).map(v => ({
+          value: v.authorised_value || v.value,
+          description: v.lib || v.description,
+        }));
+      }
+      // Normalize library_id field
+      _s7KohaRefs.libraries = _s7KohaRefs.libraries.map(l => ({
+        library_id: l.branchcode || l.library_id,
+        name: l.branchname || l.name,
+      }));
+      statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Koha data loaded (via Cerulean plugin).</span>';
+    } catch (pluginErr) {
+      // Fallback to individual Koha REST API calls
+      _s7KohaRefs = await window.api('GET', `/projects/${p.id}/push/koha-refs`);
+      statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Koha data loaded.</span>';
+    }
     s7RenderSetupGrid();
   } catch (e) {
     statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${e.message}</span>`;

@@ -1222,6 +1222,155 @@ async def poll_koha_job_direct(
     }
 
 
+# ── Cerulean Endpoints Plugin — proxy endpoints ─────────────────────────
+
+
+_CERULEAN_PLUGIN_BASE = "/api/v1/contrib/cerulean"
+
+
+@router.get("/{project_id}/push/cerulean/refdata")
+async def cerulean_get_refdata(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch all reference data from Koha via the Cerulean Endpoints plugin.
+
+    Returns libraries, item_types, patron_categories, authorised_values,
+    frameworks, and matching_rules in one call.
+    """
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        r = await client.get(f"{base_url}{_CERULEAN_PLUGIN_BASE}/refdata", headers=hdrs)
+        if r.status_code == 404:
+            raise HTTPException(404, detail={"error": "PLUGIN_NOT_FOUND",
+                                             "message": "Cerulean Endpoints plugin not installed"})
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, detail={"error": "REFDATA_FAILED", "message": r.text[:500]})
+        return r.json()
+
+
+from fastapi import Body
+
+
+@router.post("/{project_id}/push/cerulean/refdata")
+async def cerulean_push_refdata_post(
+    project_id: str,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Push missing reference data to Koha via the Cerulean Endpoints plugin."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+        r = await client.post(
+            f"{base_url}{_CERULEAN_PLUGIN_BASE}/refdata",
+            json=body,
+            headers={**hdrs, "Content-Type": "application/json"},
+        )
+        if r.status_code == 404:
+            raise HTTPException(404, detail={"error": "PLUGIN_NOT_FOUND",
+                                             "message": "Cerulean Endpoints plugin not installed"})
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, detail={"error": "REFDATA_PUSH_FAILED", "message": r.text[:500]})
+
+        result = r.json()
+        await audit_log(db, project_id, stage=7, level="info", tag="[refdata]",
+                        message=f"Pushed reference data via Cerulean plugin: {result}")
+        return result
+
+
+@router.post("/{project_id}/push/cerulean/truncate")
+async def cerulean_truncate(
+    project_id: str,
+    body: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Truncate Koha data tables via the Cerulean Endpoints plugin.
+
+    Body: {"tables": ["biblio", "items"], "confirm": "YES_DELETE_ALL_DATA"}
+    """
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    if body.get("confirm") != "YES_DELETE_ALL_DATA":
+        raise HTTPException(400, detail={"error": "CONFIRM_REQUIRED",
+                                         "message": "Set confirm to 'YES_DELETE_ALL_DATA'"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+        r = await client.post(
+            f"{base_url}{_CERULEAN_PLUGIN_BASE}/db/truncate",
+            json=body,
+            headers={**hdrs, "Content-Type": "application/json"},
+        )
+        if r.status_code == 404:
+            raise HTTPException(404, detail={"error": "PLUGIN_NOT_FOUND"})
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, detail={"error": "TRUNCATE_FAILED", "message": r.text[:500]})
+
+        result = r.json()
+        await audit_log(db, project_id, stage=7, level="warn", tag="[truncate]",
+                        message=f"Truncated Koha tables: {body.get('tables', [])}")
+        return result
+
+
+@router.get("/{project_id}/push/cerulean/db-stats")
+async def cerulean_db_stats(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get database statistics from Koha via the Cerulean Endpoints plugin."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        r = await client.get(f"{base_url}{_CERULEAN_PLUGIN_BASE}/db/stats", headers=hdrs)
+        if r.status_code == 404:
+            raise HTTPException(404, detail={"error": "PLUGIN_NOT_FOUND"})
+        return r.json() if r.status_code == 200 else {"error": r.text[:200]}
+
+
+@router.get("/{project_id}/push/cerulean/es-status")
+async def cerulean_es_status(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get Elasticsearch status from Koha via the Cerulean Endpoints plugin."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        r = await client.get(f"{base_url}{_CERULEAN_PLUGIN_BASE}/es/status", headers=hdrs)
+        if r.status_code == 404:
+            raise HTTPException(404, detail={"error": "PLUGIN_NOT_FOUND"})
+        return r.json() if r.status_code == 200 else {"error": r.text[:200]}
+
+
+@router.get("/{project_id}/push/cerulean/system-info")
+async def cerulean_system_info(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get Koha system information via the Cerulean Endpoints plugin."""
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+    base_url, hdrs = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
+        r = await client.get(f"{base_url}{_CERULEAN_PLUGIN_BASE}/system/info", headers=hdrs)
+        if r.status_code == 404:
+            return {"installed": False}
+        if r.status_code == 200:
+            return {"installed": True, **r.json()}
+        return {"installed": False, "error": r.text[:200]}
+
+
 # ── UTF-8 preflight endpoints ────────────────────────────────────────────
 
 

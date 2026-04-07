@@ -866,21 +866,109 @@ def _daemon_cmd(action: str, daemon: str, instance: str, container: str) -> dict
     }
 
 
+def _cerulean_plugin_available(project_id: str) -> bool:
+    """Check if the Cerulean Endpoints plugin is installed on this Koha."""
+    try:
+        base_url, headers = _koha_client(project_id)
+        with httpx.Client(timeout=10.0, verify=False) as client:
+            r = client.get(f"{base_url}{_CERULEAN_BASE}/system/info", headers=headers)
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _cerulean_migration_mode(project_id: str, action: str,
+                              buffer_pool_mb: int = 2048,
+                              saved_flush: int | None = None,
+                              saved_pool: int | None = None) -> dict:
+    """Use the Cerulean Endpoints plugin for migration mode toggle.
+
+    Returns the plugin response dict, or None if the plugin isn't available.
+    """
+    try:
+        base_url, headers = _koha_client(project_id)
+        body: dict = {"action": action}
+        if action == "enable":
+            body["innodb_pool_mb"] = buffer_pool_mb
+        elif action == "disable" and saved_flush is not None:
+            body["saved_flush"] = saved_flush
+            if saved_pool is not None:
+                body["saved_pool"] = saved_pool
+
+        with httpx.Client(timeout=30.0, verify=False) as client:
+            r = client.post(
+                f"{base_url}{_CERULEAN_BASE}/daemons/migration-mode",
+                json=body,
+                headers={**headers, "Content-Type": "application/json"},
+            )
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 404:
+                return None  # plugin not installed — fall back
+            return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    except Exception:
+        return None
+
+
 @celery_app.task(name="cerulean.tasks.push.migration_mode_status_task", queue="push")
 def migration_mode_status_task(project_id: str) -> dict:
-    """Celery wrapper for migration_mode_status (needs Docker socket)."""
+    """Check migration mode status — tries Cerulean plugin first, Docker fallback."""
+    # Try Cerulean Endpoints plugin
+    if _cerulean_plugin_available(project_id):
+        try:
+            base_url, headers = _koha_client(project_id)
+            with httpx.Client(timeout=10.0, verify=False) as client:
+                r = client.get(f"{base_url}{_CERULEAN_BASE}/daemons", headers=headers)
+                if r.status_code == 200:
+                    data = r.json()
+                    # Normalize to our format
+                    return {
+                        "container": "via-plugin",
+                        "instance": data.get("instance", "?"),
+                        "source": "cerulean_plugin",
+                        "daemons": {
+                            f"koha-{k}": "running" if v.get("running") else "stopped"
+                            for k, v in data.get("daemons", {}).items()
+                        },
+                    }
+        except Exception:
+            pass
+    # Fallback to Docker exec
     return migration_mode_status(project_id)
 
 
 @celery_app.task(name="cerulean.tasks.push.migration_mode_enable_task", queue="push")
 def migration_mode_enable_task(project_id: str, buffer_pool_mb: int = 2048) -> dict:
-    """Celery wrapper for migration_mode_enable (needs Docker socket)."""
+    """Enable migration mode — tries Cerulean plugin first, Docker fallback."""
+    # Try Cerulean Endpoints plugin (one call does daemons + DB tuning)
+    result = _cerulean_migration_mode(project_id, "enable", buffer_pool_mb=buffer_pool_mb)
+    if result is not None:
+        return {
+            "source": "cerulean_plugin",
+            "container": "via-plugin",
+            "instance": "auto",
+            "results": {d: {"action": "stop", "returncode": 0, "output": "via plugin"}
+                        for d in result.get("daemons_stopped", [])},
+            "db_tuning": result.get("db_tuning", {}),
+        }
+    # Fallback to Docker exec
     return migration_mode_enable(project_id, buffer_pool_mb=buffer_pool_mb)
 
 
 @celery_app.task(name="cerulean.tasks.push.migration_mode_disable_task", queue="push")
 def migration_mode_disable_task(project_id: str) -> dict:
-    """Celery wrapper for migration_mode_disable (needs Docker socket)."""
+    """Disable migration mode — tries Cerulean plugin first, Docker fallback."""
+    result = _cerulean_migration_mode(project_id, "disable")
+    if result is not None:
+        return {
+            "source": "cerulean_plugin",
+            "container": "via-plugin",
+            "instance": "auto",
+            "results": {d: {"action": "start", "returncode": 0, "output": "via plugin"}
+                        for d in result.get("daemons_started", [])},
+            "db_tuning": result.get("db_tuning", {}),
+        }
+    # Fallback to Docker exec
     return migration_mode_disable(project_id)
 
 
@@ -2711,6 +2799,7 @@ def turboindex_task(
 # ══════════════════════════════════════════════════════════════════════════
 
 _TOOLKIT_BASE = "/api/v1/contrib/migrationtoolkit"
+_CERULEAN_BASE = "/api/v1/contrib/cerulean"
 
 
 def _toolkit_available(client: httpx.Client, base_url: str, headers: dict) -> bool:
