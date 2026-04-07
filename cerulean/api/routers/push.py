@@ -460,12 +460,14 @@ async def get_needed_refs(
     )
     patron_rows = (await db.execute(patron_q)).all()
 
-    # Reconciliation scan results: itype, loc, ccode
+    # Reconciliation scan results: itype, loc, ccode, homebranch, holdingbranch
     recon_q = (
         select(ReconciliationScanResult.vocab_category, ReconciliationScanResult.source_value,
                func.sum(ReconciliationScanResult.record_count).label("cnt"))
         .where(ReconciliationScanResult.project_id == project_id)
-        .where(ReconciliationScanResult.vocab_category.in_(["itype", "loc", "ccode"]))
+        .where(ReconciliationScanResult.vocab_category.in_(
+            ["itype", "loc", "ccode", "homebranch", "holdingbranch"]
+        ))
         .group_by(ReconciliationScanResult.vocab_category, ReconciliationScanResult.source_value)
     )
     recon_rows = (await db.execute(recon_q)).all()
@@ -477,12 +479,16 @@ async def get_needed_refs(
     locations = []
     ccodes = []
 
+    # Libraries from patron scan (branchcode)
     for header, value, cnt in patron_rows:
         item = NeededRefValue(value=value, record_count=int(cnt))
         if header == "branchcode":
             libraries.append(item)
         elif header == "categorycode":
             patron_categories.append(item)
+
+    # Libraries from MARC 952$a/$b (homebranch/holdingbranch) — merge with patron branches
+    lib_seen = {lib.value for lib in libraries}
 
     for category, value, cnt in recon_rows:
         item = NeededRefValue(value=value, record_count=int(cnt))
@@ -492,6 +498,10 @@ async def get_needed_refs(
             locations.append(item)
         elif category == "ccode":
             ccodes.append(item)
+        elif category in ("homebranch", "holdingbranch"):
+            if value not in lib_seen:
+                libraries.append(item)
+                lib_seen.add(value)
 
     return NeededRefDataResponse(
         libraries=sorted(libraries, key=lambda x: -x.record_count),
