@@ -8284,14 +8284,14 @@ function renderS7Reindex() {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header">
-          <span class="card-title">TurboIndex Plugin</span>
+          <span class="card-title">ES Reindex (TurboIndex)</span>
           <span class="badge badge-green" style="font-size:10px;margin-left:8px">recommended</span>
         </div>
-        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Fast parallel Elasticsearch rebuild via the turboindex plugin. Use this after a fastmarcimport push (which defers index writes).</p>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Fast parallel Elasticsearch rebuild. Uses the Migration Toolkit plugin (or standalone TurboIndex). Run after import to make records searchable.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Processes (1-8)</label>
-            <input type="number" id="turbo-processes" value="4" min="1" max="8" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Processes (1-16)</label>
+            <input type="number" id="turbo-processes" value="4" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
           </div>
           <div>
             <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Bulk commit size</label>
@@ -8344,15 +8344,20 @@ async function runTurboIndex() {
   const commit = parseInt(document.getElementById('turbo-commit').value) || 5000;
   const reset = document.getElementById('turbo-reset').checked;
   const force_merge = document.getElementById('turbo-force-merge').checked;
+  const body = { reset, processes, commit, force_merge };
 
-  statusEl.innerHTML = '<div class="spinner"></div> Dispatching TurboIndex…';
+  statusEl.innerHTML = '<div class="spinner"></div> Dispatching reindex…';
   try {
-    const r = await window.api('POST', `/projects/${p.id}/push/turboindex`, {
-      reset, processes, commit, force_merge,
-    });
+    // Try Migration Toolkit endpoint first, fall back to standalone TurboIndex
+    let r;
+    try {
+      r = await window.api('POST', `/projects/${p.id}/push/toolkit-reindex`, body);
+    } catch (e1) {
+      // Toolkit not available — try standalone turboindex
+      r = await window.api('POST', `/projects/${p.id}/push/turboindex`, body);
+    }
     if (!r) return;
-    toast('TurboIndex dispatched', 'info');
-    // Begin live-polling the manifest for detailed state
+    toast('Reindex dispatched', 'info');
     _startTurboLivePoll(p.id, r.manifest_id, { processes, commit, reset, force_merge });
   } catch (e) {
     statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Failed: ${esc(e.message || String(e))}</span>`;
