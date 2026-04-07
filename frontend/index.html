@@ -7148,15 +7148,30 @@ async function renderS7Setup() {
     <div class="alert alert-warn" style="margin-bottom:16px">
       Before pushing data, ensure Koha has the required reference data (libraries, patron categories, item types, authorised values).
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:16px">
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="s7ScanMarcFile()">Scan MARC File</button>
       <button class="btn btn-primary" onclick="s7FetchKohaRefs()">Fetch from Koha</button>
-      <button class="btn btn-ghost" onclick="s7FetchNeededRefs()">Scan Project Data</button>
+      <button class="btn btn-ghost" onclick="s7FetchNeededRefs()">Refresh Comparison</button>
     </div>
     <div id="s7-setup-status" style="margin-bottom:12px"></div>
     <div id="s7-setup-grid"></div>`;
 
   // Auto-load needed refs
   s7FetchNeededRefs();
+}
+
+async function s7ScanMarcFile() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('s7-setup-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Scanning MARC file for controlled values…';
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/push/scan-marc`, {});
+    statusEl.innerHTML = `<span class="text-green" style="font-size:12px">Scanned ${r.records_scanned.toLocaleString()} records from ${r.filename} — found ${r.total_unique_values} unique values.</span>`;
+    // Auto-fetch needed refs to update the comparison grid
+    await s7FetchNeededRefs();
+  } catch (e) {
+    statusEl.innerHTML = `<span class="text-red" style="font-size:12px">Scan failed: ${e.message}</span>`;
+  }
 }
 
 async function s7FetchKohaRefs() {

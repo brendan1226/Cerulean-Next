@@ -502,6 +502,91 @@ async def get_needed_refs(
     )
 
 
+@router.post("/{project_id}/push/scan-marc")
+async def scan_marc_for_refs(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan the push-ready MARC file for controlled values (952 subfields).
+
+    Populates the ReconciliationScanResult table so the needed-refs endpoint
+    returns data.  Works for Quick Path projects that skipped stages 4-8.
+    """
+    await require_project(project_id, db)
+
+    marc_path = _best_marc_path(project_id)
+    if not marc_path:
+        raise HTTPException(409, detail={
+            "error": "NO_MARC_FILE",
+            "message": "No push-ready MARC file found.",
+        })
+
+    # Run scan synchronously — just counting unique values, no heavy processing
+    import pymarc
+    from collections import defaultdict
+    from cerulean.models import ReconciliationScanResult
+
+    SUBFIELD_MAP = {
+        "y": ["itype"], "c": ["loc"], "8": ["ccode"],
+        "a": ["homebranch"], "b": ["holdingbranch"],
+        "7": ["not_loan"], "1": ["withdrawn"], "4": ["damaged"],
+    }
+
+    value_counts: dict[tuple[str, str], int] = defaultdict(int)
+    records_scanned = 0
+
+    with open(str(marc_path), "rb") as fh:
+        reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+        for rec in reader:
+            if rec is None:
+                continue
+            records_scanned += 1
+            for f in rec.get_fields("952"):
+                for sf in f.subfields:
+                    cats = SUBFIELD_MAP.get(sf.code)
+                    if cats and sf.value and sf.value.strip():
+                        for cat in cats:
+                            value_counts[(cat, sf.value.strip())] += 1
+
+    # Clear old results and insert new
+    await db.execute(
+        select(ReconciliationScanResult)
+        .where(ReconciliationScanResult.project_id == project_id)
+    )
+    from sqlalchemy import delete as sa_delete
+    await db.execute(
+        sa_delete(ReconciliationScanResult)
+        .where(ReconciliationScanResult.project_id == project_id)
+    )
+
+    from datetime import datetime as dt
+    now = dt.utcnow()
+    for (category, value), count in value_counts.items():
+        db.add(ReconciliationScanResult(
+            project_id=project_id,
+            vocab_category=category,
+            source_value=value,
+            record_count=count,
+            scanned_at=now,
+        ))
+    await db.flush()
+
+    # Build summary
+    categories: dict[str, int] = defaultdict(int)
+    for (cat, _), _ in value_counts.items():
+        categories[cat] += 1
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[scan]",
+                    message=f"Scanned {records_scanned:,} records, found {len(value_counts)} unique values across {len(categories)} categories")
+
+    return {
+        "records_scanned": records_scanned,
+        "filename": marc_path.name,
+        "categories": dict(categories),
+        "total_unique_values": len(value_counts),
+    }
+
+
 @router.post("/{project_id}/push/libraries", response_model=PushLibrariesResponse)
 async def push_libraries(
     project_id: str,
