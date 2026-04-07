@@ -406,13 +406,14 @@ async def get_koha_refs(
 
 async def _fetch_koha_refs(client: httpx.AsyncClient, base_url: str, headers: dict) -> dict:
     """GET all reference data endpoints from Koha, return parsed dicts."""
+    # _per_page=1000 to avoid Koha's default pagination (20 per page)
     endpoints = {
-        "libraries": "/api/v1/libraries",
-        "patron_categories": "/api/v1/patron_categories",
-        "item_types": "/api/v1/item_types",
-        "av_LOC": "/api/v1/authorised_value_categories/LOC/authorised_values",
-        "av_CCODE": "/api/v1/authorised_value_categories/CCODE/authorised_values",
-        "av_LOST": "/api/v1/authorised_value_categories/LOST/authorised_values",
+        "libraries": "/api/v1/libraries?_per_page=1000",
+        "patron_categories": "/api/v1/patron_categories?_per_page=1000",
+        "item_types": "/api/v1/item_types?_per_page=1000",
+        "av_LOC": "/api/v1/authorised_value_categories/LOC/authorised_values?_per_page=1000",
+        "av_CCODE": "/api/v1/authorised_value_categories/CCODE/authorised_values?_per_page=1000",
+        "av_LOST": "/api/v1/authorised_value_categories/LOST/authorised_values?_per_page=1000",
     }
 
     import asyncio
