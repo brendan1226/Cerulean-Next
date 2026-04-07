@@ -8003,9 +8003,209 @@ async function runPushBibs() {
     if (!taskId) { toast('No task ID returned', 'warn'); return; }
     const methodLabels = { toolkit: 'Migration Toolkit', bulkmarcimport: 'bulkmarcimport.pl', bulk_api: 'Bulk Import API', plugin_fast: 'Fast Import Plugin', rest_api: 'REST API' };
     const methodLabel = methodLabels[method] || 'REST API';
-    document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `${methodLabel} push ${dryRun ? '(dry run)' : ''} running…` });
-    pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
+    toast(`${methodLabel} push started`, 'info');
+    // Use live import panel for toolkit/plugin_fast, basic poll for others
+    if (method === 'toolkit' || method === 'plugin_fast') {
+      _startImportLivePoll(p.id, taskId, methodLabel);
+    } else {
+      document.getElementById('bibs-status').innerHTML = renderProgressBar({ label: `${methodLabel} push ${dryRun ? '(dry run)' : ''} running…` });
+      pollTaskStatus(p.id, taskId, 'bibs-status', 'bulkmarc', 'push');
+    }
   } catch (e) { console.error(e); }
+}
+
+// ─── Import Live Operations Panel ───────────────────────────────────
+// Polls Koha job directly + Celery state for resilient progress tracking.
+// Even if Celery dies, we still see progress from Koha's background job.
+
+window._importPoller = null;
+window._importStartTime = null;
+
+function _startImportLivePoll(projectId, celeryTaskId, methodLabel) {
+  if (window._importPoller) clearInterval(window._importPoller);
+  const statusEl = document.getElementById('bibs-status');
+  window._importStartTime = Date.now();
+
+  // State tracking
+  let kohaJobId = null;
+  let lastProgress = 0;
+  let lastProgressTime = Date.now();
+  let uploadEndTime = null;
+  let firstProgressTime = null;
+
+  const tick = async () => {
+    try {
+      // Step 1: Get Celery state (may have job_id)
+      const celery = await window.api('GET', `/projects/${projectId}/push/status?task_id=${celeryTaskId}`);
+      const celeryProgress = celery?.progress || {};
+      const celeryState = celery?.state || 'PENDING';
+
+      // Extract job_id from Celery progress (set when upload completes and Koha responds)
+      if (!kohaJobId && celeryProgress.job_id) {
+        kohaJobId = celeryProgress.job_id;
+        uploadEndTime = Date.now();
+      }
+
+      // Step 2: If we have a Koha job_id, poll it directly for authoritative progress
+      let kohaData = null;
+      if (kohaJobId) {
+        try {
+          kohaData = await window.api('GET', `/projects/${projectId}/push/koha-job/${kohaJobId}`);
+        } catch (e) {
+          // Koha unreachable — fall back to Celery data
+        }
+      }
+
+      // Use Koha data if available, else Celery
+      const progress = kohaData ? kohaData.progress : (celeryProgress.records_done || 0);
+      const total = kohaData ? kohaData.size : (celeryProgress.records_total || 0);
+      const jobStatus = kohaData ? kohaData.status : (celeryProgress.job_status || celeryState);
+      const pct = total > 0 ? Math.min(100, Math.round(progress / total * 100)) : 0;
+      const messages = kohaData ? (kohaData.messages || []) : [];
+      const report = kohaData ? (kohaData.report || {}) : {};
+
+      // Timing calculations
+      const now = Date.now();
+      const wallSec = (now - window._importStartTime) / 1000;
+      const uploadSec = uploadEndTime ? (uploadEndTime - window._importStartTime) / 1000 : null;
+
+      // Track rate
+      if (progress > 0 && !firstProgressTime) firstProgressTime = now;
+      let recPerSec = 0;
+      if (progress > 0 && firstProgressTime) {
+        const processingTime = (now - firstProgressTime) / 1000;
+        if (processingTime > 0) recPerSec = Math.round(progress / processingTime);
+      }
+      let eta = '';
+      if (recPerSec > 0 && total > progress) {
+        const remaining = (total - progress) / recPerSec;
+        if (remaining < 60) eta = `~${Math.round(remaining)}s`;
+        else if (remaining < 3600) eta = `~${Math.round(remaining / 60)}m`;
+        else eta = `~${(remaining / 3600).toFixed(1)}h`;
+      }
+
+      // Is it done?
+      const isDone = jobStatus === 'finished' || jobStatus === 'failed' || celeryState === 'SUCCESS' || celeryState === 'FAILURE';
+
+      // Check for completed report from Celery result
+      let finalReport = null;
+      if (isDone && celery?.result) {
+        finalReport = celery.result;
+      }
+
+      statusEl.innerHTML = _renderImportLivePanel({
+        method: methodLabel,
+        status: isDone ? (jobStatus === 'failed' || celeryState === 'FAILURE' ? 'error' : 'finished') :
+                (progress > 0 ? 'importing' : (kohaJobId ? 'splitting' : 'uploading')),
+        progress, total, pct,
+        recPerSec, eta,
+        wallSec: Math.round(wallSec),
+        uploadSec: uploadSec ? Math.round(uploadSec) : null,
+        kohaJobId,
+        messages,
+        report: isDone ? (finalReport?.files?.[0] || finalReport?.totals || report) : report,
+        error: celery?.error || (isDone && jobStatus === 'failed' ? 'Koha job failed' : null),
+      });
+
+      if (isDone) {
+        clearInterval(window._importPoller);
+        window._importPoller = null;
+        if (jobStatus === 'failed' || celeryState === 'FAILURE') {
+          toast('Import failed — see log', 'warn');
+        } else {
+          const added = report.num_added || finalReport?.totals?.num_added || progress;
+          toast(`Import complete — ${Number(added).toLocaleString()} records`, 'success');
+        }
+      }
+    } catch (e) {
+      console.error('import poll error', e);
+    }
+  };
+
+  tick();
+  window._importPoller = setInterval(tick, 3000);
+}
+
+function _renderImportLivePanel(s) {
+  const { method, status, progress, total, pct, recPerSec, eta, wallSec,
+          uploadSec, kohaJobId, messages, report, error } = s;
+
+  const badgeClass = status === 'finished' ? 'badge-green'
+    : status === 'error' ? 'badge-red' : 'badge-yellow';
+  const badgeText = status === 'finished' ? 'COMPLETE'
+    : status === 'error' ? 'FAILED'
+    : status === 'uploading' ? 'UPLOADING'
+    : status === 'splitting' ? 'SPLITTING'
+    : 'IMPORTING';
+
+  let html = `<div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-main);overflow:hidden;margin-top:12px">`;
+
+  // Top bar
+  html += `<div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--surface-dim)">`;
+  html += `<div><span class="badge ${badgeClass}" style="font-size:10px">${badgeText}</span>`;
+  html += ` <span class="mono" style="font-size:11px;color:var(--text-secondary);margin-left:6px">${esc(method)}</span>`;
+  if (kohaJobId) html += ` <span class="mono text-dim" style="font-size:10px;margin-left:6px">job #${kohaJobId}</span>`;
+  html += `</div>`;
+  html += `<span class="mono" style="font-size:11px;color:var(--text-dim)">${wallSec}s elapsed</span>`;
+  html += `</div>`;
+
+  // Progress bar
+  html += `<div style="padding:10px 12px;border-bottom:1px solid var(--border)">`;
+  html += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:4px">`;
+  html += `<span>${Number(progress).toLocaleString()} / ${Number(total).toLocaleString()} records</span>`;
+  html += `<span>`;
+  if (recPerSec > 0) html += `${recPerSec.toLocaleString()} rec/s`;
+  if (eta) html += ` · ETA ${eta}`;
+  html += `</span></div>`;
+  html += `<div style="height:8px;background:var(--bg-card);border-radius:4px;overflow:hidden">`;
+  const barColor = status === 'error' ? 'var(--red,#e55)' : status === 'finished' ? 'var(--green,#5a5)' : 'var(--cerulean,#0bc)';
+  html += `<div style="height:100%;width:${pct}%;background:${barColor};transition:width 0.5s;border-radius:4px"></div>`;
+  html += `</div></div>`;
+
+  // Timing + counters grid
+  html += `<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;font-size:11px">`;
+  const counters = [];
+  if (uploadSec !== null) counters.push(['Upload', `${uploadSec}s`, '']);
+  if (status === 'importing' || status === 'finished' || status === 'error') {
+    counters.push(['Records', Number(progress).toLocaleString(), '']);
+    counters.push(['Rate', recPerSec > 0 ? `${recPerSec}/s` : '—', '']);
+  }
+  if (report.num_added !== undefined) counters.push(['Bibs Added', Number(report.num_added).toLocaleString(), 'text-green']);
+  if (report.num_items_added !== undefined) counters.push(['Items Added', Number(report.num_items_added).toLocaleString(), 'text-green']);
+  if (report.num_errors !== undefined && report.num_errors > 0) counters.push(['Errors', Number(report.num_errors).toLocaleString(), 'text-red']);
+  if (report.num_item_errors !== undefined && report.num_item_errors > 0) counters.push(['Item Errors', Number(report.num_item_errors).toLocaleString(), 'text-red']);
+  if (report.worker_count) counters.push(['Workers', report.worker_count, '']);
+  if (report.duration_sec) counters.push(['Duration', report.duration_sec + 's', '']);
+
+  for (const [label, val, cls] of counters) {
+    html += `<div><div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div class="mono ${cls}" style="font-size:13px">${val}</div></div>`;
+  }
+  html += `</div>`;
+
+  // Error banner
+  if (error) {
+    html += `<div style="padding:8px 12px;background:rgba(200,60,60,0.1);border-bottom:1px solid var(--border);color:var(--red,#e55);font-size:11px">${esc(error)}</div>`;
+  }
+
+  // Message log stream
+  if (messages.length > 0 || status === 'finished' || status === 'error') {
+    html += `<div style="padding:8px 12px;font-size:11px">`;
+    html += `<div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Log stream${messages.length ? ' ('+messages.length+')' : ''}</div>`;
+    html += `<div data-log-stream style="max-height:200px;overflow-y:auto;background:var(--bg-card);border-radius:4px;padding:6px 8px;font-family:var(--font-mono);font-size:10px;line-height:1.5">`;
+    if (!messages.length) {
+      html += `<span style="color:var(--text-dim)">waiting for messages…</span>`;
+    } else {
+      for (const m of messages) {
+        const t = (m.type || 'info').toLowerCase();
+        const color = t === 'error' ? 'var(--red,#e55)' : t === 'warning' ? 'var(--yellow,#d90)' : 'var(--text-primary)';
+        html += `<div style="color:${color};white-space:pre-wrap;word-break:break-word"><span style="color:var(--text-dim);font-weight:600">[${esc(t)}]</span> ${esc(m.message || '')}</div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+
+  html += `</div>`;
+  return html;
 }
 
 function renderS7Patrons() {

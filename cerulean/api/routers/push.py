@@ -1164,6 +1164,64 @@ async def toolkit_reindex_endpoint(
     )
 
 
+# ── Koha Job Direct Poll (bypasses Celery) ──────────────────────────────
+
+
+@router.get("/{project_id}/push/koha-job/{job_id}")
+async def poll_koha_job_direct(
+    project_id: str,
+    job_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll a Koha background job directly via the Koha REST API.
+
+    Bypasses Celery completely — useful when the Celery task has died but
+    the Koha job is still running.  Returns the raw Koha job status with
+    progress, size, status, messages, and report data.
+    """
+    project = await require_project(project_id, db)
+    if not project.koha_url:
+        raise HTTPException(409, detail={"error": "NO_KOHA_URL"})
+
+    base_url, headers = _koha_headers(project)
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        resp = await client.get(f"{base_url}/api/v1/jobs/{job_id}", headers=headers)
+        if resp.status_code >= 400:
+            raise HTTPException(resp.status_code, detail={
+                "error": "KOHA_JOB_ERROR",
+                "message": resp.text[:500],
+            })
+        job = resp.json()
+
+    # Extract key fields for easy consumption
+    progress = 0
+    size = 0
+    try:
+        progress = int(job.get("progress") or 0)
+    except (TypeError, ValueError):
+        pass
+    try:
+        size = int(job.get("size") or 0)
+    except (TypeError, ValueError):
+        pass
+
+    data = job.get("data") or {}
+    report = data.get("report") or {}
+    messages = data.get("messages") or []
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status", "unknown"),
+        "progress": progress,
+        "size": size,
+        "pct": round(progress / size * 100, 1) if size > 0 else 0,
+        "type": job.get("type"),
+        "report": report,
+        "messages": messages[-50:],  # last 50 messages
+        "message_count": len(messages),
+    }
+
+
 # ── UTF-8 preflight endpoints ────────────────────────────────────────────
 
 
