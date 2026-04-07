@@ -39,8 +39,12 @@ from cerulean.models import (
     ReconciliationScanResult,
 )
 from cerulean.schemas.push import (
+    AuthorisedValuePushItem,
     ItemTypePushItem,
     KohaRefDataResponse,
+    PushAuthorisedValueResult,
+    PushAuthorisedValuesRequest,
+    PushAuthorisedValuesResponse,
     TurboIndexRequest,
     TurboIndexResponse,
     LibraryPushItem,
@@ -882,6 +886,44 @@ async def push_item_types(
         success_count=success_count,
         failed_count=failed_count,
         results=results,
+    )
+
+
+@router.post("/{project_id}/push/authorised-values", response_model=PushAuthorisedValuesResponse)
+async def push_authorised_values(
+    project_id: str,
+    body: PushAuthorisedValuesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Push missing authorised values (LOC, CCODE, etc.) to Koha via SQL.
+
+    Koha REST API doesn't support POST for authorised values, so we insert
+    directly into MariaDB via the Celery worker (which has DB access).
+    """
+    await require_project(project_id, db)
+    from cerulean.tasks.push import push_authorised_values_sql_task
+
+    values_data = [{"value": v.value, "description": v.description} for v in body.values]
+    try:
+        result = push_authorised_values_sql_task.apply_async(
+            args=[project_id, body.category, values_data],
+            queue="push",
+        ).get(timeout=60)
+    except Exception as exc:
+        raise HTTPException(500, detail={"error": "TASK_FAILED", "message": f"SQL push failed: {exc}"})
+
+    await audit_log(db, project_id, stage=7, level="info", tag="[setup]",
+                    message=f"Pushed {result.get('success_count', 0)}/{len(body.values)} {body.category} authorised values to Koha")
+
+    return PushAuthorisedValuesResponse(
+        category=body.category,
+        total=len(body.values),
+        success_count=result.get("success_count", 0),
+        failed_count=result.get("failed_count", 0),
+        results=[
+            PushAuthorisedValueResult(value=r["value"], success=r["success"], error=r.get("error"))
+            for r in result.get("results", [])
+        ],
     )
 
 

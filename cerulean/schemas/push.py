@@ -182,6 +182,34 @@ class PushItemTypesResponse(BaseModel):
 
 # ── TurboIndex (plugin) reindex ─────────────────────────────────────
 
+# ── Authorised Values Push ───────────────────────────────────────
+
+class AuthorisedValuePushItem(BaseModel):
+    value: str
+    description: str
+
+
+class PushAuthorisedValuesRequest(BaseModel):
+    category: str      # LOC, CCODE, NOT_LOAN, LOST, DAMAGED, WITHDRAWN
+    values: list[AuthorisedValuePushItem]
+
+
+class PushAuthorisedValueResult(BaseModel):
+    value: str
+    success: bool
+    error: str | None = None
+
+
+class PushAuthorisedValuesResponse(BaseModel):
+    category: str
+    total: int
+    success_count: int
+    failed_count: int
+    results: list[PushAuthorisedValueResult]
+
+
+# ── TurboIndex ───────────────────────────────────────────────────
+
 class TurboIndexRequest(BaseModel):
     reset: bool = True
     processes: int = 4

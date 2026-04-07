@@ -7207,8 +7207,8 @@ function s7RenderSetupGrid() {
     { key: 'libraries', label: 'Libraries (branches)', kohaKey: 'libraries', kohaIdField: 'library_id', kohaNameField: 'name', canPush: true },
     { key: 'patron_categories', label: 'Patron Categories', kohaKey: 'patron_categories', kohaIdField: 'patron_category_id', kohaNameField: 'name', canPush: true, pushType: 'patron_categories' },
     { key: 'item_types', label: 'Item Types', kohaKey: 'item_types', kohaIdField: 'item_type_id', kohaNameField: 'description', canPush: true, pushType: 'item_types' },
-    { key: 'locations', label: 'Locations (LOC)', kohaKey: null, avKey: 'LOC', canPush: false },
-    { key: 'ccodes', label: 'Collection Codes (CCODE)', kohaKey: null, avKey: 'CCODE', canPush: false },
+    { key: 'locations', label: 'Locations (LOC)', kohaKey: null, avKey: 'LOC', canPush: true, pushType: 'authorised_values', avCategory: 'LOC' },
+    { key: 'ccodes', label: 'Collection Codes (CCODE)', kohaKey: null, avKey: 'CCODE', canPush: true, pushType: 'authorised_values', avCategory: 'CCODE' },
   ];
 
   let html = '';
@@ -7263,9 +7263,13 @@ function s7RenderSetupGrid() {
     // Action buttons
     if (cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
       const pushId = 's7-push-' + cat.key + '-status';
-      const pushFn = cat.pushType === 'patron_categories' ? 's7PushMissingPatronCategories' : cat.pushType === 'item_types' ? 's7PushMissingItemTypes' : 's7PushMissingLibraries';
+      let pushOnclick;
+      if (cat.pushType === 'patron_categories') pushOnclick = 's7PushMissingPatronCategories()';
+      else if (cat.pushType === 'item_types') pushOnclick = 's7PushMissingItemTypes()';
+      else if (cat.pushType === 'authorised_values') pushOnclick = "s7PushMissingAuthorisedValues('" + cat.avCategory + "')";
+      else pushOnclick = 's7PushMissingLibraries()';
       html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">'
-        + '<button class="btn btn-primary btn-sm" onclick="' + pushFn + '()">Push ' + missingItems.length + ' Missing ' + esc(cat.label) + '</button>'
+        + '<button class="btn btn-primary btn-sm" onclick="' + pushOnclick + '">Push ' + missingItems.length + ' Missing ' + esc(cat.label) + '</button>'
         + '<div id="' + pushId + '" style="margin-top:8px"></div></div>';
     } else if (!cat.canPush && missingItems.length > 0 && _s7KohaRefs) {
       html += '<div style="margin-top:8px;padding:8px;background:var(--surface-dim);border-radius:4px;font-size:11px;color:var(--text-secondary)">'
@@ -7337,6 +7341,48 @@ async function s7PushMissingPatronCategories() {
     statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + r.success_count + ' created, ' + r.failed_count + ' failed.</span>';
     if (r.failed_count > 0) {
       const errors = r.results.filter(x => !x.success).map(x => x.category_id + ': ' + x.error).join('<br>');
+      statusEl.innerHTML += '<div class="text-red" style="font-size:11px;margin-top:4px">' + errors + '</div>';
+    }
+    if (r.success_count > 0) {
+      await s7FetchKohaRefs();
+    }
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + e.message + '</span>';
+  }
+}
+
+async function s7PushMissingAuthorisedValues(category) {
+  const p = state.currentProject;
+  const key = category === 'LOC' ? 'locations' : category === 'CCODE' ? 'ccodes' : category.toLowerCase();
+  const statusEl = document.getElementById('s7-push-' + key + '-status');
+  if (!_s7NeededRefs || !_s7KohaRefs) return;
+
+  const existing = new Set();
+  if (_s7KohaRefs.authorised_values && _s7KohaRefs.authorised_values[category]) {
+    _s7KohaRefs.authorised_values[category].forEach(item => {
+      existing.add(item.value || item.authorised_value || '');
+    });
+  }
+
+  const neededKey = key;
+  const missing = (_s7NeededRefs[neededKey] || [])
+    .filter(n => !existing.has(n.value))
+    .map(n => ({ value: n.value, description: n.value }));
+
+  if (!missing.length) {
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">All values already exist.</span>';
+    return;
+  }
+
+  statusEl.innerHTML = '<div class="spinner"></div> Pushing ' + missing.length + ' ' + category + ' values…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/push/authorised-values', {
+      category: category,
+      values: missing,
+    });
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + r.success_count + ' created, ' + r.failed_count + ' failed.</span>';
+    if (r.failed_count > 0) {
+      const errors = r.results.filter(x => !x.success).map(x => x.value + ': ' + x.error).join('<br>');
       statusEl.innerHTML += '<div class="text-red" style="font-size:11px;margin-top:4px">' + errors + '</div>';
     }
     if (r.success_count > 0) {

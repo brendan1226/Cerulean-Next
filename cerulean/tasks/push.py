@@ -2388,6 +2388,83 @@ def push_item_types_sql_task(self, project_id: str, item_types: list[dict]) -> d
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# AUTHORISED VALUES SQL PUSH TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.push.push_authorised_values_sql_task",
+    max_retries=0,
+    queue="push",
+)
+def push_authorised_values_sql_task(
+    self, project_id: str, category: str, values: list[dict],
+) -> dict:
+    """Insert authorised values into Koha MariaDB via direct SQL.
+
+    Koha REST API does not support POST for authorised values, so we
+    insert directly.  Each value dict should have:
+        {"value": "MAIN", "description": "Main Library"}
+
+    Args:
+        project_id: UUID of the project (for DB connection).
+        category: Authorised value category (LOC, CCODE, NOT_LOAN, etc.).
+        values: List of {"value", "description"} dicts.
+    """
+    log = AuditLogger(project_id=project_id, stage=7, tag="[setup]")
+    log.info(f"Pushing {len(values)} authorised values for {category} via SQL")
+
+    results = []
+    success_count = 0
+    failed_count = 0
+
+    try:
+        conn = _koha_mysql_conn(project_id)
+    except Exception as exc:
+        log.error(f"Failed to connect to Koha DB: {exc}")
+        return {
+            "category": category,
+            "success_count": 0,
+            "failed_count": len(values),
+            "results": [
+                {"value": v["value"], "success": False, "error": f"DB connection failed: {exc}"}
+                for v in values
+            ],
+        }
+
+    try:
+        cursor = conn.cursor()
+        for v in values:
+            code = v["value"]
+            desc = v.get("description", code)
+            try:
+                cursor.execute(
+                    "INSERT IGNORE INTO authorised_values "
+                    "(category, authorised_value, lib) "
+                    "VALUES (%s, %s, %s)",
+                    (category, code, desc),
+                )
+                conn.commit()
+                success_count += 1
+                results.append({"value": code, "success": True})
+            except Exception as exc:
+                conn.rollback()
+                failed_count += 1
+                results.append({"value": code, "success": False, "error": str(exc)[:200]})
+    finally:
+        conn.close()
+
+    log.info(f"Authorised values ({category}) SQL push: {success_count} created, {failed_count} failed")
+    return {
+        "category": category,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "results": results,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # TURBOINDEX (Koha plugin) REINDEX TASK
 # ══════════════════════════════════════════════════════════════════════════
 #
