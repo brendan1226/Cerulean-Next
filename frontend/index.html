@@ -9101,9 +9101,12 @@ window.navigate = function(view, params = {}) {
   document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
   document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
 
-// ── Stage 12 — Aspen Discovery ──────────────────────────────────────
+  const viewEl = document.getElementById('view');
+  // (navigate function continues with renders map below...)
 
-async function renderStage12_Aspen(el) {
+// ── Stage 12 — Aspen Discovery (global scope) ──────────────────────
+
+window.renderStage12_Aspen = async function(el) {
   const p = state.currentProject;
   el.innerHTML = `
     <div class="page-header">
@@ -9135,7 +9138,7 @@ async function renderStage12_Aspen(el) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header"><span class="card-title">Turbo Migration</span></div>
-        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Bulk extract from Koha → Aspen DB. Pulls all bibs + items into Aspen's ils_records table using parallel threads.</p>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Bulk extract from Koha into Aspen DB using parallel threads.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
           <div>
             <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Workers (1-16)</label>
@@ -9146,32 +9149,30 @@ async function renderStage12_Aspen(el) {
             <input type="number" id="aspen-migrate-batch" value="500" min="100" max="5000" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
           </div>
         </div>
-        <button class="btn btn-primary" onclick="startAspenMigration()">▶ Start Turbo Migration</button>
+        <button class="btn btn-primary" onclick="startAspenMigration()">Start Turbo Migration</button>
         <div id="aspen-migrate-status" style="margin-top:12px"></div>
       </div>
-
       <div class="card">
         <div class="card-header"><span class="card-title">Turbo Reindex</span></div>
-        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Parallel Solr reindex of all grouped works in Aspen. Run after Turbo Migration to make records searchable in the OPAC.</p>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Parallel Solr reindex of all grouped works. Run after migration.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
           <div>
             <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Workers (1-16)</label>
             <input type="number" id="aspen-reindex-workers" value="8" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
           </div>
           <div style="display:flex;align-items:end;padding-bottom:4px">
-            <div style="display:flex;align-items:center;gap:4px">
-              <input type="checkbox" id="aspen-reindex-clear">
-              <label for="aspen-reindex-clear" style="font-size:12px;color:var(--text-secondary)">Clear Solr first</label>
-            </div>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)">
+              <input type="checkbox" id="aspen-reindex-clear"> Clear Solr first
+            </label>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="startAspenReindex()">▶ Start Turbo Reindex</button>
+        <button class="btn btn-primary" onclick="startAspenReindex()">Start Turbo Reindex</button>
         <div id="aspen-reindex-status" style="margin-top:12px"></div>
       </div>
     </div>`;
 }
 
-async function saveAspenUrl() {
+window.saveAspenUrl = async function() {
   const p = state.currentProject;
   const url = document.getElementById('aspen-url').value.trim();
   const statusEl = document.getElementById('aspen-config-status');
@@ -9185,7 +9186,7 @@ async function saveAspenUrl() {
   }
 }
 
-async function checkAspenCounts() {
+window.checkAspenCounts = async function() {
   const p = state.currentProject;
   const card = document.getElementById('aspen-counts-card');
   const el = document.getElementById('aspen-counts');
@@ -9210,7 +9211,7 @@ async function checkAspenCounts() {
 
 window._aspenPoller = null;
 
-async function startAspenMigration() {
+window.startAspenMigration = async function() {
   const p = state.currentProject;
   const statusEl = document.getElementById('aspen-migrate-status');
   const workers = parseInt(document.getElementById('aspen-migrate-workers').value) || 4;
@@ -9227,7 +9228,7 @@ async function startAspenMigration() {
   }
 }
 
-async function startAspenReindex() {
+window.startAspenReindex = async function() {
   const p = state.currentProject;
   const statusEl = document.getElementById('aspen-reindex-status');
   const workers = parseInt(document.getElementById('aspen-reindex-workers').value) || 8;
@@ -9244,7 +9245,7 @@ async function startAspenReindex() {
   }
 }
 
-function _pollAspenJob(projectId, taskId, statusElId, label) {
+window._pollAspenJob = function(projectId, taskId, statusElId, label) {
   const statusEl = document.getElementById(statusElId);
   const startTime = Date.now();
   const tick = async () => {
@@ -9305,7 +9306,6 @@ function _pollAspenJob(projectId, taskId, statusElId, label) {
   tick();
 }
 
-  const viewEl = document.getElementById('view');
   const renders = {
     dashboard:     renderDashboard,
     'new-project': renderNewProject,
