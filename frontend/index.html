@@ -9241,21 +9241,40 @@ window.checkAspenCounts = async function() {
 }
 
 window._aspenPoller = null;
+window._aspenCountsRefresher = null;
 
-window.startAspenMigration = async function() {
-  const p = state.currentProject;
-  const statusEl = document.getElementById('aspen-migrate-status');
-  const workers = parseInt(document.getElementById('aspen-migrate-workers').value) || 4;
-  const batch = parseInt(document.getElementById('aspen-migrate-batch').value) || 500;
-  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Migration…';
-  try {
-    const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-migration', {
-      worker_threads: workers, batch_size: batch,
-    });
-    toast('Turbo Migration started', 'info');
-    _pollAspenJob(p.id, r.task_id, 'aspen-migrate-status', 'Turbo Migration');
-  } catch (e) {
-    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+function _startAspenCountsAutoRefresh(projectId) {
+  if (window._aspenCountsRefresher) clearInterval(window._aspenCountsRefresher);
+  // Show the counts card
+  const card = document.getElementById('aspen-counts-card');
+  if (card) card.style.display = '';
+
+  const tick = async () => {
+    try {
+      const r = await window.api('GET', '/projects/' + projectId + '/aspen/counts');
+      const el = document.getElementById('aspen-counts');
+      if (!el) { clearInterval(window._aspenCountsRefresher); return; }
+      const koha = r.koha || {};
+      const aspen = r.aspen || {};
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;font-size:12px">
+          <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Bibs</div><div class="mono" style="font-size:16px">${(koha.bibs||0).toLocaleString()}</div></div>
+          <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Items</div><div class="mono" style="font-size:16px">${(koha.items||0).toLocaleString()}</div></div>
+          <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Aspen ILS Records</div><div class="mono" style="font-size:16px">${(aspen.ilsRecords||0).toLocaleString()}</div></div>
+          <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Grouped Works</div><div class="mono" style="font-size:16px;color:var(--cerulean)">${(aspen.groupedWorks||0).toLocaleString()}</div></div>
+          <div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Koha Connected</div><div class="mono" style="font-size:16px">${koha.connected ? '<span class="text-green">Yes</span>' : '<span class="text-red">No</span>'}</div></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:6px">Auto-refreshing every 10s…</div>`;
+    } catch (e) { }
+  };
+  tick();
+  window._aspenCountsRefresher = setInterval(tick, 10000);
+}
+
+function _stopAspenCountsAutoRefresh() {
+  if (window._aspenCountsRefresher) {
+    clearInterval(window._aspenCountsRefresher);
+    window._aspenCountsRefresher = null;
   }
 }
 
@@ -9271,6 +9290,27 @@ window.startAspenReindex = async function() {
     });
     toast('Turbo Reindex started', 'info');
     _pollAspenJob(p.id, r.task_id, 'aspen-reindex-status', 'Turbo Reindex');
+    // Auto-refresh counts while reindex runs
+    _startAspenCountsAutoRefresh(p.id);
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
+window.startAspenMigration = async function() {
+  const p = state.currentProject;
+  const statusEl = document.getElementById('aspen-migrate-status');
+  const workers = parseInt(document.getElementById('aspen-migrate-workers').value) || 4;
+  const batch = parseInt(document.getElementById('aspen-migrate-batch').value) || 500;
+  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Migration…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-migration', {
+      worker_threads: workers, batch_size: batch,
+    });
+    toast('Turbo Migration started', 'info');
+    _pollAspenJob(p.id, r.task_id, 'aspen-migrate-status', 'Turbo Migration');
+    // Auto-refresh counts while migration runs
+    _startAspenCountsAutoRefresh(p.id);
   } catch (e) {
     statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
   }
@@ -9322,11 +9362,13 @@ window._pollAspenJob = function(projectId, taskId, statusElId, label) {
           + '<div style="margin-top:8px;font-size:12px">' + esc(JSON.stringify(result.aspen_ils_records || result.aspen_grouped_works || result, null, 0).substring(0, 200)) + '</div>'
           + '</div>';
         toast(label + ' complete', 'success');
+        _stopAspenCountsAutoRefresh();
         checkAspenCounts();
         return;
       } else if (state === 'FAILURE') {
         statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(r.error || 'Unknown error') + '</span>';
         toast(label + ' failed', 'warn');
+        _stopAspenCountsAutoRefresh();
         return;
       }
     } catch (e) {
