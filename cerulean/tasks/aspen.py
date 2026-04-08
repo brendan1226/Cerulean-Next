@@ -36,8 +36,13 @@ def _aspen_api(aspen_url: str, method: str, **params) -> dict:
     """
     params["method"] = method
     url = f"{aspen_url.rstrip('/')}/API/SystemAPI"
+    # Aspen's Apache vhost may only accept "localhost" as the Host header,
+    # even when accessed via container name on a Docker network.
+    from urllib.parse import urlparse
+    parsed = urlparse(aspen_url)
+    headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
     with httpx.Client(timeout=30.0, verify=False) as client:
-        resp = client.get(url, params=params)
+        resp = client.get(url, params=params, headers=headers)
         if resp.status_code >= 400:
             raise RuntimeError(f"Aspen API error: HTTP {resp.status_code} — {resp.text[:500]}")
         data = resp.json()

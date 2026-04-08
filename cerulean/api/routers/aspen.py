@@ -84,9 +84,13 @@ async def aspen_counts(
         raise HTTPException(409, detail={"error": "NO_ASPEN_URL",
                                          "message": "Set aspen_url first."})
     url = f"{project.aspen_url}/API/SystemAPI"
+    # Aspen vhost may require Host: localhost when accessed via container name
+    from urllib.parse import urlparse
+    parsed = urlparse(project.aspen_url)
+    extra_headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
     async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
         try:
-            r = await client.get(url, params={"method": "getTurboCounts"})
+            r = await client.get(url, params={"method": "getTurboCounts"}, headers=extra_headers)
         except httpx.HTTPError as exc:
             raise HTTPException(502, detail={"error": "ASPEN_UNREACHABLE",
                                              "message": str(exc)[:200]})
@@ -111,11 +115,14 @@ async def aspen_status(
     if not project.aspen_url:
         raise HTTPException(409, detail={"error": "NO_ASPEN_URL"})
     url = f"{project.aspen_url}/API/SystemAPI"
+    from urllib.parse import urlparse
+    parsed = urlparse(project.aspen_url)
+    extra_headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
     async with httpx.AsyncClient(timeout=15.0, verify=False) as client:
         r = await client.get(url, params={
             "method": "getTurboStatus",
             "backgroundProcessId": process_id,
-        })
+        }, headers=extra_headers)
         if r.status_code >= 400:
             raise HTTPException(r.status_code, detail=r.text[:500])
         return r.json().get("result", r.json())
