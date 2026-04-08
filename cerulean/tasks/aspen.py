@@ -24,25 +24,28 @@ _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
 _engine = create_engine(_sync_url, pool_pre_ping=True)
 
 
-def _aspen_api(aspen_url: str, method: str, **params) -> dict:
+def _aspen_api(aspen_url: str, method: str, _client: httpx.Client | None = None, **params) -> dict:
     """Call an Aspen SystemAPI endpoint.
 
     Args:
         aspen_url: Base URL, e.g. http://aspen:85
         method: API method name, e.g. getTurboCounts
+        _client: Optional pre-authenticated httpx.Client (with session cookie).
         **params: Additional query params
 
     Returns the "result" dict from the response.
     """
     params["method"] = method
     url = f"{aspen_url.rstrip('/')}/API/SystemAPI"
-    # Aspen's Apache vhost may only accept "localhost" as the Host header,
-    # even when accessed via container name on a Docker network.
     from urllib.parse import urlparse
     parsed = urlparse(aspen_url)
     headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
-    with httpx.Client(timeout=30.0, verify=False) as client:
-        resp = client.get(url, params=params, headers=headers)
+
+    if _client:
+        resp = _client.get(url, params=params, headers=headers)
+    else:
+        with httpx.Client(timeout=30.0, verify=False) as client:
+            resp = client.get(url, params=params, headers=headers)
         if resp.status_code >= 400:
             raise RuntimeError(f"Aspen API error: HTTP {resp.status_code} — {resp.text[:500]}")
         data = resp.json()
@@ -53,8 +56,31 @@ def _aspen_api(aspen_url: str, method: str, **params) -> dict:
         return result
 
 
+def _aspen_login(client: httpx.Client, aspen_url: str,
+                  username: str = "aspen_admin", password: str = "password") -> None:
+    """Login to Aspen to get a session cookie.
+
+    Aspen requires a session for background process operations.
+    The session cookie is stored on the httpx.Client automatically.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(aspen_url)
+    headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
+
+    url = f"{aspen_url.rstrip('/')}/API/UserAPI"
+    resp = client.post(url, params={"method": "login"},
+                       data={"username": username, "password": password},
+                       headers=headers)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Aspen login failed: HTTP {resp.status_code}")
+    data = resp.json().get("result", resp.json())
+    if not data.get("success"):
+        raise RuntimeError(f"Aspen login failed: {data.get('message', 'unknown error')}")
+
+
 def _poll_aspen_job(aspen_url: str, process_id: int, celery_task,
                      project_id: str, step_label: str,
+                     _client: httpx.Client | None = None,
                      poll_interval: float = 10.0,
                      timeout: float = 14400.0) -> dict:
     """Poll Aspen's getTurboStatus until the background process completes.
@@ -68,6 +94,7 @@ def _poll_aspen_job(aspen_url: str, process_id: int, celery_task,
         _check_paused(project_id, celery_task)
         try:
             status = _aspen_api(aspen_url, "getTurboStatus",
+                                _client=_client,
                                 backgroundProcessId=process_id)
         except Exception as exc:
             # Transient error — retry on next poll
@@ -176,50 +203,56 @@ def aspen_turbo_migration_task(
                 return {"error": error_msg}
             aspen_url = project.aspen_url
 
-        # Pre-flight: check counts
-        self.update_state(state="PROGRESS", meta={
-            "step": "preflight", "status": "checking",
-        })
-        counts = _aspen_api(aspen_url, "getTurboCounts")
-        koha_bibs = counts.get("koha", {}).get("bibs", 0)
-        log.info(f"Preflight: Koha has {koha_bibs:,} bibs")
+        with httpx.Client(timeout=30.0, verify=False) as client:
+            # Login to get session
+            _aspen_login(client, aspen_url)
+            log.info("Aspen session established")
 
-        # Start migration
-        result = _aspen_api(
-            aspen_url, "startTurboMigration",
-            workerThreads=worker_threads,
-            batchSize=batch_size,
-            profileName=profile_name,
-        )
-        process_id = result.get("backgroundProcessId")
-        if not process_id:
-            raise RuntimeError(f"No backgroundProcessId: {result}")
+            # Pre-flight: check counts
+            self.update_state(state="PROGRESS", meta={
+                "step": "preflight", "status": "checking",
+            })
+            counts = _aspen_api(aspen_url, "getTurboCounts", _client=client)
+            koha_bibs = counts.get("koha", {}).get("bibs", 0)
+            log.info(f"Preflight: Koha has {koha_bibs:,} bibs")
 
-        log.info(f"Turbo Migration started: processId={process_id}")
+            # Start migration
+            result = _aspen_api(
+                aspen_url, "startTurboMigration", _client=client,
+                workerThreads=worker_threads,
+                batchSize=batch_size,
+                profileName=profile_name,
+            )
+            process_id = result.get("backgroundProcessId")
+            if not process_id:
+                raise RuntimeError(f"No backgroundProcessId: {result}")
 
-        # Persist process ID immediately for recovery
-        with Session(_engine) as db:
-            _update_push_manifest(db, manifest_id,
-                                  result_data={
-                                      "method": "aspen_migration",
-                                      "process_id": process_id,
-                                      "worker_threads": worker_threads,
-                                      "batch_size": batch_size,
-                                      "koha_bibs_before": koha_bibs,
-                                  })
+            log.info(f"Turbo Migration started: processId={process_id}")
 
-        # Poll until done
-        final = _poll_aspen_job(
-            aspen_url, process_id, self, project_id,
-            step_label="aspen_migration",
-        )
+            # Persist process ID immediately for recovery
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      result_data={
+                                          "method": "aspen_migration",
+                                          "process_id": process_id,
+                                          "worker_threads": worker_threads,
+                                          "batch_size": batch_size,
+                                          "koha_bibs_before": koha_bibs,
+                                      })
 
-        # Parse final notes for summary
-        notes = final.get("notes", "")
-        elapsed_secs = final.get("elapsedSeconds", 0)
+            # Poll until done
+            final = _poll_aspen_job(
+                aspen_url, process_id, self, project_id,
+                step_label="aspen_migration",
+                _client=client,
+            )
 
-        # Post-flight: verify counts
-        post_counts = _aspen_api(aspen_url, "getTurboCounts")
+            # Parse final notes for summary
+            notes = final.get("notes", "")
+            elapsed_secs = final.get("elapsedSeconds", 0)
+
+            # Post-flight: verify counts
+            post_counts = _aspen_api(aspen_url, "getTurboCounts", _client=client)
         aspen_records = post_counts.get("aspen", {}).get("ilsRecords", 0)
         grouped_works = post_counts.get("aspen", {}).get("groupedWorks", 0)
 
@@ -295,38 +328,43 @@ def aspen_turbo_reindex_task(
                 return {"error": error_msg}
             aspen_url = project.aspen_url
 
-        # Start reindex
-        result = _aspen_api(
-            aspen_url, "startTurboReindex",
-            workerThreads=worker_threads,
-            clearIndex=1 if clear_index else 0,
-        )
-        process_id = result.get("backgroundProcessId")
-        if not process_id:
-            raise RuntimeError(f"No backgroundProcessId: {result}")
+        with httpx.Client(timeout=30.0, verify=False) as client:
+            _aspen_login(client, aspen_url)
+            log.info("Aspen session established")
 
-        log.info(f"Turbo Reindex started: processId={process_id}")
+            # Start reindex
+            result = _aspen_api(
+                aspen_url, "startTurboReindex", _client=client,
+                workerThreads=worker_threads,
+                clearIndex=1 if clear_index else 0,
+            )
+            process_id = result.get("backgroundProcessId")
+            if not process_id:
+                raise RuntimeError(f"No backgroundProcessId: {result}")
 
-        with Session(_engine) as db:
-            _update_push_manifest(db, manifest_id,
-                                  result_data={
-                                      "method": "aspen_reindex",
-                                      "process_id": process_id,
-                                      "worker_threads": worker_threads,
-                                      "clear_index": clear_index,
-                                  })
+            log.info(f"Turbo Reindex started: processId={process_id}")
 
-        # Poll until done
-        final = _poll_aspen_job(
-            aspen_url, process_id, self, project_id,
-            step_label="aspen_reindex",
-        )
+            with Session(_engine) as db:
+                _update_push_manifest(db, manifest_id,
+                                      result_data={
+                                          "method": "aspen_reindex",
+                                          "process_id": process_id,
+                                          "worker_threads": worker_threads,
+                                          "clear_index": clear_index,
+                                      })
 
-        notes = final.get("notes", "")
-        elapsed_secs = final.get("elapsedSeconds", 0)
+            # Poll until done
+            final = _poll_aspen_job(
+                aspen_url, process_id, self, project_id,
+                step_label="aspen_reindex",
+                _client=client,
+            )
 
-        # Post-flight
-        post_counts = _aspen_api(aspen_url, "getTurboCounts")
+            notes = final.get("notes", "")
+            elapsed_secs = final.get("elapsedSeconds", 0)
+
+            # Post-flight
+            post_counts = _aspen_api(aspen_url, "getTurboCounts", _client=client)
         grouped_works = post_counts.get("aspen", {}).get("groupedWorks", 0)
 
         result_data = {
