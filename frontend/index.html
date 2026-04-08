@@ -9128,6 +9128,11 @@ window.renderStage12_Aspen = async function(el) {
         <button class="btn btn-ghost btn-sm" onclick="checkAspenCounts()">Check Counts</button>
       </div>
       <div id="aspen-config-status"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <button class="btn btn-ghost btn-sm" style="color:var(--yellow,#d90)" onclick="stopAspenIndexers()">Stop Indexers</button>
+        <button class="btn btn-ghost btn-sm" onclick="startAspenIndexers()">Start Indexers</button>
+        <div id="aspen-indexer-status" style="font-size:11px;display:flex;align-items:center"></div>
+      </div>
     </div>
 
     <div id="aspen-counts-card" class="card" style="margin-bottom:16px;display:none">
@@ -9185,6 +9190,32 @@ window.saveAspenUrl = async function() {
     statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
   }
 }
+
+window.stopAspenIndexers = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('aspen-indexer-status');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/aspen/stop-indexers', {});
+    el.innerHTML = '<span class="text-green" style="font-size:11px">Indexers stopped</span>';
+    toast('Aspen indexers stopped', 'info');
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:11px">' + esc(e.message) + '</span>';
+  }
+};
+
+window.startAspenIndexers = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('aspen-indexer-status');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/aspen/start-indexers', {});
+    el.innerHTML = '<span class="text-green" style="font-size:11px">Indexers restarted</span>';
+    toast('Aspen indexers restarted', 'success');
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:11px">' + esc(e.message) + '</span>';
+  }
+};
 
 window.checkAspenCounts = async function() {
   const p = state.currentProject;

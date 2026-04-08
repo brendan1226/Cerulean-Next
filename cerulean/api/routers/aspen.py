@@ -128,6 +128,68 @@ async def aspen_status(
         return r.json().get("result", r.json())
 
 
+# ── Indexer Control ──────────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/aspen/stop-indexers")
+async def stop_aspen_indexers(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop all Aspen indexers and disable cron restart."""
+    project = await require_project(project_id, db)
+    if not project.aspen_url:
+        raise HTTPException(409, detail={"error": "NO_ASPEN_URL"})
+    url = f"{project.aspen_url}/API/SystemAPI"
+    from urllib.parse import urlparse
+    parsed = urlparse(project.aspen_url)
+    extra_headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        # Login first
+        login_r = await client.post(
+            f"{project.aspen_url}/API/UserAPI",
+            params={"method": "login"},
+            data={"username": "aspen_admin", "password": "password"},
+            headers=extra_headers,
+        )
+        r = await client.get(url, params={"method": "stopAspenIndexers"}, headers=extra_headers)
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, detail=r.text[:500])
+        result = r.json().get("result", r.json())
+        await audit_log(db, project_id, stage=12, level="info", tag="[aspen]",
+                        message="Aspen indexers stopped")
+        return result
+
+
+@router.post("/{project_id}/aspen/start-indexers")
+async def start_aspen_indexers(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restart all Aspen indexers and re-enable cron."""
+    project = await require_project(project_id, db)
+    if not project.aspen_url:
+        raise HTTPException(409, detail={"error": "NO_ASPEN_URL"})
+    url = f"{project.aspen_url}/API/SystemAPI"
+    from urllib.parse import urlparse
+    parsed = urlparse(project.aspen_url)
+    extra_headers = {"Host": "localhost"} if parsed.hostname not in ("localhost", "127.0.0.1") else {}
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        login_r = await client.post(
+            f"{project.aspen_url}/API/UserAPI",
+            params={"method": "login"},
+            data={"username": "aspen_admin", "password": "password"},
+            headers=extra_headers,
+        )
+        r = await client.get(url, params={"method": "startAspenIndexers"}, headers=extra_headers)
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, detail=r.text[:500])
+        result = r.json().get("result", r.json())
+        await audit_log(db, project_id, stage=12, level="info", tag="[aspen]",
+                        message="Aspen indexers restarted")
+        return result
+
+
 # ── Turbo Migration ─────────────────────────────────────────────────────
 
 
