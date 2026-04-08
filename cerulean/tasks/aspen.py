@@ -46,14 +46,15 @@ def _aspen_api(aspen_url: str, method: str, _client: httpx.Client | None = None,
     else:
         with httpx.Client(timeout=30.0, verify=False) as client:
             resp = client.get(url, params=params, headers=headers)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Aspen API error: HTTP {resp.status_code} — {resp.text[:500]}")
-        data = resp.json()
-        result = data.get("result", data)
-        if isinstance(result, dict) and not result.get("success", True):
-            msg = result.get("message", "Unknown error")
-            raise RuntimeError(f"Aspen API returned success=false: {msg}")
-        return result
+
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Aspen API error: HTTP {resp.status_code} — {resp.text[:500]}")
+    data = resp.json()
+    result = data.get("result", data)
+    if isinstance(result, dict) and not result.get("success", True):
+        msg = result.get("message", "Unknown error")
+        raise RuntimeError(f"Aspen API returned success=false: {msg}")
+    return result
 
 
 def _aspen_login(client: httpx.Client, aspen_url: str,
