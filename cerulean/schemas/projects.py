@@ -51,6 +51,8 @@ class ProjectOut(BaseModel):
     stage_9_complete: bool
     stage_10_complete: bool
     stage_11_complete: bool
+    stage_12_complete: bool
+    aspen_url: str | None
     item_structure: str | None
     items_csv_match_tag: str | None
     items_csv_key_column: str | None
