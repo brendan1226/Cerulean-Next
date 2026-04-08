@@ -37,6 +37,7 @@ celery_app = Celery(
         "cerulean.tasks.reconcile",
         "cerulean.tasks.patrons",
         "cerulean.tasks.push",
+        "cerulean.tasks.aspen",
         "cerulean.tasks.sandbox",
     ],
 )
