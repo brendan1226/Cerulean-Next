@@ -104,7 +104,7 @@ def _poll_aspen_job(aspen_url: str, process_id: int, celery_task,
             continue
 
         is_running = status.get("isRunning", False)
-        notes = status.get("notes", "")
+        notes = status.get("notes") or ""
 
         # Parse metrics from notes for progress display
         progress = 0
