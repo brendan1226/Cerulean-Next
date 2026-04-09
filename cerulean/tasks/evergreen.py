@@ -342,10 +342,14 @@ def evergreen_pingest_task(
         manifest_id: UUID of the PushManifest row.
         processes: Number of parallel workers for pingest.pl.
     """
+    import subprocess
     from cerulean.models import Project
 
     log = AuditLogger(project_id=project_id, stage=13, tag="[evergreen-pingest]")
     log.info(f"Evergreen pingest starting (processes={processes})")
+
+    # The Evergreen container name — detect or default
+    container = "evergreen-test"
 
     try:
         # Get bib count range for pingest
@@ -356,51 +360,116 @@ def evergreen_pingest_task(
         cursor.close()
         conn.close()
 
+        total_records = (max_id - min_id + 1) if min_id and max_id else 0
+
+        # pingest.pl uses the opensrf_core.xml config for DB connection
+        # (not command-line DB args), so it gets the password from there.
         pingest_cmd = (
-            f"pingest.pl "
-            f"--schema biblio --table record_entry "
+            f"/openils/bin/pingest.pl "
+            f"-c /openils/conf/opensrf_core.xml "
             f"--start-id {min_id or 1} --end-id {max_id or 1} "
-            f"--processes {processes}"
+            f"--max-child {processes}"
         )
 
-        log.info(f"pingest command: {pingest_cmd}")
+        log.info(f"Running: docker exec {container} {pingest_cmd}")
+        log.info(f"ID range: {min_id} — {max_id} ({total_records:,} records)")
 
-        # TODO: Execute pingest.pl when container/SSH access is available.
-        # For now, store the command so the user can run it manually or
-        # we can implement container exec later (same pattern as Koha's
-        # bulkmarcimport.pl execution).
-        #
-        # When implemented, this will:
-        # 1. docker exec / ssh into the Evergreen container
-        # 2. Run pingest.pl with the computed ID range
-        # 3. Poll for completion (pingest writes to stdout)
-        # 4. Update manifest with results
+        self.update_state(state="PROGRESS", meta={
+            "step": "pingest",
+            "records_done": 0,
+            "records_total": total_records,
+            "container": container,
+        })
+
+        # Execute pingest.pl inside the Evergreen container
+        # Uses Docker Engine API via Unix socket (same as Koha migration mode)
+        import httpx
+
+        transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
+        with httpx.Client(transport=transport, timeout=30.0) as docker_client:
+            # Create exec
+            create_resp = docker_client.post(
+                f"http://localhost/containers/{container}/exec",
+                json={
+                    "Cmd": ["bash", "-c", pingest_cmd],
+                    "AttachStdout": True,
+                    "AttachStderr": True,
+                },
+            )
+            if create_resp.status_code != 201:
+                raise RuntimeError(f"Docker exec create failed: {create_resp.status_code} {create_resp.text[:200]}")
+            exec_id = create_resp.json()["Id"]
+
+        # Start exec with a long timeout (pingest can take a while)
+        transport2 = httpx.HTTPTransport(uds="/var/run/docker.sock")
+        with httpx.Client(transport=transport2, timeout=14400.0) as docker_client:
+            start_resp = docker_client.post(
+                f"http://localhost/exec/{exec_id}/start",
+                json={"Detach": False, "Tty": False},
+            )
+            raw = start_resp.content
+
+            # Parse Docker multiplexed stream
+            stdout_parts = []
+            stderr_parts = []
+            pos = 0
+            while pos + 8 <= len(raw):
+                stream_type = raw[pos]
+                frame_size = int.from_bytes(raw[pos+4:pos+8], 'big')
+                frame_data = raw[pos+8:pos+8+frame_size]
+                if stream_type == 1:
+                    stdout_parts.append(frame_data)
+                elif stream_type == 2:
+                    stderr_parts.append(frame_data)
+                pos += 8 + frame_size
+
+            stdout = b"".join(stdout_parts).decode("utf-8", errors="replace").strip()
+            stderr = b"".join(stderr_parts).decode("utf-8", errors="replace").strip()
+
+        # Get exit code
+        transport3 = httpx.HTTPTransport(uds="/var/run/docker.sock")
+        with httpx.Client(transport=transport3, timeout=10.0) as docker_client:
+            inspect_resp = docker_client.get(f"http://localhost/exec/{exec_id}/json")
+            exit_code = inspect_resp.json().get("ExitCode", -1) if inspect_resp.status_code == 200 else -1
+
+        log.info(f"pingest exit code: {exit_code}")
+        if stdout:
+            log.info(f"pingest stdout (last 500): {stdout[-500:]}")
+        if stderr:
+            log.warn(f"pingest stderr (last 500): {stderr[-500:]}")
 
         result_data = {
             "method": "evergreen_pingest",
-            "status": "manual_required",
+            "status": "complete" if exit_code == 0 else "error",
             "pingest_command": pingest_cmd,
+            "container": container,
             "min_id": min_id,
             "max_id": max_id,
+            "total_records": total_records,
             "processes": processes,
-            "message": (
-                f"Run this command on the Evergreen server to build search indexes: "
-                f"{pingest_cmd}"
-            ),
+            "exit_code": exit_code,
+            "stdout": stdout[-2000:] if len(stdout) > 2000 else stdout,
+            "stderr": stderr[-1000:] if len(stderr) > 1000 else stderr,
         }
+
+        final_status = "complete" if exit_code == 0 else "error"
+        error_msg = f"pingest exited with code {exit_code}" if exit_code != 0 else None
 
         with Session(_engine) as db:
             _update_push_manifest(db, manifest_id,
-                                  status="complete",
-                                  records_total=max_id - min_id + 1 if min_id and max_id else 0,
+                                  status=final_status,
+                                  records_total=total_records,
+                                  records_success=total_records if exit_code == 0 else 0,
                                   result_data=result_data,
+                                  error_message=error_msg,
                                   completed_at=datetime.utcnow())
-            project = db.get(Project, project_id)
-            if project:
-                project.stage_13_complete = True
-                db.commit()
+            if exit_code == 0:
+                project = db.get(Project, project_id)
+                if project:
+                    project.stage_13_complete = True
+                    db.commit()
 
-        log.complete(f"Evergreen pingest — command generated (manual execution required)")
+        log.complete(f"Evergreen pingest {'complete' if exit_code == 0 else 'failed'} — {total_records:,} records, exit={exit_code}")
         return result_data
 
     except Exception as exc:
