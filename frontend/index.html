@@ -9451,10 +9451,13 @@ window.renderStage13_Evergreen = async function(el) {
             <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Batch Size</label>
             <input type="number" id="eg-batch-size" value="500" min="100" max="5000" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
           </div>
-          <div style="display:flex;align-items:end;padding-bottom:4px">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)">
-              <input type="checkbox" id="eg-disable-triggers" checked> Disable triggers (faster)
-            </label>
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Trigger Mode</label>
+            <select id="eg-trigger-mode" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+              <option value="indexing_only" selected>Skip indexing only (recommended)</option>
+              <option value="all_on">All triggers on (slowest, safest)</option>
+              <option value="all_off">All triggers off (fastest, needs full pingest)</option>
+            </select>
           </div>
         </div>
         <button class="btn btn-primary" onclick="pushBibsToEvergreen()">Push Bibs to Evergreen</button>
@@ -9530,11 +9533,11 @@ window.pushBibsToEvergreen = async function() {
   const p = state.currentProject;
   const el = document.getElementById('eg-push-status');
   const batch = parseInt(document.getElementById('eg-batch-size').value) || 500;
-  const triggers = document.getElementById('eg-disable-triggers').checked;
+  const triggerMode = document.getElementById('eg-trigger-mode').value;
   el.innerHTML = '<div class="spinner"></div> Starting push…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/evergreen/push-bibs', {
-      batch_size: batch, disable_triggers: triggers,
+      batch_size: batch, trigger_mode: triggerMode,
     });
     toast('Evergreen push started', 'info');
     pollTaskStatus(p.id, r.task_id, 'eg-push-status', 'evergreen_push', 'push');

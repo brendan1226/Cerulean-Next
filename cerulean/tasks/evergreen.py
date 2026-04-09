@@ -142,7 +142,7 @@ def evergreen_counts_task(project_id: str) -> dict:
 )
 def evergreen_push_bibs_task(
     self, project_id: str, manifest_id: str,
-    batch_size: int = 500, disable_triggers: bool = True,
+    batch_size: int = 500, trigger_mode: str = "indexing_only",
 ) -> dict:
     """INSERT MARCXML records into Evergreen's biblio.record_entry.
 
@@ -162,7 +162,7 @@ def evergreen_push_bibs_task(
     from cerulean.models import Project
 
     log = AuditLogger(project_id=project_id, stage=13, tag="[evergreen-push]")
-    log.info(f"Evergreen push starting (batch_size={batch_size}, triggers={'off' if disable_triggers else 'on'})")
+    log.info(f"Evergreen push starting (batch_size={batch_size}, trigger_mode={trigger_mode})")
 
     try:
         marc_paths = _find_marc_paths(project_id)
@@ -178,10 +178,30 @@ def evergreen_push_bibs_task(
         conn = _evergreen_conn(project_id)
         cursor = conn.cursor()
 
-        # Optionally disable triggers for speed
-        if disable_triggers:
-            log.info("Disabling indexing triggers on biblio.record_entry")
+        # Trigger modes:
+        #   "all_on"        — all triggers enabled (slowest, safest)
+        #   "indexing_only"  — disable only the heavy indexing trigger (recommended)
+        #   "all_off"       — disable all triggers (fastest, requires pingest for everything)
+        _HEAVY_TRIGGERS = [
+            "aaa_indexing_ingest_or_delete",  # full metabib reingest
+            "bbb_simple_rec_trigger",          # simple record cache
+        ]
+        triggers_disabled = []
+
+        if trigger_mode == "all_off":
+            log.info("Disabling ALL triggers on biblio.record_entry")
             cursor.execute("ALTER TABLE biblio.record_entry DISABLE TRIGGER ALL")
+            triggers_disabled = ["ALL"]
+            conn.commit()
+        elif trigger_mode == "indexing_only":
+            for trig in _HEAVY_TRIGGERS:
+                try:
+                    cursor.execute(f"ALTER TABLE biblio.record_entry DISABLE TRIGGER {trig}")
+                    triggers_disabled.append(trig)
+                    log.info(f"Disabled trigger: {trig}")
+                except Exception as exc:
+                    log.warn(f"Could not disable trigger {trig}: {exc}")
+                    conn.rollback()
             conn.commit()
 
         total = 0
@@ -239,9 +259,17 @@ def evergreen_push_bibs_task(
             conn.commit()
 
         # Re-enable triggers
-        if disable_triggers:
-            log.info("Re-enabling indexing triggers on biblio.record_entry")
+        if trigger_mode == "all_off":
+            log.info("Re-enabling ALL triggers on biblio.record_entry")
             cursor.execute("ALTER TABLE biblio.record_entry ENABLE TRIGGER ALL")
+            conn.commit()
+        elif trigger_mode == "indexing_only" and triggers_disabled:
+            for trig in triggers_disabled:
+                try:
+                    cursor.execute(f"ALTER TABLE biblio.record_entry ENABLE TRIGGER {trig}")
+                    log.info(f"Re-enabled trigger: {trig}")
+                except Exception:
+                    pass
             conn.commit()
 
         cursor.close()
@@ -253,7 +281,8 @@ def evergreen_push_bibs_task(
             "records_success": success,
             "records_failed": failed,
             "batch_size": batch_size,
-            "triggers_disabled": disable_triggers,
+            "trigger_mode": trigger_mode,
+            "triggers_disabled": triggers_disabled,
             "files": [p.name for p in marc_paths],
         }
 
@@ -319,7 +348,11 @@ def _insert_batch(cursor, batch: list[str]) -> int:
 )
 def evergreen_pingest_task(
     self, project_id: str, manifest_id: str,
-    processes: int = 4,
+    processes: int = 4, batch_size: int = 10000,
+    delay_symspell: bool = True,
+    skip_browse: bool = False, skip_attrs: bool = False,
+    skip_search: bool = False, skip_facets: bool = False,
+    skip_display: bool = False,
 ) -> dict:
     """Trigger Evergreen's parallel ingest to build search indexes.
 
@@ -364,12 +397,27 @@ def evergreen_pingest_task(
 
         # pingest.pl uses the opensrf_core.xml config for DB connection
         # (not command-line DB args), so it gets the password from there.
-        pingest_cmd = (
-            f"/openils/bin/pingest.pl "
-            f"-c /openils/conf/opensrf_core.xml "
-            f"--start-id {min_id or 1} --end-id {max_id or 1} "
-            f"--max-child {processes}"
-        )
+        pingest_parts = [
+            "/openils/bin/pingest.pl",
+            "-c /openils/conf/opensrf_core.xml",
+            f"--start-id {min_id or 1}",
+            f"--end-id {max_id or 1}",
+            f"--max-child {processes}",
+            f"--batch-size {batch_size}",
+        ]
+        if delay_symspell:
+            pingest_parts.append("--delay-symspell")
+        if skip_browse:
+            pingest_parts.append("--skip-browse")
+        if skip_attrs:
+            pingest_parts.append("--skip-attrs")
+        if skip_search:
+            pingest_parts.append("--skip-search")
+        if skip_facets:
+            pingest_parts.append("--skip-facets")
+        if skip_display:
+            pingest_parts.append("--skip-display")
+        pingest_cmd = " ".join(pingest_parts)
 
         log.info(f"Running: docker exec {container} {pingest_cmd}")
         log.info(f"ID range: {min_id} — {max_id} ({total_records:,} records)")

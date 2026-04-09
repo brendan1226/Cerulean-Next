@@ -41,11 +41,18 @@ class EvergreenConfigUpdate(BaseModel):
 
 class EvergreenPushRequest(BaseModel):
     batch_size: int = 500
-    disable_triggers: bool = True
+    trigger_mode: str = "indexing_only"   # "all_on" | "indexing_only" | "all_off"
 
 
 class EvergreenPingestRequest(BaseModel):
     processes: int = 4
+    batch_size: int = 10000
+    delay_symspell: bool = True
+    skip_browse: bool = False
+    skip_attrs: bool = False
+    skip_search: bool = False
+    skip_facets: bool = False
+    skip_display: bool = False
 
 
 class EvergreenTaskResponse(BaseModel):
@@ -153,7 +160,7 @@ async def push_bibs_to_evergreen(
         args=[project_id, manifest.id],
         kwargs={
             "batch_size": body.batch_size,
-            "disable_triggers": body.disable_triggers,
+            "trigger_mode": body.trigger_mode,
         },
         queue="push",
     )
@@ -161,7 +168,7 @@ async def push_bibs_to_evergreen(
     await db.flush()
 
     await audit_log(db, project_id, stage=13, level="info", tag="[evergreen]",
-                    message=f"Evergreen push dispatched (batch={body.batch_size}, triggers={'off' if body.disable_triggers else 'on'})")
+                    message=f"Evergreen push dispatched (batch={body.batch_size}, trigger_mode={body.trigger_mode})")
 
     return EvergreenTaskResponse(
         task_id=task.id,
@@ -201,7 +208,16 @@ async def run_pingest(
 
     task = evergreen_pingest_task.apply_async(
         args=[project_id, manifest.id],
-        kwargs={"processes": body.processes},
+        kwargs={
+            "processes": body.processes,
+            "batch_size": body.batch_size,
+            "delay_symspell": body.delay_symspell,
+            "skip_browse": body.skip_browse,
+            "skip_attrs": body.skip_attrs,
+            "skip_search": body.skip_search,
+            "skip_facets": body.skip_facets,
+            "skip_display": body.skip_display,
+        },
         queue="push",
     )
     manifest.celery_task_id = task.id
