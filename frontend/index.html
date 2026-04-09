@@ -5415,16 +5415,20 @@ async function renderRecSource() {
 
 async function recConfirmSource() {
   const p = state.currentProject;
+  const statusEl = document.getElementById('rec-source-status');
   const override = document.getElementById('rec-source-override')?.value?.trim() || null;
+  statusEl.innerHTML = '<div class="spinner"></div> Confirming…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/reconcile/confirm-source`, override ? { source_file: override } : {});
-    if (!r) return;
-    document.getElementById('rec-source-status').innerHTML = `
+    if (!r) { statusEl.innerHTML = '<span class="text-red">No response</span>'; return; }
+    statusEl.innerHTML = `
       <div class="alert alert-success">
         Source confirmed: <span class="mono">${esc(r.source_file)}</span> — ${r.record_count.toLocaleString()} records
       </div>`;
     toast(r.message, 'success');
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(e.message || String(e)) + '</span>';
+  }
 }
 
 // ── Scan ────────────────────────────────────────────────────────
@@ -5460,12 +5464,16 @@ async function renderRecScan() {
 
 async function recStartScan() {
   const p = state.currentProject;
+  const statusEl = document.getElementById('rec-scan-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Starting scan…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/reconcile/scan`);
-    if (!r) return;
+    if (!r) { statusEl.innerHTML = '<span class="text-red">No response</span>'; return; }
     toast('Items scan started', 'info');
     pollTaskStatus(p.id, r.task_id, 'rec-scan-status', 'reconcile-scan', 'reconcile-scan', () => recLoadValues());
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(e.message || String(e)) + '</span>';
+  }
 }
 
 async function recLoadValues() {
