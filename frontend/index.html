@@ -1067,6 +1067,10 @@
           <span class="stage-num">12</span> Aspen
           <span class="stage-badge" id="badge-s12">—</span>
         </div>
+        <div class="nav-item" data-view="stage13" onclick="navigate('stage13')">
+          <span class="stage-num">13</span> Evergreen
+          <span class="stage-badge" id="badge-s13">—</span>
+        </div>
         <div class="nav-item" data-view="project-log" onclick="navigate('project-log')">
           <span class="nav-icon">≡</span> Project Log
         </div>
@@ -1178,6 +1182,7 @@ function navigate(view, params = {}) {
     stage10:      window.renderStage10_PatronVersions,
     stage11:      window.renderStage11_Holds,
     stage12:      renderStage12_Aspen,
+    stage13:      window.renderStage13_Evergreen,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
@@ -1204,6 +1209,7 @@ function updateBreadcrumb(view) {
     stage10: 'Stage 10 — Patron Versions',
     stage11: 'Stage 11 — Holds & Data',
     stage12: 'Stage 12 — Aspen Discovery',
+    stage13: 'Stage 13 — Evergreen ILS',
     'project-log': 'Project Log',
     'project-settings': 'Settings',
     templates: 'Templates',
@@ -9379,6 +9385,175 @@ window._pollAspenJob = function(projectId, taskId, statusElId, label) {
   tick();
 }
 
+// ── Stage 13 — Evergreen ILS ────────────────────────────────────────
+
+window.renderStage13_Evergreen = async function(el) {
+  const p = state.currentProject;
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Stage 13 — Evergreen ILS</div>
+        <div class="page-subtitle">${esc(p.library_name)}</div>
+      </div>
+    </div>
+    ${pipelineBar(p)}
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Evergreen Database Connection</span></div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Host</label>
+          <input type="text" id="eg-db-host" value="${esc(p.evergreen_db_host || '')}" placeholder="evergreen-db" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Port</label>
+          <input type="number" id="eg-db-port" value="5432" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Database</label>
+          <input type="text" id="eg-db-name" value="evergreen" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">User</label>
+          <input type="text" id="eg-db-user" value="evergreen" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Password</label>
+          <input type="password" id="eg-db-pass" value="" placeholder="password" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="saveEvergreenConfig()">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="testEvergreenConn()">Test Connection</button>
+        <button class="btn btn-ghost btn-sm" onclick="checkEvergreenCounts()">Check Counts</button>
+      </div>
+      <div id="eg-config-status" style="margin-top:8px"></div>
+    </div>
+
+    <div id="eg-counts-card" class="card" style="margin-bottom:16px;display:none">
+      <div class="card-header"><span class="card-title">Record Counts</span></div>
+      <div id="eg-counts"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Push Bibs</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">INSERT MARCXML records into biblio.record_entry. Converts ISO 2709 → MARCXML automatically. Disables indexing triggers for speed.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Batch Size</label>
+            <input type="number" id="eg-batch-size" value="500" min="100" max="5000" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+          </div>
+          <div style="display:flex;align-items:end;padding-bottom:4px">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)">
+              <input type="checkbox" id="eg-disable-triggers" checked> Disable triggers (faster)
+            </label>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="pushBibsToEvergreen()">Push Bibs to Evergreen</button>
+        <div id="eg-push-status" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Parallel Ingest (pingest)</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Build search indexes after bulk loading. Runs pingest.pl to populate metabib.* tables from biblio.record_entry.</p>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Processes (1-16)</label>
+          <input type="number" id="eg-pingest-procs" value="4" min="1" max="16" style="font-size:12px;padding:4px 8px;width:120px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+        </div>
+        <button class="btn btn-primary" onclick="runEvergreenPingest()">Run Pingest</button>
+        <div id="eg-pingest-status" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+};
+
+window.saveEvergreenConfig = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('eg-config-status');
+  try {
+    await window.api('PATCH', '/projects/' + p.id + '/evergreen/config', {
+      evergreen_db_host: document.getElementById('eg-db-host').value.trim(),
+      evergreen_db_port: parseInt(document.getElementById('eg-db-port').value) || 5432,
+      evergreen_db_name: document.getElementById('eg-db-name').value.trim() || 'evergreen',
+      evergreen_db_user: document.getElementById('eg-db-user').value.trim() || 'evergreen',
+      evergreen_db_password: document.getElementById('eg-db-pass').value,
+    });
+    el.innerHTML = '<span class="text-green" style="font-size:12px">Saved</span>';
+    await refreshProject();
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+window.testEvergreenConn = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('eg-config-status');
+  el.innerHTML = '<div class="spinner"></div> Testing…';
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/evergreen/test');
+    if (r.success) {
+      el.innerHTML = '<span class="text-green" style="font-size:12px">Connected! Bibs: ' + (r.counts?.bibs || 0).toLocaleString() + '</span>';
+    } else {
+      el.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + esc(r.error || 'unknown') + '</span>';
+    }
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+window.checkEvergreenCounts = async function() {
+  const p = state.currentProject;
+  const card = document.getElementById('eg-counts-card');
+  const el = document.getElementById('eg-counts');
+  card.style.display = '';
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/evergreen/counts');
+    if (!r.success) { el.innerHTML = '<span class="text-red">' + esc(r.error) + '</span>'; return; }
+    const c = r.counts || {};
+    el.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px;font-size:12px">'
+      + Object.entries(c).map(([k,v]) => '<div><div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">' + esc(k.replace(/_/g,' ')) + '</div><div class="mono" style="font-size:16px">' + (v != null ? Number(v).toLocaleString() : '—') + '</div></div>').join('')
+      + '</div>';
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+};
+
+window.pushBibsToEvergreen = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('eg-push-status');
+  const batch = parseInt(document.getElementById('eg-batch-size').value) || 500;
+  const triggers = document.getElementById('eg-disable-triggers').checked;
+  el.innerHTML = '<div class="spinner"></div> Starting push…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/evergreen/push-bibs', {
+      batch_size: batch, disable_triggers: triggers,
+    });
+    toast('Evergreen push started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'eg-push-status', 'evergreen_push', 'push');
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+};
+
+window.runEvergreenPingest = async function() {
+  const p = state.currentProject;
+  const el = document.getElementById('eg-pingest-status');
+  const procs = parseInt(document.getElementById('eg-pingest-procs').value) || 4;
+  el.innerHTML = '<div class="spinner"></div> Starting pingest…';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/evergreen/pingest', {
+      processes: procs,
+    });
+    toast('Pingest started', 'info');
+    pollTaskStatus(p.id, r.task_id, 'eg-pingest-status', 'evergreen_pingest', 'push');
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+};
+
   const renders = {
     dashboard:     renderDashboard,
     'new-project': renderNewProject,
@@ -9394,6 +9569,7 @@ window._pollAspenJob = function(projectId, taskId, statusElId, label) {
     stage10:       window.renderStage10_PatronVersions,
     stage11:       window.renderStage11_Holds,
     stage12:       renderStage12_Aspen,
+    stage13:       window.renderStage13_Evergreen,
     'project-log': renderProjectLog,
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,

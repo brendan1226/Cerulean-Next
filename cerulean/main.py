@@ -46,7 +46,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen  # noqa: E402
+from cerulean.api.routers import projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
 
 app.include_router(projects.router,    prefix="/api/v1")
 app.include_router(files.router,       prefix="/api/v1")
@@ -66,6 +66,7 @@ app.include_router(transform.router,   prefix="/api/v1")
 app.include_router(reference.router,   prefix="/api/v1")
 app.include_router(tasks.router,       prefix="/api/v1")
 app.include_router(aspen.router,       prefix="/api/v1")
+app.include_router(evergreen.router,   prefix="/api/v1")
 
 
 @app.get("/api/health")

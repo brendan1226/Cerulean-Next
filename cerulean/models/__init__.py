@@ -96,6 +96,14 @@ class Project(Base):
     # Target Aspen Discovery
     aspen_url: Mapped[str | None] = mapped_column(String(500))  # e.g. http://aspen:85
 
+    # Target Evergreen ILS
+    evergreen_db_host: Mapped[str | None] = mapped_column(String(500))
+    evergreen_db_port: Mapped[int | None] = mapped_column(Integer, default=5432)
+    evergreen_db_name: Mapped[str | None] = mapped_column(String(100), default="evergreen")
+    evergreen_db_user: Mapped[str | None] = mapped_column(String(100))
+    evergreen_db_password: Mapped[str | None] = mapped_column(Text)  # TODO: encrypt
+    stage_13_complete: Mapped[bool] = mapped_column(Boolean, default=False)  # Evergreen
+
     # Stage 8 — Reconciliation
     reconcile_source_file: Mapped[str | None] = mapped_column(String(500))
     reconcile_scan_task_id: Mapped[str | None] = mapped_column(String(200))

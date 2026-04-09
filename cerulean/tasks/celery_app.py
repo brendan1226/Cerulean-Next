@@ -38,6 +38,7 @@ celery_app = Celery(
         "cerulean.tasks.patrons",
         "cerulean.tasks.push",
         "cerulean.tasks.aspen",
+        "cerulean.tasks.evergreen",
         "cerulean.tasks.sandbox",
     ],
 )
