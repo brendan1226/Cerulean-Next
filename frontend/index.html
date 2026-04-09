@@ -9107,9 +9107,6 @@ window.navigate = function(view, params = {}) {
   document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
   document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
 
-  const viewEl = document.getElementById('view');
-  // (navigate function continues with renders map below...)
-
 // ── Stage 12 — Aspen Discovery (global scope) ──────────────────────
 
 window.renderStage12_Aspen = async function(el) {
@@ -9554,6 +9551,7 @@ window.runEvergreenPingest = async function() {
   }
 };
 
+  const viewEl = document.getElementById('view');
   const renders = {
     dashboard:     renderDashboard,
     'new-project': renderNewProject,
