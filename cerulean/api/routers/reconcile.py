@@ -137,12 +137,8 @@ async def start_scan(
     """Dispatch items scan task. Precondition: stage_6_complete."""
     project = await require_project(project_id, db)
 
-    if not project.stage_6_complete:
-        raise HTTPException(409, detail={
-            "error": "STAGE_6_INCOMPLETE",
-            "message": "Stage 6 (transform) must be complete before items scan.",
-        })
-
+    # Allow scan if source file is confirmed OR if output.mrc exists (Quick Path).
+    # The old gate required stage_6_complete, but Quick Path skips stages 4-6.
     if not project.reconcile_source_file:
         raise HTTPException(409, detail={
             "error": "NO_SOURCE_FILE",
