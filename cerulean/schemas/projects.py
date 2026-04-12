@@ -16,6 +16,7 @@ class ProjectCreate(BaseModel):
     library_name: str
     koha_url: str | None = None
     koha_token: str | None = None   # plaintext — encrypted before storage
+    visibility: str = "private"     # "private" | "shared"
 
 
 class ProjectUpdate(BaseModel):
@@ -25,6 +26,7 @@ class ProjectUpdate(BaseModel):
     koha_auth_type: str | None = None
     source_ils: str | None = None
     archived: bool | None = None
+    visibility: str | None = None   # "private" | "shared"
 
 
 class ProjectOut(BaseModel):
@@ -59,6 +61,8 @@ class ProjectOut(BaseModel):
     items_csv_match_tag: str | None
     items_csv_key_column: str | None
     archived: bool
+    owner_id: str | None = None
+    visibility: str = "private"
     bib_count_ingested: int | None
     bib_count_post_dedup: int | None
     bib_count_pushed: int | None

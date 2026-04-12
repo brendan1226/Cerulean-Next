@@ -23,6 +23,8 @@ from cerulean.tasks.evergreen import (
     evergreen_counts_task,
     evergreen_pingest_task,
     evergreen_push_bibs_task,
+    evergreen_remap_task,
+    evergreen_service_restart_task,
 )
 
 router = APIRouter(prefix="/projects", tags=["evergreen"])
@@ -42,17 +44,26 @@ class EvergreenConfigUpdate(BaseModel):
 class EvergreenPushRequest(BaseModel):
     batch_size: int = 500
     trigger_mode: str = "indexing_only"   # "all_on" | "indexing_only" | "all_off"
+    remap_metarecords: bool = True        # populate metabib.metarecord_source_map after insert
 
 
 class EvergreenPingestRequest(BaseModel):
-    processes: int = 4
-    batch_size: int = 10000
+    processes: int = 2                    # --max-child
+    batch_size: int = 25                  # --batch-size (small batches are faster)
     delay_symspell: bool = True
     skip_browse: bool = False
     skip_attrs: bool = False
     skip_search: bool = False
     skip_facets: bool = False
     skip_display: bool = False
+
+
+class EvergreenRemapRequest(BaseModel):
+    start_id: int = 0
+
+
+class EvergreenRestartRequest(BaseModel):
+    container: str = "evergreen-test"
 
 
 class EvergreenTaskResponse(BaseModel):
@@ -161,6 +172,7 @@ async def push_bibs_to_evergreen(
         kwargs={
             "batch_size": body.batch_size,
             "trigger_mode": body.trigger_mode,
+            "remap_metarecords": body.remap_metarecords,
         },
         queue="push",
     )
@@ -168,7 +180,10 @@ async def push_bibs_to_evergreen(
     await db.flush()
 
     await audit_log(db, project_id, stage=13, level="info", tag="[evergreen]",
-                    message=f"Evergreen push dispatched (batch={body.batch_size}, trigger_mode={body.trigger_mode})")
+                    message=(
+                        f"Evergreen push dispatched (batch={body.batch_size}, "
+                        f"trigger_mode={body.trigger_mode}, remap={body.remap_metarecords})"
+                    ))
 
     return EvergreenTaskResponse(
         task_id=task.id,
@@ -230,4 +245,100 @@ async def run_pingest(
         task_id=task.id,
         manifest_id=manifest.id,
         message="Evergreen pingest dispatched.",
+    )
+
+
+# ── Metarecord Remap ─────────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/evergreen/remap", response_model=EvergreenTaskResponse, status_code=202)
+async def run_metarecord_remap(
+    project_id: str,
+    body: EvergreenRemapRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Populate metabib.metarecord_source_map via remap_metarecord_for_bib().
+
+    When bibs are inserted with the indexing trigger disabled, the
+    metarecord source map is not populated and records become invisible
+    to OPAC search. This task repairs that by calling
+    metabib.remap_metarecord_for_bib(id, fingerprint, deleted) for every
+    bib with id > start_id.
+    """
+    project = await require_project(project_id, db)
+    if not project.evergreen_db_host:
+        raise HTTPException(409, detail={"error": "NO_EVERGREEN_CONFIG"})
+
+    manifest = PushManifest(
+        project_id=project_id,
+        task_type="evergreen_remap",
+        status="running",
+        dry_run=False,
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await db.flush()
+    await db.refresh(manifest)
+
+    task = evergreen_remap_task.apply_async(
+        args=[project_id, manifest.id],
+        kwargs={"start_id": body.start_id},
+        queue="push",
+    )
+    manifest.celery_task_id = task.id
+    await db.flush()
+
+    await audit_log(db, project_id, stage=13, level="info", tag="[evergreen]",
+                    message=f"Metarecord remap dispatched (start_id={body.start_id})")
+
+    return EvergreenTaskResponse(
+        task_id=task.id,
+        manifest_id=manifest.id,
+        message="Metarecord remap dispatched.",
+    )
+
+
+# ── Service Restart ──────────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/evergreen/restart-services", response_model=EvergreenTaskResponse, status_code=202)
+async def restart_evergreen_services(
+    project_id: str,
+    body: EvergreenRestartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restart Evergreen's OpenSRF stack (memcached + osrf_control + apache2).
+
+    Required after a metarecord remap — OpenSRF caches old metarecord
+    state and won't reflect new records until memcached, the OpenSRF
+    services, and apache2's mod_perl workers are all restarted.
+    """
+    await require_project(project_id, db)
+
+    manifest = PushManifest(
+        project_id=project_id,
+        task_type="evergreen_restart",
+        status="running",
+        dry_run=False,
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await db.flush()
+    await db.refresh(manifest)
+
+    task = evergreen_service_restart_task.apply_async(
+        args=[project_id, manifest.id],
+        kwargs={"container": body.container},
+        queue="push",
+    )
+    manifest.celery_task_id = task.id
+    await db.flush()
+
+    await audit_log(db, project_id, stage=13, level="info", tag="[evergreen]",
+                    message=f"Service restart dispatched (container={body.container})")
+
+    return EvergreenTaskResponse(
+        task_id=task.id,
+        manifest_id=manifest.id,
+        message="Service restart dispatched.",
     )

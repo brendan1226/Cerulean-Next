@@ -143,6 +143,7 @@ def evergreen_counts_task(project_id: str) -> dict:
 def evergreen_push_bibs_task(
     self, project_id: str, manifest_id: str,
     batch_size: int = 500, trigger_mode: str = "indexing_only",
+    remap_metarecords: bool = True,
 ) -> dict:
     """INSERT MARCXML records into Evergreen's biblio.record_entry.
 
@@ -152,17 +153,28 @@ def evergreen_push_bibs_task(
 
     After this completes, run evergreen_pingest_task to build search indexes.
 
+    IMPORTANT: when trigger_mode="indexing_only" or "all_off", the
+    metabib.metarecord_source_map table is NOT populated by the normal
+    ingest triggers. Records will be invisible to OPAC search until
+    metabib.remap_metarecord_for_bib() is called for each new bib.
+    This is handled automatically when remap_metarecords=True.
+
     Args:
         project_id: UUID of the project.
         manifest_id: UUID of the PushManifest row.
         batch_size: Records per INSERT batch.
-        disable_triggers: Disable indexing triggers during import (faster,
-                          requires pingest.pl afterward).
+        trigger_mode: "all_on" | "indexing_only" | "all_off"
+        remap_metarecords: Run metabib.remap_metarecord_for_bib() on the
+                           new bib ID range after insert (required for
+                           search visibility when triggers were disabled).
     """
     from cerulean.models import Project
 
     log = AuditLogger(project_id=project_id, stage=13, tag="[evergreen-push]")
-    log.info(f"Evergreen push starting (batch_size={batch_size}, trigger_mode={trigger_mode})")
+    log.info(
+        f"Evergreen push starting (batch_size={batch_size}, "
+        f"trigger_mode={trigger_mode}, remap={remap_metarecords})"
+    )
 
     try:
         marc_paths = _find_marc_paths(project_id)
@@ -177,6 +189,12 @@ def evergreen_push_bibs_task(
 
         conn = _evergreen_conn(project_id)
         cursor = conn.cursor()
+
+        # Capture the current max bib id so we know which bibs are "new"
+        # — needed for the metarecord remap phase below.
+        cursor.execute("SELECT COALESCE(MAX(id), 0) FROM biblio.record_entry")
+        start_max_id = cursor.fetchone()[0] or 0
+        log.info(f"Pre-push max bib id: {start_max_id}")
 
         # Trigger modes:
         #   "all_on"        — all triggers enabled (slowest, safest)
@@ -272,6 +290,25 @@ def evergreen_push_bibs_task(
                     pass
             conn.commit()
 
+        # ── Metarecord remap phase ───────────────────────────────────────
+        # When the indexing trigger was disabled, metabib.metarecord_source_map
+        # was not populated. The OPAC search visibility filter joins this
+        # table, so records without a row here are invisible to search even
+        # after pingest has built the metabib.*_field_entry tables.
+        # Call metabib.remap_metarecord_for_bib() for every new bib.
+        remap_count = 0
+        if remap_metarecords and trigger_mode != "all_on":
+            log.info(f"Starting metarecord remap for bibs > {start_max_id}")
+            self.update_state(state="PROGRESS", meta={
+                "step": "remap",
+                "records_done": 0,
+                "records_total": success,
+            })
+            remap_count = _remap_metarecords(
+                cursor, conn, start_max_id, log, self, success,
+            )
+            log.info(f"Metarecord remap complete — {remap_count:,} bibs remapped")
+
         cursor.close()
         conn.close()
 
@@ -283,6 +320,8 @@ def evergreen_push_bibs_task(
             "batch_size": batch_size,
             "trigger_mode": trigger_mode,
             "triggers_disabled": triggers_disabled,
+            "start_max_id": start_max_id,
+            "metarecords_remapped": remap_count,
             "files": [p.name for p in marc_paths],
         }
 
@@ -335,6 +374,73 @@ def _insert_batch(cursor, batch: list[str]) -> int:
     return inserted
 
 
+def _remap_metarecords(cursor, conn, start_max_id: int, log, task,
+                       expected: int) -> int:
+    """Call metabib.remap_metarecord_for_bib() for every bib id > start_max_id.
+
+    This populates metabib.metarecord_source_map which the OPAC search
+    visibility filter joins against. Without it, records are invisible
+    to search even after pingest has populated the *_field_entry tables.
+
+    Processes in chunks so progress can be reported and memory stays bounded.
+    """
+    CHUNK = 5000
+    remapped = 0
+
+    # Get the full range of new bibs
+    cursor.execute(
+        "SELECT COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) "
+        "FROM biblio.record_entry WHERE id > %s",
+        (start_max_id,),
+    )
+    min_id, max_id = cursor.fetchone()
+    if not min_id or not max_id:
+        log.info("No new bibs to remap")
+        return 0
+
+    log.info(f"Remapping metarecords for bibs {min_id}..{max_id}")
+
+    cur_id = min_id
+    while cur_id <= max_id:
+        chunk_end = min(cur_id + CHUNK - 1, max_id)
+        try:
+            # metabib.remap_metarecord_for_bib(bib_id, fingerprint, deleted)
+            # Call it as a set-returning subquery over the chunk.
+            cursor.execute(
+                """
+                SELECT metabib.remap_metarecord_for_bib(id, fingerprint, deleted)
+                FROM biblio.record_entry
+                WHERE id BETWEEN %s AND %s
+                  AND fingerprint IS NOT NULL
+                """,
+                (cur_id, chunk_end),
+            )
+            chunk_count = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            remapped += chunk_count
+            conn.commit()
+        except Exception as exc:
+            log.warn(f"Remap chunk {cur_id}..{chunk_end} failed: {exc}")
+            conn.rollback()
+
+        try:
+            _check_paused(None, task)  # honour pause
+        except Exception:
+            pass
+
+        task.update_state(state="PROGRESS", meta={
+            "step": "remap",
+            "records_done": remapped,
+            "records_total": expected or (max_id - min_id + 1),
+        })
+
+        if (cur_id - min_id) % (CHUNK * 10) == 0:
+            log.info(f"Remap progress: {remapped:,} bibs (at id {cur_id})")
+
+        cur_id = chunk_end + 1
+
+    return remapped
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # PINGEST (PARALLEL INGEST) TASK
 # ══════════════════════════════════════════════════════════════════════════
@@ -348,7 +454,7 @@ def _insert_batch(cursor, batch: list[str]) -> int:
 )
 def evergreen_pingest_task(
     self, project_id: str, manifest_id: str,
-    processes: int = 4, batch_size: int = 10000,
+    processes: int = 2, batch_size: int = 25,
     delay_symspell: bool = True,
     skip_browse: bool = False, skip_attrs: bool = False,
     skip_search: bool = False, skip_facets: bool = False,
@@ -522,6 +628,211 @@ def evergreen_pingest_task(
 
     except Exception as exc:
         log.error(f"Evergreen pingest failed: {exc}")
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SERVICE RESTART TASK
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _docker_exec(container: str, cmd: str, timeout: float = 300.0) -> tuple[int, str, str]:
+    """Run a shell command inside a Docker container via Docker Engine API.
+
+    Returns (exit_code, stdout, stderr). Uses the Unix socket directly so
+    the docker CLI is not required inside the Cerulean container.
+    """
+    import httpx
+
+    transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
+    with httpx.Client(transport=transport, timeout=30.0) as client:
+        create_resp = client.post(
+            f"http://localhost/containers/{container}/exec",
+            json={
+                "Cmd": ["bash", "-c", cmd],
+                "AttachStdout": True,
+                "AttachStderr": True,
+            },
+        )
+        if create_resp.status_code != 201:
+            raise RuntimeError(
+                f"Docker exec create failed: {create_resp.status_code} {create_resp.text[:200]}"
+            )
+        exec_id = create_resp.json()["Id"]
+
+    transport2 = httpx.HTTPTransport(uds="/var/run/docker.sock")
+    with httpx.Client(transport=transport2, timeout=timeout) as client:
+        start_resp = client.post(
+            f"http://localhost/exec/{exec_id}/start",
+            json={"Detach": False, "Tty": False},
+        )
+        raw = start_resp.content
+
+        stdout_parts: list[bytes] = []
+        stderr_parts: list[bytes] = []
+        pos = 0
+        while pos + 8 <= len(raw):
+            stream_type = raw[pos]
+            frame_size = int.from_bytes(raw[pos + 4:pos + 8], "big")
+            frame_data = raw[pos + 8:pos + 8 + frame_size]
+            if stream_type == 1:
+                stdout_parts.append(frame_data)
+            elif stream_type == 2:
+                stderr_parts.append(frame_data)
+            pos += 8 + frame_size
+
+        stdout = b"".join(stdout_parts).decode("utf-8", errors="replace").strip()
+        stderr = b"".join(stderr_parts).decode("utf-8", errors="replace").strip()
+
+    transport3 = httpx.HTTPTransport(uds="/var/run/docker.sock")
+    with httpx.Client(transport=transport3, timeout=10.0) as client:
+        inspect_resp = client.get(f"http://localhost/exec/{exec_id}/json")
+        exit_code = inspect_resp.json().get("ExitCode", -1) if inspect_resp.status_code == 200 else -1
+
+    return exit_code, stdout, stderr
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.evergreen.evergreen_service_restart_task",
+    max_retries=0,
+    queue="push",
+)
+def evergreen_service_restart_task(
+    self, project_id: str, manifest_id: str,
+    container: str = "evergreen-test",
+) -> dict:
+    """Full restart of Evergreen's OpenSRF stack.
+
+    After bulk bib load + metarecord remap, OpenSRF caches old metarecord
+    state. Search results will not reflect the new records until:
+        1. memcached is flushed / restarted
+        2. osrf_control --restart-all
+        3. apache2 is restarted (mod_perl holds its own caches)
+
+    This task runs all three inside the Evergreen container via Docker exec.
+    """
+    log = AuditLogger(project_id=project_id, stage=13, tag="[evergreen-restart]")
+    log.info(f"Evergreen service restart starting (container={container})")
+
+    steps = [
+        ("memcached", "service memcached restart || /etc/init.d/memcached restart"),
+        ("osrf_control", "su - opensrf -c 'osrf_control --localhost --restart-all'"),
+        ("apache2", "service apache2 restart || /etc/init.d/apache2 restart"),
+    ]
+
+    results: list[dict] = []
+    overall_ok = True
+    for name, cmd in steps:
+        log.info(f"Restart step: {name}")
+        self.update_state(state="PROGRESS", meta={
+            "step": name,
+            "records_done": len(results),
+            "records_total": len(steps),
+        })
+        try:
+            code, out, err = _docker_exec(container, cmd, timeout=180.0)
+            ok = (code == 0)
+            if not ok:
+                overall_ok = False
+                log.warn(f"{name} exit={code} stderr={err[-300:]}")
+            else:
+                log.info(f"{name} ok")
+            results.append({
+                "step": name,
+                "exit_code": code,
+                "stdout": out[-500:],
+                "stderr": err[-500:],
+            })
+        except Exception as exc:
+            overall_ok = False
+            log.error(f"{name} failed: {exc}")
+            results.append({"step": name, "error": str(exc)[:500]})
+
+    result_data = {
+        "method": "evergreen_service_restart",
+        "container": container,
+        "steps": results,
+        "success": overall_ok,
+    }
+
+    final_status = "complete" if overall_ok else "error"
+    with Session(_engine) as db:
+        _update_push_manifest(db, manifest_id,
+                              status=final_status,
+                              result_data=result_data,
+                              error_message=None if overall_ok else "One or more restart steps failed",
+                              completed_at=datetime.utcnow())
+
+    log.complete(f"Evergreen service restart {'complete' if overall_ok else 'finished with errors'}")
+    return result_data
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# METARECORD REMAP TASK (standalone, for re-runs without re-pushing)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.evergreen.evergreen_remap_task",
+    max_retries=0,
+    queue="push",
+)
+def evergreen_remap_task(
+    self, project_id: str, manifest_id: str,
+    start_id: int = 0,
+) -> dict:
+    """Standalone metarecord remap — re-populate metabib.metarecord_source_map.
+
+    Use this if a push was run without remap_metarecords=True, or to repair
+    an existing set of bibs whose metarecord map is missing.
+
+    Args:
+        start_id: only remap bibs with id > start_id. 0 = all bibs.
+    """
+    log = AuditLogger(project_id=project_id, stage=13, tag="[evergreen-remap]")
+    log.info(f"Metarecord remap starting (start_id={start_id})")
+
+    try:
+        conn = _evergreen_conn(project_id)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM biblio.record_entry WHERE id > %s AND NOT deleted",
+            (start_id,),
+        )
+        expected = cursor.fetchone()[0] or 0
+
+        remapped = _remap_metarecords(cursor, conn, start_id, log, self, expected)
+
+        cursor.close()
+        conn.close()
+
+        result_data = {
+            "method": "evergreen_remap",
+            "start_id": start_id,
+            "expected": expected,
+            "remapped": remapped,
+        }
+
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=expected,
+                                  records_success=remapped,
+                                  result_data=result_data,
+                                  completed_at=datetime.utcnow())
+
+        log.complete(f"Metarecord remap complete — {remapped:,}/{expected:,}")
+        return result_data
+
+    except Exception as exc:
+        log.error(f"Metarecord remap failed: {exc}")
         with Session(_engine) as db:
             _update_push_manifest(db, manifest_id,
                                   status="error", error_message=str(exc)[:1000],

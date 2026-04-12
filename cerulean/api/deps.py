@@ -6,17 +6,33 @@ Shared helpers used by multiple routers.
 
 import uuid
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.models import AuditEvent, Project
 
 
-async def require_project(project_id: str, db: AsyncSession) -> Project:
-    """Fetch a project or raise 404."""
+async def require_project(
+    project_id: str,
+    db: AsyncSession,
+    request: Request | None = None,
+) -> Project:
+    """Fetch a project or raise 404.
+
+    If request is provided and the project is private, checks that the
+    requesting user is the owner. Legacy projects (owner_id=NULL) and
+    shared projects are accessible to all authenticated users.
+    """
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Project not found."})
+
+    # Access control for private projects
+    if request and project.owner_id and project.visibility == "private":
+        user_id = getattr(request.state, "user_id", None)
+        if user_id and user_id != project.owner_id:
+            raise HTTPException(403, detail={"error": "FORBIDDEN", "message": "Not your project."})
+
     return project
 
 

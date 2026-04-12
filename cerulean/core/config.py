@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-me"
     fernet_key: str = ""          # encrypted Koha tokens at rest
     jwt_algorithm: str = "HS256"
-    jwt_expiry_minutes: int = 60
+    jwt_expiry_minutes: int = 480  # 8 hours
+
+    # ── Google OAuth ──────────────────────────────
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_allowed_domain: str = "bywatersolutions.com"
 
     # ── AI ────────────────────────────────────────
     anthropic_api_key: str = ""

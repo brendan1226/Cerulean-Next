@@ -34,6 +34,8 @@ pydantic-settings==2.2.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 cryptography==42.0.7         # Fernet for Koha token encryption
+authlib==1.3.0               # Google OAuth 2.0
+itsdangerous==2.2.0          # required by Starlette SessionMiddleware
 
 # HTTP client (Koha REST API calls)
 httpx==0.27.0

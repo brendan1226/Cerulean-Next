@@ -55,6 +55,30 @@ def _now() -> datetime:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# USER
+# ══════════════════════════════════════════════════════════════════════════
+
+class User(Base):
+    """Authenticated user (Google OAuth). Anyone with a @bywatersolutions.com
+    email has full access; no role-based permissions beyond that."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    picture: Mapped[str | None] = mapped_column(String(500))
+    google_sub: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    # Relationships
+    projects: Mapped[list["Project"]] = relationship(back_populates="owner")
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # PROJECT
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -66,6 +90,14 @@ class Project(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     library_name: Mapped[str] = mapped_column(String(300), nullable=False)
+
+    # Ownership
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(20), default="private", server_default="private",
+    )  # "private" | "shared"
 
     # Source ILS
     source_ils: Mapped[str | None] = mapped_column(String(100))
@@ -135,6 +167,7 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
     # Relationships
+    owner: Mapped["User | None"] = relationship(back_populates="projects")
     files: Mapped[list["MARCFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     maps: Mapped[list["FieldMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     dedup_rules: Mapped[list["DedupRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
