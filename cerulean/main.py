@@ -154,6 +154,19 @@ if _VENDOR_DIR.is_dir():
     app.mount("/vendor", StaticFiles(directory=str(_VENDOR_DIR)), name="vendor")
 
 
+@app.get("/help/manual")
+async def serve_user_manual():
+    manual = Path(__file__).resolve().parent.parent / "docs" / "USER-MANUAL.md"
+    if not manual.is_file():
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("Manual not found", status_code=404)
+    return FileResponse(
+        path=str(manual),
+        filename="Cerulean-Next-User-Manual.md",
+        media_type="text/markdown",
+    )
+
+
 @app.get("/")
 async def serve_frontend():
     return FileResponse(_FRONTEND_DIR / "index.html")
