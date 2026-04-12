@@ -55,6 +55,47 @@ def _now() -> datetime:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# PLUGIN
+# ══════════════════════════════════════════════════════════════════════════
+
+class Plugin(Base):
+    """Uploaded Koha plugin (.kpz file) available for installation."""
+
+    __tablename__ = "plugins"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[str | None] = mapped_column(String(50))
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer)
+    uploaded_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SYSTEM SETTINGS (key-value store for app-wide configuration)
+# ══════════════════════════════════════════════════════════════════════════
+
+class SystemSetting(Base):
+    """Key-value store for platform-wide settings (OAuth, defaults, etc).
+
+    Values set here override environment defaults. Secrets are stored
+    with is_secret=True and are masked in API GET responses.
+    """
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # USER
 # ══════════════════════════════════════════════════════════════════════════
 

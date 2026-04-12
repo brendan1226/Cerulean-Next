@@ -27,6 +27,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SECRET_KEY=${SECRET_KEY:-changeme-dev-only}
       - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_ALLOWED_DOMAIN=${GOOGLE_ALLOWED_DOMAIN:-bywatersolutions.com}
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,6 +37,7 @@ services:
         condition: service_healthy
     networks:
       - cerulean
+      - kohanet
 
 
   # ── Celery worker ────────────────────────────────
@@ -61,6 +65,7 @@ services:
       - redis
     networks:
       - cerulean
+      - kohanet
 
 
   # ── Celery beat (scheduled tasks) ───────────────
@@ -193,3 +198,6 @@ volumes:
 networks:
   cerulean:
     driver: bridge
+  kohanet:
+    external: true
+    name: kohadev_kohanet

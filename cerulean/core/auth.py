@@ -18,24 +18,38 @@ from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
 from cerulean.models import User
 
-settings = get_settings()
-
 # ── Google OAuth client ─────────────────────────────────────────────────
+# Lazy registration: the OAuth client reads settings at request time,
+# not at import time. This allows DB-stored settings to take effect
+# after the lifespan hook loads them.
 
 oauth = OAuth()
-oauth.register(
-    name="google",
-    client_id=settings.google_client_id,
-    client_secret=settings.google_client_secret,
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+_oauth_registered = False
+
+
+def _ensure_oauth_registered():
+    """Register the Google OAuth client if not already done and credentials exist."""
+    global _oauth_registered
+    settings = get_settings()
+    if not settings.google_client_id:
+        return
+    # Re-register every time in case settings changed via the GUI
+    oauth.register(
+        name="google",
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+        overwrite=True,
+    )
+    _oauth_registered = True
 
 
 # ── JWT helpers ─────────────────────────────────────────────────────────
 
 def create_access_token(user_id: str) -> str:
     """Issue a JWT for the given user id."""
+    settings = get_settings()
     expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expiry_minutes)
     return jwt.encode(
         {"sub": user_id, "exp": expire},
@@ -46,6 +60,7 @@ def create_access_token(user_id: str) -> str:
 
 def decode_token(token: str) -> str | None:
     """Decode a JWT and return the user id (sub), or None on failure."""
+    settings = get_settings()
     try:
         payload = jwt.decode(
             token, settings.secret_key, algorithms=[settings.jwt_algorithm]
@@ -81,4 +96,5 @@ async def get_current_user(
 
 def validate_email_domain(email: str) -> bool:
     """Check that the email is from the allowed domain."""
+    settings = get_settings()
     return email.lower().endswith(f"@{settings.google_allowed_domain}")

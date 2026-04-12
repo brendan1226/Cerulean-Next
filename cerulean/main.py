@@ -26,6 +26,13 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Cerulean Next starting up", debug=settings.debug)
+    # Load system settings from DB into the running config
+    try:
+        from cerulean.api.routers.settings import load_settings_from_db
+        await load_settings_from_db()
+        logger.info("System settings loaded from database")
+    except Exception as exc:
+        logger.warn(f"Could not load DB settings (first run?): {exc}")
     yield
     logger.info("Cerulean Next shutting down")
 
@@ -108,9 +115,12 @@ app.add_middleware(AuthMiddleware)
 
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import auth, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
+from cerulean.api.routers import auth, plugins, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
+from cerulean.api.routers import settings as settings_router  # noqa: E402 — avoid shadowing config `settings`
 
-app.include_router(auth.router,        prefix="/api/v1")
+app.include_router(auth.router,               prefix="/api/v1")
+app.include_router(settings_router.router,    prefix="/api/v1")
+app.include_router(plugins.router,            prefix="/api/v1")
 app.include_router(projects.router,    prefix="/api/v1")
 app.include_router(files.router,       prefix="/api/v1")
 app.include_router(maps.router,        prefix="/api/v1")

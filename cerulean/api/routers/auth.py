@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.core.auth import (
+    _ensure_oauth_registered,
     create_access_token,
     get_current_user,
     oauth,
@@ -26,12 +27,13 @@ from cerulean.core.database import get_db
 from cerulean.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-settings = get_settings()
 
 
 @router.get("/google/login")
 async def google_login(request: Request):
     """Redirect the browser to Google's OAuth consent screen."""
+    _ensure_oauth_registered()
+    settings = get_settings()
     callback_url = str(request.url_for("google_callback"))
     return await oauth.google.authorize_redirect(
         request,
@@ -51,6 +53,8 @@ async def google_callback(
     upserts a User row, issues a JWT, and returns an HTML page that stores
     the token in sessionStorage and redirects to /.
     """
+    _ensure_oauth_registered()
+    settings = get_settings()
     token = await oauth.google.authorize_access_token(request)
     user_info = token.get("userinfo")
     if not user_info:

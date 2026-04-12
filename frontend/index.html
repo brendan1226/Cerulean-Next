@@ -1086,6 +1086,12 @@
       <div class="nav-item" data-view="suggestions" onclick="navigate('suggestions')">
         <span class="nav-icon">✦</span> Suggestions
       </div>
+      <div class="nav-item" data-view="plugins" onclick="navigate('plugins')">
+        <span class="nav-icon">⧉</span> Plugins
+      </div>
+      <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
+        <span class="nav-icon">⚙</span> System Settings
+      </div>
     </div>
 
     <div class="sidebar-footer">
@@ -1197,6 +1203,8 @@ function navigate(view, params = {}) {
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
     suggestions:  renderSuggestions,
+    plugins:      window.renderPlugins,
+    'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
   if (renderer) renderer(viewEl);
@@ -1224,6 +1232,8 @@ function updateBreadcrumb(view) {
     'project-settings': 'Settings',
     templates: 'Templates',
     suggestions: 'Suggestions',
+    plugins: 'Plugins',
+    'system-settings': 'System Settings',
   };
   const crumb = document.getElementById('breadcrumb');
   const p = state.currentProject;
@@ -9700,6 +9710,210 @@ window.restartEvergreenServices = async function() {
   }
 };
 
+// ── Plugin Manager page ──────────────────────────────────────────────
+
+window.renderPlugins = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Plugins</div>
+        <div class="page-subtitle">Upload and manage Koha plugins (.kpz files)</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Upload Plugin</span></div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="file" id="plugin-file" accept=".kpz" style="font-size:12px" />
+        <button class="btn btn-primary btn-sm" onclick="uploadPlugin()">Upload</button>
+      </div>
+      <div id="plugin-upload-status" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" id="plugin-list-card">
+      <div class="card-header"><span class="card-title">Available Plugins</span></div>
+      <div id="plugin-list"><div class="spinner"></div></div>
+    </div>`;
+
+  loadPluginList();
+};
+
+async function loadPluginList() {
+  const el = document.getElementById('plugin-list');
+  try {
+    const plugins = await window.api('GET', '/plugins');
+    if (!plugins || plugins.length === 0) {
+      el.innerHTML = '<p class="text-secondary" style="font-size:12px">No plugins uploaded yet. Upload a .kpz file above.</p>';
+      return;
+    }
+
+    const p = state.currentProject;
+    const hasKoha = p && p.koha_url;
+
+    el.innerHTML = '<table style="width:100%;font-size:13px;border-collapse:collapse">'
+      + '<tr style="border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;color:var(--text-dim)">'
+      + '<th style="text-align:left;padding:6px 8px">Name</th>'
+      + '<th style="text-align:left;padding:6px 8px">File</th>'
+      + '<th style="text-align:right;padding:6px 8px">Size</th>'
+      + '<th style="text-align:right;padding:6px 8px">Actions</th></tr>'
+      + plugins.map(pl => `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 8px;font-weight:600">${esc(pl.display_name)}</td>
+          <td style="padding:6px 8px" class="mono text-dim">${esc(pl.filename)}</td>
+          <td style="padding:6px 8px;text-align:right">${pl.file_size_bytes ? (pl.file_size_bytes / 1024).toFixed(0) + ' KB' : '—'}</td>
+          <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+            <a href="${API_BASE}/plugins/${pl.id}/download" class="btn btn-ghost btn-sm" style="text-decoration:none">Download</a>
+            ${hasKoha ? '<button class="btn btn-primary btn-sm" onclick="installPlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Install to Koha</button>' : ''}
+            <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deletePlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Delete</button>
+          </td>
+        </tr>`).join('')
+      + '</table>';
+
+    if (!hasKoha) {
+      el.innerHTML += '<p class="text-secondary" style="font-size:11px;margin-top:12px">Select a project with a Koha URL configured to enable auto-install.</p>';
+    }
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+}
+
+window.uploadPlugin = async function() {
+  const fileInput = document.getElementById('plugin-file');
+  const statusEl = document.getElementById('plugin-upload-status');
+  if (!fileInput.files.length) { toast('Select a .kpz file first', 'warn'); return; }
+
+  const file = fileInput.files[0];
+  if (!file.name.endsWith('.kpz')) { toast('Only .kpz files accepted', 'warn'); return; }
+
+  statusEl.innerHTML = '<div class="spinner"></div> Uploading…';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(`${API_BASE}/plugins/upload`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const plugin = await res.json();
+    toast(`Uploaded ${plugin.display_name}`, 'success');
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Uploaded!</span>';
+    fileInput.value = '';
+    loadPluginList();
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+window.installPlugin = async function(pluginId, pluginName) {
+  const p = state.currentProject;
+  if (!p || !p.koha_url) { toast('No Koha URL configured', 'warn'); return; }
+  if (!confirm(`Install "${pluginName}" to ${p.koha_url}?\n\nThis will upload the plugin and restart Plack workers.`)) return;
+
+  toast('Installing plugin…', 'info');
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/plugins/${pluginId}/install`);
+    if (r.success) {
+      toast(`${pluginName} installed successfully`, 'success');
+    } else {
+      toast(`Install failed: ${r.message}`, 'error');
+    }
+  } catch (e) {
+    toast(`Install error: ${e.message}`, 'error');
+  }
+};
+
+window.deletePlugin = async function(pluginId, pluginName) {
+  if (!confirm(`Delete plugin "${pluginName}"? This removes the file from Cerulean (not from any Koha instances).`)) return;
+  try {
+    await fetch(`${API_BASE}/plugins/${pluginId}`, {
+      method: 'DELETE',
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+    });
+    toast(`Deleted ${pluginName}`, 'success');
+    loadPluginList();
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, 'error');
+  }
+};
+
+// ── System Settings page ─────────────────────────────────────────────
+
+window.renderSystemSettings = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">System Settings</div>
+        <div class="page-subtitle">Platform-wide configuration (Google OAuth, AI, etc.)</div>
+      </div>
+    </div>
+    <div class="card" style="max-width:640px" id="sys-settings-card">
+      <div class="spinner"></div> Loading settings…
+    </div>`;
+
+  try {
+    const settings = await window.api('GET', '/settings');
+    if (!settings) return;
+    const card = document.getElementById('sys-settings-card');
+
+    const groups = {
+      'Google OAuth': ['google_client_id', 'google_client_secret', 'google_allowed_domain'],
+      'Authentication': ['jwt_expiry_minutes'],
+      'AI': ['anthropic_api_key', 'anthropic_model'],
+    };
+
+    let html = '';
+    for (const [group, keys] of Object.entries(groups)) {
+      html += '<div class="card-header" style="margin-top:8px"><span class="card-title">' + esc(group) + '</span></div>';
+      for (const key of keys) {
+        const s = settings.find(x => x.key === key);
+        if (!s) continue;
+        const inputType = s.is_secret ? 'password' : 'text';
+        html += '<div class="form-group" style="margin-bottom:10px">';
+        html += '<label class="form-label" style="font-size:12px">' + esc(s.description || s.key) + '</label>';
+        html += '<input class="form-input sys-setting" data-key="' + esc(s.key) + '" type="' + inputType + '" value="' + esc(s.value) + '" placeholder="' + (s.is_secret ? '(enter to set)' : '') + '" />';
+        html += '</div>';
+      }
+    }
+
+    html += '<div style="display:flex;gap:8px;margin-top:16px">';
+    html += '<button class="btn btn-primary" onclick="saveSystemSettings()">Save Settings</button>';
+    html += '</div>';
+    html += '<div id="sys-settings-status" style="margin-top:12px"></div>';
+
+    html += '<div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">';
+    html += '<p class="text-secondary" style="font-size:11px;margin:0">Settings saved here override environment variables. Changes to OAuth settings take effect immediately — no container restart needed.</p>';
+    html += '</div>';
+
+    card.innerHTML = html;
+  } catch (e) {
+    document.getElementById('sys-settings-card').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+};
+
+window.saveSystemSettings = async function() {
+  const statusEl = document.getElementById('sys-settings-status');
+  statusEl.innerHTML = '<div class="spinner"></div> Saving…';
+
+  const inputs = document.querySelectorAll('.sys-setting');
+  const settings = {};
+  inputs.forEach(inp => {
+    settings[inp.dataset.key] = inp.value;
+  });
+
+  try {
+    const r = await window.api('PUT', '/settings', { settings });
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + esc(r.message) + '</span>';
+    toast('Settings saved', 'success');
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
   const viewEl = document.getElementById('view');
   const renders = {
     dashboard:     renderDashboard,
@@ -9721,6 +9935,8 @@ window.restartEvergreenServices = async function() {
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,
     suggestions:   renderSuggestions,
+    plugins:       window.renderPlugins,
+    'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
   if (renderer) renderer(viewEl);
