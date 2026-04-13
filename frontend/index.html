@@ -4091,6 +4091,24 @@ async function seedSampleTemplate() {
   } catch (e) { toast('Failed: ' + e.message, 'error'); }
 }
 
+async function downloadTemplateCSV(templateId, templateName) {
+  try {
+    const res = await fetch(`${API_BASE}/templates/${templateId}/csv`, {
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (templateName || 'template').replace(/\s+/g, '_') + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast('Download failed: ' + e.message, 'error');
+  }
+}
+
 async function previewTemplate(templateId) {
   const el = document.getElementById('template-preview');
   if (!el) return;
@@ -4113,7 +4131,7 @@ async function previewTemplate(templateId) {
         <div class="card-header">
           <span class="card-title">${esc(t.name)} v${esc(t.version)}</span>
           <div style="display:flex;gap:4px">
-            <a class="btn btn-ghost btn-sm" href="${API_BASE}/templates/${esc(t.id)}/csv" style="text-decoration:none;font-size:10px">↓ CSV</a>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="event.stopPropagation();downloadTemplateCSV('${esc(t.id)}','${esc(t.name)}')">↓ CSV</button>
           </div>
         </div>
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">
@@ -4160,7 +4178,7 @@ function templateCard(t) {
         <span class="text-dim mono" style="margin-left:8px">v${esc(t.version)}</span>
       </div>
       <div style="display:flex;gap:6px">
-        <a class="btn btn-ghost btn-sm" href="${API_BASE}/templates/${esc(t.id)}/csv" style="text-decoration:none;font-size:10px">↓ CSV</a>
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="event.stopPropagation();downloadTemplateCSV('${esc(t.id)}','${esc(t.name)}')">↓ CSV</button>
         ${state.currentProject ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="loadThisTemplate('${esc(t.id)}')">Load</button>` : ''}
         ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
         <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteTemplate('${esc(t.id)}')">Delete</button>
