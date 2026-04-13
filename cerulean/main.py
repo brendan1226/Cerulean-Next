@@ -156,15 +156,20 @@ if _VENDOR_DIR.is_dir():
 
 @app.get("/help/manual")
 async def serve_user_manual():
-    manual = Path(__file__).resolve().parent.parent / "docs" / "USER-MANUAL.md"
-    if not manual.is_file():
-        from fastapi.responses import PlainTextResponse
-        return PlainTextResponse("Manual not found", status_code=404)
-    return FileResponse(
-        path=str(manual),
-        filename="Cerulean-Next-User-Manual.md",
-        media_type="text/markdown",
-    )
+    _docs = Path(__file__).resolve().parent.parent / "docs"
+    # Prefer the formatted Word document, fall back to markdown
+    docx = _docs / "Cerulean-Next-User-Manual.docx"
+    if docx.is_file():
+        return FileResponse(
+            path=str(docx),
+            filename="Cerulean-Next-User-Manual.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    md = _docs / "USER-MANUAL.md"
+    if md.is_file():
+        return FileResponse(path=str(md), filename="Cerulean-Next-User-Manual.md", media_type="text/markdown")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("Manual not found", status_code=404)
 
 
 @app.get("/")
