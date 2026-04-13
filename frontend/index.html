@@ -3696,15 +3696,28 @@ async function deleteTemplate(templateId) {
 
 function openImportCSVTemplateModal() {
   openModal(`
-    <div class="modal-title">Import Template from CSV</div>
-    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
-      Upload a CSV file with field mappings. The CSV should have columns:<br>
-      <code style="font-size:11px">source_tag, source_sub, target_tag, target_sub, transform_type, transform_fn, preset_key, delete_source, notes</code><br>
-      Only <code>source_tag</code> and <code>target_tag</code> are required. You can export a template as CSV to see the format.
-    </p>
-    <div class="form-group">
-      <label class="form-label">CSV File *</label>
-      <input type="file" id="csv-tmpl-file" accept=".csv,.tsv,.txt" class="form-input">
+    <div class="modal-title">Import Template</div>
+    <div class="tab-bar" style="margin-bottom:12px">
+      <button class="tab-btn active" onclick="document.getElementById('import-csv-tab').style.display='';document.getElementById('import-gsheet-tab').style.display='none';this.classList.add('active');this.nextElementSibling.classList.remove('active')">Upload CSV</button>
+      <button class="tab-btn" onclick="document.getElementById('import-gsheet-tab').style.display='';document.getElementById('import-csv-tab').style.display='none';this.classList.add('active');this.previousElementSibling.classList.remove('active')">Google Sheets URL</button>
+    </div>
+    <div id="import-csv-tab">
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
+        Upload a CSV with columns: <code style="font-size:10px">source_tag, source_sub, target_tag, target_sub, transform_type, transform_fn, preset_key, delete_source, notes</code>. Only source_tag and target_tag are required.
+      </p>
+      <div class="form-group">
+        <label class="form-label">CSV File *</label>
+        <input type="file" id="csv-tmpl-file" accept=".csv,.tsv,.txt" class="form-input">
+      </div>
+    </div>
+    <div id="import-gsheet-tab" style="display:none">
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
+        Paste a Google Sheets URL. The sheet must be shared as <strong>"Anyone with the link can view"</strong>. Same column format as CSV.
+      </p>
+      <div class="form-group">
+        <label class="form-label">Google Sheets URL *</label>
+        <input class="form-input" id="gsheet-tmpl-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+      </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="form-group">
@@ -3740,9 +3753,7 @@ function openImportCSVTemplateModal() {
 }
 
 async function submitImportCSVTemplate() {
-  const fileInput = document.getElementById('csv-tmpl-file');
   const name = document.getElementById('csv-tmpl-name')?.value?.trim();
-  if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
   if (!name) { toast('Template name is required', 'warn'); return; }
 
   const version = document.getElementById('csv-tmpl-version')?.value?.trim() || '1.0';
@@ -3751,8 +3762,11 @@ async function submitImportCSVTemplate() {
   const description = document.getElementById('csv-tmpl-desc')?.value?.trim() || '';
   const project_id = state.currentProject?.id || '';
 
-  const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
+  const gsheetUrl = document.getElementById('gsheet-tmpl-url')?.value?.trim();
+  const fileInput = document.getElementById('csv-tmpl-file');
+  const isGoogleSheet = gsheetUrl && document.getElementById('import-gsheet-tab')?.style?.display !== 'none';
+
+  if (!isGoogleSheet && !fileInput?.files?.length) { toast('Select a CSV file or enter a Google Sheets URL', 'warn'); return; }
 
   const params = new URLSearchParams({ name, version, scope });
   if (description) params.append('description', description);
@@ -3760,11 +3774,25 @@ async function submitImportCSVTemplate() {
   if (project_id && scope === 'project') params.append('project_id', project_id);
 
   try {
-    const res = await fetch(`${API_BASE}/templates/import-csv?${params}`, {
-      method: 'POST',
-      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
-      body: formData,
-    });
+    let res;
+    if (isGoogleSheet) {
+      params.append('url', gsheetUrl);
+      res = await fetch(`${API_BASE}/templates/import-google-sheet?${params}`, {
+        method: 'POST',
+        headers: {
+          ..._authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+        },
+      });
+    } else {
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      res = await fetch(`${API_BASE}/templates/import-csv?${params}`, {
+        method: 'POST',
+        headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+        body: formData,
+      });
+    }
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res.status}`);
@@ -4023,15 +4051,24 @@ async function renderTemplates(el) {
         <div class="page-title">Map Templates</div>
         <div class="page-subtitle">Shared mapping sets — global and project-scoped. Export to Google Sheets, edit, and re-import.</div>
       </div>
-      <button class="btn btn-primary" onclick="openImportCSVTemplateModal()">↑ Import CSV</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary" onclick="openImportCSVTemplateModal()">↑ Import</button>
+        <button class="btn btn-ghost" onclick="seedSampleTemplate()">+ Sample Template</button>
+      </div>
     </div>
-    <div id="templates-page-wrap"><div class="spinner"></div></div>`;
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div id="templates-page-wrap"><div class="spinner"></div></div>
+      <div id="template-preview">
+        <div class="card"><div class="empty-state" style="padding:40px"><div class="text-dim" style="font-size:12px">Click a template to preview its mappings</div></div></div>
+      </div>
+    </div>`;
 
   try {
     const templates = await api('GET', '/templates');
+    window._tmplList = templates || [];
     const wrap = document.getElementById('templates-page-wrap');
     if (!templates.length) {
-      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">◧</div><div class="empty-title">No templates yet</div><div class="empty-body">Save a mapping set as a template from Stage 2.</div></div>`;
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">◧</div><div class="empty-title">No templates yet</div><div class="empty-body">Import a CSV, paste a Google Sheets URL, or click "+ Sample Template" to create one.</div></div>`;
       return;
     }
     const globals = templates.filter(t => t.scope === 'global');
@@ -4046,8 +4083,77 @@ async function renderTemplates(el) {
   }
 }
 
+async function seedSampleTemplate() {
+  try {
+    const r = await api('POST', '/templates/seed-sample');
+    toast('Sample template created', 'success');
+    renderTemplates(document.getElementById('view'));
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function previewTemplate(templateId) {
+  const el = document.getElementById('template-preview');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="padding:20px"></div>';
+
+  try {
+    const t = await api('GET', `/templates/${templateId}`);
+    if (!t) return;
+    const maps = t.maps || [];
+
+    const transformBadge = (m) => {
+      if (m.transform_type === 'copy') return '';
+      const label = m.transform_type === 'preset' ? m.preset_key : m.transform_type;
+      const cls = m.transform_type === 'lookup' ? 'badge-amber' : m.transform_type === 'preset' ? 'badge-purple' : 'badge-cerulean';
+      return '<span class="badge ' + cls + '" style="font-size:9px">' + esc(label) + '</span>';
+    };
+
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-header">
+          <span class="card-title">${esc(t.name)} v${esc(t.version)}</span>
+          <div style="display:flex;gap:4px">
+            <a class="btn btn-ghost btn-sm" href="${API_BASE}/templates/${esc(t.id)}/csv" style="text-decoration:none;font-size:10px">↓ CSV</a>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">
+          ${esc(t.description || '')}
+        </div>
+        <div style="display:flex;gap:12px;font-size:11px;color:var(--text-dim);margin-bottom:12px">
+          <span>${maps.length} mappings</span>
+          <span>·</span>
+          <span>${esc(t.source_ils || 'ILS unknown')}</span>
+          <span>·</span>
+          <span>${esc(t.scope)}</span>
+          ${t.created_by ? '<span>· by ' + esc(t.created_by) + '</span>' : ''}
+        </div>
+        <div style="max-height:calc(100vh - 350px);overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+          <table class="data-table" style="font-size:11px;width:100%">
+            <thead><tr>
+              <th>Source</th><th>Target</th><th>Transform</th><th>Notes</th>
+            </tr></thead>
+            <tbody>
+              ${maps.map(m => `<tr${m.delete_source ? ' style="background:rgba(224,82,82,0.05)"' : ''}>
+                <td class="mono" style="white-space:nowrap">${esc(m.source_tag)}${m.source_sub ? '<span class="text-amber">' + esc(m.source_sub) + '</span>' : ''}</td>
+                <td class="mono" style="white-space:nowrap">${esc(m.target_tag)}${m.target_sub ? '<span class="text-cerulean">' + esc(m.target_sub) + '</span>' : ''}</td>
+                <td style="white-space:nowrap">
+                  ${transformBadge(m)}
+                  ${m.delete_source ? '<span class="badge badge-red" style="font-size:8px">MOVE</span>' : ''}
+                  ${m.transform_type === 'lookup' && m.transform_fn ? '<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:0 3px" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\\'none\\'?\\'\\':\\'none\\'">show</button><span style="display:none;font-size:10px;color:var(--text-dim)" class="mono">' + esc(m.transform_fn.substring(0,80)) + '</span>' : ''}
+                </td>
+                <td class="text-dim" style="font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(m.notes || '')}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = '<div class="card"><span class="text-red">' + esc(e.message) + '</span></div>';
+  }
+}
+
 function templateCard(t) {
-  return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${t.scope==='global'?'var(--purple)':'var(--cerulean)'}">
+  return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${t.scope==='global'?'var(--purple)':'var(--cerulean)'};cursor:pointer" onclick="previewTemplate('${esc(t.id)}')">
     <div class="card-header">
       <div>
         <span class="mono" style="font-size:13px;font-weight:600">${esc(t.name)}</span>
