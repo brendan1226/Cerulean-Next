@@ -396,7 +396,10 @@ async def export_template_csv(template_id: str, db: AsyncSession = Depends(get_d
             row["delete_source"] = "false"
         writer.writerow(row)
 
-    filename = f"{template.name.replace(' ', '_')}_v{template.version}.csv"
+    # HTTP headers must be ASCII — strip non-ASCII chars from filename
+    safe_name = template.name.replace(' ', '_')
+    safe_name = safe_name.encode('ascii', 'ignore').decode('ascii') or 'template'
+    filename = f"{safe_name}_v{template.version}.csv"
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
