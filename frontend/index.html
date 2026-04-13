@@ -1456,7 +1456,27 @@ function renderNewProject(el) {
         <input class="form-input" id="np-name" placeholder="e.g. Westfield Public Library" />
       </div>
       <div class="form-group">
-        <label class="form-label">Koha URL</label>
+        <label class="form-label" style="display:flex;align-items:center;gap:8px">
+          Koha URL
+          <button type="button" class="transform-info-btn" title="How to connect to Koha" onclick="openModal(\`
+            <div class=&quot;modal-title&quot;>Connecting to Koha</div>
+            <h4 style=&quot;margin-bottom:8px&quot;>Option 1: Direct URL</h4>
+            <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>If your Koha instance is accessible via a public URL or VPN, enter the full URL here (e.g., <code>https://koha.library.org</code>). Use <strong>Basic Auth</strong> with your staff credentials or a <strong>Bearer Token</strong>.</p>
+            <h4 style=&quot;margin-bottom:8px&quot;>Option 2: Local KTD via SSH Tunnel</h4>
+            <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>If Koha is running locally (KTD on your workstation), create an SSH tunnel to forward the port:</p>
+            <ol style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px;padding-left:20px&quot;>
+              <li>Run: <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code></li>
+              <li>Enter this as the Koha URL: <code>http://172.19.0.1:8081</code></li>
+              <li>Ask Brendan for the server password if needed</li>
+            </ol>
+            <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>You can also set this later in Project Settings.</p>
+            <div class=&quot;modal-footer&quot;>
+              <a href=&quot;/help/connect-local-koha&quot; target=&quot;_blank&quot; class=&quot;btn btn-ghost&quot; style=&quot;text-decoration:none&quot;>Full Connection Guide</a>
+              <a href=&quot;/help/manual&quot; target=&quot;_blank&quot; class=&quot;btn btn-ghost&quot; style=&quot;text-decoration:none&quot;>User Manual</a>
+              <button class=&quot;btn btn-ghost&quot; onclick=&quot;closeModal()&quot;>Close</button>
+            </div>
+          \`)">?</button>
+        </label>
         <input class="form-input" id="np-url" placeholder="https://koha.library.org" />
       </div>
       <div class="form-group">
@@ -3774,7 +3794,21 @@ function renderProjectSettings(el) {
         <input class="form-input" id="ps-source-ils" value="${esc(p.source_ils || '')}" placeholder="e.g. Symphony, Polaris, Millennium" />
       </div>
       <div class="form-group">
-        <label class="form-label">Koha URL</label>
+        <label class="form-label" style="display:flex;align-items:center;gap:8px">
+          Koha URL
+          <button type="button" class="transform-info-btn" title="How to connect" onclick="openModal(\`
+            <div class=&quot;modal-title&quot;>Connecting to Koha</div>
+            <h4 style=&quot;margin-bottom:8px&quot;>Direct URL</h4>
+            <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>Enter the full Koha staff URL (e.g., <code>https://koha.library.org</code>).</p>
+            <h4 style=&quot;margin-bottom:8px&quot;>Local KTD (SSH Tunnel)</h4>
+            <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>For local KTD: run <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code>, then use <code>http://172.19.0.1:8081</code> as the URL.</p>
+            <div class=&quot;modal-footer&quot;>
+              <a href=&quot;/help/connect-local-koha&quot; target=&quot;_blank&quot; class=&quot;btn btn-ghost&quot; style=&quot;text-decoration:none&quot;>Full Guide</a>
+              <a href=&quot;/help/manual&quot; target=&quot;_blank&quot; class=&quot;btn btn-ghost&quot; style=&quot;text-decoration:none&quot;>User Manual</a>
+              <button class=&quot;btn btn-ghost&quot; onclick=&quot;closeModal()&quot;>Close</button>
+            </div>
+          \`)">?</button>
+        </label>
         <input class="form-input" id="ps-koha-url" value="${esc(p.koha_url || '')}" placeholder="https://koha.library.org" />
       </div>
       <div class="form-group">
@@ -7489,8 +7523,30 @@ async function renderS7Setup() {
   const p = state.currentProject;
   const wrap = document.getElementById('s7-tab');
   wrap.innerHTML = `
-    <div class="alert alert-warn" style="margin-bottom:16px">
-      Before pushing data, ensure Koha has the required reference data (libraries, patron categories, item types, authorised values).
+    <div class="alert alert-info" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        Before pushing data, ensure Koha has the required reference data and your Koha connection is configured in
+        <a href="#" onclick="event.preventDefault();navigate('project-settings')" style="color:var(--cerulean)">Project Settings</a>.
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="openModal(\`
+          <div class=&quot;modal-title&quot;>Connecting to Koha</div>
+          <h4 style=&quot;margin-bottom:8px&quot;>Option 1: Direct URL</h4>
+          <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>If your Koha is accessible via a public URL or VPN, enter the URL directly in <strong>Project Settings &rarr; Koha URL</strong> (e.g., <code>https://koha.library.org</code>).</p>
+          <h4 style=&quot;margin-bottom:8px&quot;>Option 2: Local KTD via SSH Tunnel</h4>
+          <p style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px&quot;>If Koha is running locally on your workstation (KTD), use an SSH tunnel to forward the port to the Cerulean server. See the full guide for Mac, Windows, and Linux instructions.</p>
+          <ol style=&quot;font-size:12px;color:var(--text-secondary);margin-bottom:12px;padding-left:20px&quot;>
+            <li>Start tunnel: <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code></li>
+            <li>Set Koha URL to <code>http://172.19.0.1:8081</code> (Docker gateway IP)</li>
+            <li>Test with Run Preflight below</li>
+          </ol>
+          <div class=&quot;modal-footer&quot;>
+            <a href=&quot;/help/connect-local-koha&quot; target=&quot;_blank&quot; class=&quot;btn btn-ghost&quot; style=&quot;text-decoration:none&quot;>Download Full Guide</a>
+            <button class=&quot;btn btn-ghost&quot; onclick=&quot;closeModal()&quot;>Close</button>
+          </div>
+        \`)">How to Connect</button>
+        <a href="/help/manual" target="_blank" class="btn btn-ghost btn-sm" style="font-size:10px;text-decoration:none">User Manual</a>
+      </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-primary" onclick="s7ScanMarcFile()">Scan MARC File</button>
