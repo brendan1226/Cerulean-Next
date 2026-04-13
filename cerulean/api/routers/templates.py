@@ -99,6 +99,188 @@ async def save_template(
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# IMPORTANT: Specific /templates/* routes MUST be defined BEFORE
+# /templates/{template_id} to avoid FastAPI path parameter conflicts.
+# ══════════════════════════════════════════════════════════════════════
+
+_CSV_HEADERS = [
+    "source_tag", "source_sub", "target_tag", "target_sub",
+    "transform_type", "transform_fn", "preset_key", "delete_source", "notes",
+]
+
+
+def _parse_csv_maps(text: str) -> list[dict]:
+    """Parse CSV text into a list of map dicts. Shared by CSV and Google Sheets import."""
+    reader = csv.DictReader(io.StringIO(text))
+    maps = []
+    seen = set()
+    for row in reader:
+        row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+        source_tag = row.get("source_tag", "").strip()
+        target_tag = row.get("target_tag", "").strip()
+        if not source_tag or not target_tag:
+            continue
+        source_sub = row.get("source_sub") or None
+        target_sub = row.get("target_sub") or None
+        key = (source_tag, source_sub or "", target_tag, target_sub or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        maps.append({
+            "source_tag": source_tag,
+            "source_sub": source_sub if source_sub else None,
+            "target_tag": target_tag,
+            "target_sub": target_sub if target_sub else None,
+            "transform_type": row.get("transform_type", "copy") or "copy",
+            "transform_fn": row.get("transform_fn") or None,
+            "preset_key": row.get("preset_key") or None,
+            "delete_source": row.get("delete_source", "").lower() in ("true", "1", "yes"),
+            "notes": row.get("notes") or None,
+        })
+    return maps
+
+
+async def _get_user_email(request, db):
+    user_id = getattr(request.state, "user_id", None) if request else None
+    if user_id:
+        from cerulean.models import User
+        user = await db.get(User, user_id)
+        if user:
+            return user.email
+    return None
+
+
+@router.post("/templates/import-csv", response_model=MapTemplateOut, status_code=201)
+async def import_template_csv(
+    file: UploadFile,
+    name: str = Query(..., description="Template name"),
+    request: Request = None,
+    version: str = Query("1.0"),
+    scope: str = Query("project"),
+    description: str = Query(None),
+    source_ils: str = Query(None),
+    project_id: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a template from an uploaded CSV file."""
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    maps = _parse_csv_maps(text)
+    if not maps:
+        raise HTTPException(400, detail="No valid mapping rows found in CSV. Ensure columns: source_tag, target_tag")
+
+    template = MapTemplate(
+        id=str(uuid.uuid4()), name=name, version=version, description=description,
+        scope=scope, project_id=project_id if scope == "project" else None,
+        source_ils=source_ils, ai_generated=False, reviewed=True, use_count=0,
+        maps=maps, created_by=await _get_user_email(request, db),
+    )
+    db.add(template)
+    await db.flush()
+    await db.refresh(template)
+    return template
+
+
+@router.post("/templates/import-google-sheet", response_model=MapTemplateOut, status_code=201)
+async def import_from_google_sheet(
+    url: str = Query(..., description="Google Sheets URL"),
+    name: str = Query(...),
+    request: Request = None,
+    version: str = Query("1.0"),
+    scope: str = Query("project"),
+    description: str = Query(None),
+    source_ils: str = Query(None),
+    project_id: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import a template directly from a Google Sheets URL."""
+    import httpx
+    import re
+
+    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url)
+    if not match:
+        raise HTTPException(400, detail="Invalid Google Sheets URL.")
+
+    export_url = f"https://docs.google.com/spreadsheets/d/{match.group(1)}/export?format=csv"
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(export_url)
+            if resp.status_code != 200:
+                raise HTTPException(400, detail=f"Could not fetch sheet (HTTP {resp.status_code}). Is it shared as 'Anyone with the link'?")
+            text = resp.text
+    except httpx.RequestError as exc:
+        raise HTTPException(400, detail=f"Failed to fetch Google Sheet: {str(exc)[:200]}")
+
+    maps = _parse_csv_maps(text)
+    if not maps:
+        raise HTTPException(400, detail="No valid mapping rows found in the Google Sheet.")
+
+    template = MapTemplate(
+        id=str(uuid.uuid4()), name=name, version=version,
+        description=description or "Imported from Google Sheets",
+        scope=scope, project_id=project_id if scope == "project" else None,
+        source_ils=source_ils, ai_generated=False, reviewed=True, use_count=0,
+        maps=maps, created_by=await _get_user_email(request, db),
+    )
+    db.add(template)
+    await db.flush()
+    await db.refresh(template)
+    return template
+
+
+@router.post("/templates/seed-sample", response_model=MapTemplateOut, status_code=201)
+async def seed_sample_template(db: AsyncSession = Depends(get_db)):
+    """Create a sample Symphony→Koha template for testing and demonstration."""
+    sample_maps = [
+        {"source_tag": "001", "target_tag": "001", "transform_type": "copy", "notes": "Control number"},
+        {"source_tag": "005", "target_tag": "005", "transform_type": "copy", "notes": "Date/time of last transaction"},
+        {"source_tag": "008", "target_tag": "008", "transform_type": "copy", "notes": "Fixed-length data elements"},
+        {"source_tag": "010", "source_sub": "$a", "target_tag": "010", "target_sub": "$a", "transform_type": "copy", "notes": "LCCN"},
+        {"source_tag": "020", "source_sub": "$a", "target_tag": "020", "target_sub": "$a", "transform_type": "preset", "preset_key": "clean_isbn", "notes": "ISBN — cleaned"},
+        {"source_tag": "035", "source_sub": "$a", "target_tag": "035", "target_sub": "$a", "transform_type": "copy", "notes": "System control number (OCLC)"},
+        {"source_tag": "050", "source_sub": "$a", "target_tag": "050", "target_sub": "$a", "transform_type": "copy", "notes": "LC call number"},
+        {"source_tag": "082", "source_sub": "$a", "target_tag": "082", "target_sub": "$a", "transform_type": "copy", "notes": "Dewey classification"},
+        {"source_tag": "100", "source_sub": "$a", "target_tag": "100", "target_sub": "$a", "transform_type": "copy", "notes": "Main entry — personal name"},
+        {"source_tag": "245", "source_sub": "$a", "target_tag": "245", "target_sub": "$a", "transform_type": "copy", "notes": "Title proper"},
+        {"source_tag": "245", "source_sub": "$b", "target_tag": "245", "target_sub": "$b", "transform_type": "copy", "notes": "Subtitle"},
+        {"source_tag": "245", "source_sub": "$c", "target_tag": "245", "target_sub": "$c", "transform_type": "copy", "notes": "Statement of responsibility"},
+        {"source_tag": "246", "source_sub": "$a", "target_tag": "246", "target_sub": "$a", "transform_type": "copy", "notes": "Varying form of title"},
+        {"source_tag": "250", "source_sub": "$a", "target_tag": "250", "target_sub": "$a", "transform_type": "copy", "notes": "Edition statement"},
+        {"source_tag": "260", "source_sub": "$a", "target_tag": "264", "target_sub": "$a", "transform_type": "copy", "notes": "Place of publication → 264"},
+        {"source_tag": "260", "source_sub": "$b", "target_tag": "264", "target_sub": "$b", "transform_type": "copy", "notes": "Publisher → 264"},
+        {"source_tag": "260", "source_sub": "$c", "target_tag": "264", "target_sub": "$c", "transform_type": "preset", "preset_key": "extract_year", "notes": "Date of publication → year only"},
+        {"source_tag": "300", "source_sub": "$a", "target_tag": "300", "target_sub": "$a", "transform_type": "copy", "notes": "Physical description — extent"},
+        {"source_tag": "490", "source_sub": "$a", "target_tag": "490", "target_sub": "$a", "transform_type": "copy", "notes": "Series statement"},
+        {"source_tag": "500", "source_sub": "$a", "target_tag": "500", "target_sub": "$a", "transform_type": "copy", "notes": "General note"},
+        {"source_tag": "520", "source_sub": "$a", "target_tag": "520", "target_sub": "$a", "transform_type": "copy", "notes": "Summary"},
+        {"source_tag": "600", "source_sub": "$a", "target_tag": "600", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — personal name"},
+        {"source_tag": "650", "source_sub": "$a", "target_tag": "650", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — topical term"},
+        {"source_tag": "651", "source_sub": "$a", "target_tag": "651", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — geographic name"},
+        {"source_tag": "700", "source_sub": "$a", "target_tag": "700", "target_sub": "$a", "transform_type": "copy", "notes": "Added entry — personal name"},
+        {"source_tag": "852", "source_sub": "$a", "target_tag": "952", "target_sub": "$a", "transform_type": "copy", "delete_source": True, "notes": "Location → homebranch (MOVE)"},
+        {"source_tag": "852", "source_sub": "$b", "target_tag": "952", "target_sub": "$b", "transform_type": "copy", "delete_source": True, "notes": "Sublocation → holdingbranch (MOVE)"},
+        {"source_tag": "852", "source_sub": "$h", "target_tag": "952", "target_sub": "$o", "transform_type": "copy", "delete_source": True, "notes": "Call number → 952$o (MOVE)"},
+        {"source_tag": "852", "source_sub": "$p", "target_tag": "952", "target_sub": "$p", "transform_type": "copy", "delete_source": True, "notes": "Barcode → 952$p (MOVE)"},
+        {"source_tag": "852", "source_sub": "$t", "target_tag": "952", "target_sub": "$t", "transform_type": "copy", "notes": "Copy number"},
+        {"source_tag": "999", "source_sub": "$a", "target_tag": "942", "target_sub": "$c", "transform_type": "lookup", "transform_fn": '{"BOOK":"BK","DVD":"DVD","CD":"CD","JBOOK":"JBK","JDVD":"JDVD","REF":"REF","MAG":"CR"}', "delete_source": True, "notes": "Item type lookup (Symphony → Koha)"},
+        {"source_tag": "999", "source_sub": "$l", "target_tag": "952", "target_sub": "$c", "transform_type": "lookup", "transform_fn": '{"ADULT":"ADULT","CHILD":"CHILD","YA":"YA","REF":"REF","MEDIA":"AV"}', "notes": "Location code lookup"},
+    ]
+
+    template = MapTemplate(
+        id=str(uuid.uuid4()), name="Symphony → Koha (Sample)", version="1.0",
+        description="Sample template: SirsiDynix Symphony to Koha. Includes bib fields, item moves (852→952), item type lookups (999→942), and location mappings.",
+        scope="global", project_id=None, source_ils="SirsiDynix Symphony",
+        ai_generated=False, reviewed=True, use_count=0, maps=sample_maps, created_by="system",
+    )
+    db.add(template)
+    await db.flush()
+    await db.refresh(template)
+    return template
+
+
+# ── Routes with {template_id} path parameter (must come after specific paths) ──
+
 @router.get("/templates/{template_id}", response_model=MapTemplateOut)
 async def get_template(template_id: str, db: AsyncSession = Depends(get_db)):
     template = await _require_template(template_id, db)
@@ -220,252 +402,6 @@ async def export_template_csv(template_id: str, db: AsyncSession = Depends(get_d
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-# ── CSV Import ────────────────────────────────────────────────────────
-
-@router.post("/templates/import-csv", response_model=MapTemplateOut, status_code=201)
-async def import_template_csv(
-    file: UploadFile,
-    name: str = Query(..., description="Template name"),
-    request: Request = None,
-    version: str = Query("1.0"),
-    scope: str = Query("project"),
-    description: str = Query(None),
-    source_ils: str = Query(None),
-    project_id: str = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a template from an uploaded CSV file (Google Sheets export, Excel CSV, etc.)."""
-    content = await file.read()
-    # Handle BOM from Google Sheets/Excel
-    text = content.decode("utf-8-sig")
-
-    reader = csv.DictReader(io.StringIO(text))
-    maps = []
-    seen = set()
-
-    for row in reader:
-        # Normalize keys (strip whitespace, lowercase)
-        row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-
-        source_tag = row.get("source_tag", "").strip()
-        target_tag = row.get("target_tag", "").strip()
-        if not source_tag or not target_tag:
-            continue
-
-        source_sub = row.get("source_sub") or None
-        target_sub = row.get("target_sub") or None
-
-        # Deduplicate
-        key = (source_tag, source_sub or "", target_tag, target_sub or "")
-        if key in seen:
-            continue
-        seen.add(key)
-
-        entry = {
-            "source_tag": source_tag,
-            "source_sub": source_sub if source_sub else None,
-            "target_tag": target_tag,
-            "target_sub": target_sub if target_sub else None,
-            "transform_type": row.get("transform_type", "copy") or "copy",
-            "transform_fn": row.get("transform_fn") or None,
-            "preset_key": row.get("preset_key") or None,
-            "delete_source": row.get("delete_source", "").lower() in ("true", "1", "yes"),
-            "notes": row.get("notes") or None,
-        }
-        maps.append(entry)
-
-    if not maps:
-        raise HTTPException(400, detail="No valid mapping rows found in CSV. Ensure columns: source_tag, target_tag")
-
-    # Get uploader info
-    user_email = None
-    user_id = getattr(request.state, "user_id", None) if request else None
-    if user_id:
-        from cerulean.models import User
-        user = await db.get(User, user_id)
-        if user:
-            user_email = user.email
-
-    template = MapTemplate(
-        id=str(uuid.uuid4()),
-        name=name,
-        version=version,
-        description=description,
-        scope=scope,
-        project_id=project_id if scope == "project" else None,
-        source_ils=source_ils,
-        ai_generated=False,
-        reviewed=True,
-        use_count=0,
-        maps=maps,
-        created_by=user_email,
-    )
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
-
-    return template
-
-
-# ── Google Sheets URL Import ──────────────────────────────────────────
-
-@router.post("/templates/import-google-sheet", response_model=MapTemplateOut, status_code=201)
-async def import_from_google_sheet(
-    url: str = Query(..., description="Google Sheets URL"),
-    name: str = Query(...),
-    request: Request = None,
-    version: str = Query("1.0"),
-    scope: str = Query("project"),
-    description: str = Query(None),
-    source_ils: str = Query(None),
-    project_id: str = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    """Import a template directly from a Google Sheets URL.
-
-    The sheet must be shared as 'Anyone with the link can view'.
-    Fetches the sheet as CSV via Google's export URL.
-    """
-    import httpx
-    import re
-
-    # Extract sheet ID from various Google Sheets URL formats
-    match = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url)
-    if not match:
-        raise HTTPException(400, detail="Invalid Google Sheets URL. Expected: https://docs.google.com/spreadsheets/d/SHEET_ID/...")
-
-    sheet_id = match.group(1)
-    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            resp = await client.get(export_url)
-            if resp.status_code != 200:
-                raise HTTPException(400, detail=f"Could not fetch sheet (HTTP {resp.status_code}). Is it shared as 'Anyone with the link'?")
-            text = resp.text
-    except httpx.RequestError as exc:
-        raise HTTPException(400, detail=f"Failed to fetch Google Sheet: {str(exc)[:200]}")
-
-    # Parse CSV — same logic as import-csv
-    reader = csv.DictReader(io.StringIO(text))
-    maps = []
-    seen = set()
-
-    for row in reader:
-        row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        source_tag = row.get("source_tag", "").strip()
-        target_tag = row.get("target_tag", "").strip()
-        if not source_tag or not target_tag:
-            continue
-        source_sub = row.get("source_sub") or None
-        target_sub = row.get("target_sub") or None
-        key = (source_tag, source_sub or "", target_tag, target_sub or "")
-        if key in seen:
-            continue
-        seen.add(key)
-        maps.append({
-            "source_tag": source_tag,
-            "source_sub": source_sub if source_sub else None,
-            "target_tag": target_tag,
-            "target_sub": target_sub if target_sub else None,
-            "transform_type": row.get("transform_type", "copy") or "copy",
-            "transform_fn": row.get("transform_fn") or None,
-            "preset_key": row.get("preset_key") or None,
-            "delete_source": row.get("delete_source", "").lower() in ("true", "1", "yes"),
-            "notes": row.get("notes") or None,
-        })
-
-    if not maps:
-        raise HTTPException(400, detail="No valid mapping rows found in the Google Sheet. Ensure columns: source_tag, target_tag")
-
-    user_email = None
-    user_id = getattr(request.state, "user_id", None) if request else None
-    if user_id:
-        from cerulean.models import User
-        user = await db.get(User, user_id)
-        if user:
-            user_email = user.email
-
-    template = MapTemplate(
-        id=str(uuid.uuid4()),
-        name=name,
-        version=version,
-        description=description or f"Imported from Google Sheets",
-        scope=scope,
-        project_id=project_id if scope == "project" else None,
-        source_ils=source_ils,
-        ai_generated=False,
-        reviewed=True,
-        use_count=0,
-        maps=maps,
-        created_by=user_email,
-    )
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
-    return template
-
-
-# ── Sample Template Seed ─────────────────────────────────────────────
-
-@router.post("/templates/seed-sample", response_model=MapTemplateOut, status_code=201)
-async def seed_sample_template(db: AsyncSession = Depends(get_db)):
-    """Create a sample Symphony→Koha template for testing and demonstration."""
-    sample_maps = [
-        {"source_tag": "001", "target_tag": "001", "transform_type": "copy", "notes": "Control number"},
-        {"source_tag": "005", "target_tag": "005", "transform_type": "copy", "notes": "Date/time of last transaction"},
-        {"source_tag": "008", "target_tag": "008", "transform_type": "copy", "notes": "Fixed-length data elements"},
-        {"source_tag": "010", "source_sub": "$a", "target_tag": "010", "target_sub": "$a", "transform_type": "copy", "notes": "LCCN"},
-        {"source_tag": "020", "source_sub": "$a", "target_tag": "020", "target_sub": "$a", "transform_type": "preset", "preset_key": "clean_isbn", "notes": "ISBN — cleaned"},
-        {"source_tag": "035", "source_sub": "$a", "target_tag": "035", "target_sub": "$a", "transform_type": "copy", "notes": "System control number (OCLC)"},
-        {"source_tag": "050", "source_sub": "$a", "target_tag": "050", "target_sub": "$a", "transform_type": "copy", "notes": "LC call number"},
-        {"source_tag": "082", "source_sub": "$a", "target_tag": "082", "target_sub": "$a", "transform_type": "copy", "notes": "Dewey classification"},
-        {"source_tag": "100", "source_sub": "$a", "target_tag": "100", "target_sub": "$a", "transform_type": "copy", "notes": "Main entry — personal name"},
-        {"source_tag": "245", "source_sub": "$a", "target_tag": "245", "target_sub": "$a", "transform_type": "copy", "notes": "Title proper"},
-        {"source_tag": "245", "source_sub": "$b", "target_tag": "245", "target_sub": "$b", "transform_type": "copy", "notes": "Subtitle"},
-        {"source_tag": "245", "source_sub": "$c", "target_tag": "245", "target_sub": "$c", "transform_type": "copy", "notes": "Statement of responsibility"},
-        {"source_tag": "246", "source_sub": "$a", "target_tag": "246", "target_sub": "$a", "transform_type": "copy", "notes": "Varying form of title"},
-        {"source_tag": "250", "source_sub": "$a", "target_tag": "250", "target_sub": "$a", "transform_type": "copy", "notes": "Edition statement"},
-        {"source_tag": "260", "source_sub": "$a", "target_tag": "264", "target_sub": "$a", "transform_type": "copy", "notes": "Place of publication → 264"},
-        {"source_tag": "260", "source_sub": "$b", "target_tag": "264", "target_sub": "$b", "transform_type": "copy", "notes": "Publisher → 264"},
-        {"source_tag": "260", "source_sub": "$c", "target_tag": "264", "target_sub": "$c", "transform_type": "preset", "preset_key": "extract_year", "notes": "Date of publication → year only"},
-        {"source_tag": "300", "source_sub": "$a", "target_tag": "300", "target_sub": "$a", "transform_type": "copy", "notes": "Physical description — extent"},
-        {"source_tag": "490", "source_sub": "$a", "target_tag": "490", "target_sub": "$a", "transform_type": "copy", "notes": "Series statement"},
-        {"source_tag": "500", "source_sub": "$a", "target_tag": "500", "target_sub": "$a", "transform_type": "copy", "notes": "General note"},
-        {"source_tag": "520", "source_sub": "$a", "target_tag": "520", "target_sub": "$a", "transform_type": "copy", "notes": "Summary"},
-        {"source_tag": "600", "source_sub": "$a", "target_tag": "600", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — personal name"},
-        {"source_tag": "650", "source_sub": "$a", "target_tag": "650", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — topical term"},
-        {"source_tag": "651", "source_sub": "$a", "target_tag": "651", "target_sub": "$a", "transform_type": "copy", "notes": "Subject — geographic name"},
-        {"source_tag": "700", "source_sub": "$a", "target_tag": "700", "target_sub": "$a", "transform_type": "copy", "notes": "Added entry — personal name"},
-        {"source_tag": "852", "source_sub": "$a", "target_tag": "952", "target_sub": "$a", "transform_type": "copy", "delete_source": True, "notes": "Location → homebranch (MOVE)"},
-        {"source_tag": "852", "source_sub": "$b", "target_tag": "952", "target_sub": "$b", "transform_type": "copy", "delete_source": True, "notes": "Sublocation → holdingbranch (MOVE)"},
-        {"source_tag": "852", "source_sub": "$h", "target_tag": "952", "target_sub": "$o", "transform_type": "copy", "delete_source": True, "notes": "Call number → 952$o (MOVE)"},
-        {"source_tag": "852", "source_sub": "$p", "target_tag": "952", "target_sub": "$p", "transform_type": "copy", "delete_source": True, "notes": "Barcode → 952$p (MOVE)"},
-        {"source_tag": "852", "source_sub": "$t", "target_tag": "952", "target_sub": "$t", "transform_type": "copy", "notes": "Copy number"},
-        {"source_tag": "999", "source_sub": "$a", "target_tag": "942", "target_sub": "$c", "transform_type": "lookup", "transform_fn": "{\"BOOK\":\"BK\",\"DVD\":\"DVD\",\"CD\":\"CD\",\"JBOOK\":\"JBK\",\"JDVD\":\"JDVD\",\"REF\":\"REF\",\"MAG\":\"CR\"}", "delete_source": True, "notes": "Item type lookup (Symphony → Koha)"},
-        {"source_tag": "999", "source_sub": "$l", "target_tag": "952", "target_sub": "$c", "transform_type": "lookup", "transform_fn": "{\"ADULT\":\"ADULT\",\"CHILD\":\"CHILD\",\"YA\":\"YA\",\"REF\":\"REF\",\"MEDIA\":\"AV\"}", "notes": "Location code lookup"},
-    ]
-
-    template = MapTemplate(
-        id=str(uuid.uuid4()),
-        name="Symphony → Koha (Sample)",
-        version="1.0",
-        description="Sample template demonstrating a typical SirsiDynix Symphony to Koha migration mapping. Includes bibliographic fields, item field moves (852→952), item type lookups (999→942), and location code mappings.",
-        scope="global",
-        project_id=None,
-        source_ils="SirsiDynix Symphony",
-        ai_generated=False,
-        reviewed=True,
-        use_count=0,
-        maps=sample_maps,
-        created_by="system",
-    )
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
-    return template
 
 
 async def _require_template(template_id: str, db: AsyncSession) -> MapTemplate:
