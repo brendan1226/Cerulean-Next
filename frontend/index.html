@@ -1047,17 +1047,17 @@
           <span class="nav-icon">⑦</span> Reconciliation
           <span class="stage-badge" id="badge-s8">—</span>
         </div>
-        <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
-          <span class="nav-icon">⑧</span> Load
-          <span class="stage-badge" id="badge-s7">—</span>
-        </div>
         <div class="nav-item" data-view="stage9" onclick="navigate('stage9')">
-          <span class="nav-icon">⑨</span> Patrons
+          <span class="nav-icon">⑧</span> Patrons
           <span class="stage-badge" id="badge-s9">—</span>
         </div>
         <div class="nav-item" data-view="stage10" onclick="navigate('stage10')">
-          <span class="nav-icon">⑩</span> Patron Versions
+          <span class="nav-icon">⑨</span> Patron Versions
           <span class="stage-badge" id="badge-s10">—</span>
+        </div>
+        <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
+          <span class="nav-icon">⑩</span> Load
+          <span class="stage-badge" id="badge-s7">—</span>
         </div>
         <div class="nav-item" data-view="stage11" onclick="navigate('stage11')">
           <span class="stage-num">11</span> Holds
@@ -1311,18 +1311,18 @@ async function checkHealth() {
 
 // ── Pipeline helpers ─────────────────────────────────────────────────
 function pipelineBar(project) {
-  // Display order: Reconcile (stage8) before Load (stage7)
+  // Display order: prepare all data before Load
   const stages = [
-    { n: 1, view: 'stage1',  label: 'Ingest' },
-    { n: 2, view: 'stage2',  label: 'Config' },
-    { n: 3, view: 'stage3',  label: 'Quality' },
-    { n: 4, view: 'stage4',  label: 'Versions' },
-    { n: 5, view: 'stage5',  label: 'Mapping' },
-    { n: 6, view: 'stage6',  label: 'Transform' },
-    { n: 8, view: 'stage8',  label: 'Reconcile' },
-    { n: 7, view: 'stage7',  label: 'Load' },
-    { n: 9, view: 'stage9',  label: 'Patrons' },
+    { n: 1,  view: 'stage1',  label: 'Ingest' },
+    { n: 2,  view: 'stage2',  label: 'Config' },
+    { n: 3,  view: 'stage3',  label: 'Quality' },
+    { n: 4,  view: 'stage4',  label: 'Versions' },
+    { n: 5,  view: 'stage5',  label: 'Mapping' },
+    { n: 6,  view: 'stage6',  label: 'Transform' },
+    { n: 8,  view: 'stage8',  label: 'Reconcile' },
+    { n: 9,  view: 'stage9',  label: 'Patrons' },
     { n: 10, view: 'stage10', label: 'Pat. Ver.' },
+    { n: 7,  view: 'stage7',  label: 'Load' },
     { n: 11, view: 'stage11', label: 'Holds' },
   ];
   return `<div class="pipeline-bar">
@@ -10048,7 +10048,7 @@ const _HELP_SECTIONS = [
 <li>Click <strong>Archive</strong> to hide a project — use the "Show archived" toggle to restore</li>
 </ul>
 ` },
-  { id: 'stage1', title: 'Stage 1 — Data Ingest', content: `
+  { id: 'stage1', title: 'Step 1 — Data Ingest', content: `
 <p>Upload source MARC and item data files, then let the system analyze them. Supported formats: <code>.mrc</code>, <code>.marc</code>, <code>.mrk</code>, <code>.csv</code>, <code>.xml</code> — up to <strong>2 GB</strong> per file.</p>
 <h4>What Happens Behind the Scenes</h4>
 <p>When you upload a file, several automated tasks run in sequence:</p>
@@ -10068,7 +10068,7 @@ const _HELP_SECTIONS = [
 <li><strong>Tag frequency</strong> — Missing 245 (title) is a red flag. High 852/952 counts indicate embedded items.</li>
 </ul>
 ` },
-  { id: 'stage2', title: 'Stage 2 — ILS Detection & Migration Config', content: `
+  { id: 'stage2', title: 'Step 2 — ILS Detection & Config', content: `
 <p>Confirm the source ILS and configure how items are structured. The ILS setting influences which field mapping templates are suggested in Stage 5.</p>
 <h4>Item Structure</h4>
 <ul>
@@ -10081,7 +10081,7 @@ const _HELP_SECTIONS = [
 <h4>Quick Path</h4>
 <p>For simple migrations where the data is already clean and properly mapped (e.g., Koha-to-Koha), click <strong>Mark as Ready to Load</strong> to skip stages 3–6 and go directly to Stage 7. The file will be pushed as-is without field mapping, deduplication, or reconciliation.</p>
 ` },
-  { id: 'stage3', title: 'Stage 3 — MARC Data Quality', content: `
+  { id: 'stage3', title: 'Step 3 — MARC Data Quality', content: `
 <p>Scan records for quality issues and fix problems before loading. The scanner performs <strong>8 categories</strong> of checks on every record.</p>
 <h4>Running a Scan</h4>
 <ol>
@@ -10108,7 +10108,7 @@ const _HELP_SECTIONS = [
 <li><strong>Bulk actions</strong> — "Ignore all" or "Auto-fix all" per category to handle large volumes efficiently</li>
 </ul>
 ` },
-  { id: 'stage4', title: 'Stage 4 — Bib Versions', content: `
+  { id: 'stage4', title: 'Step 4 — Bib Versions', content: `
 <p>Create immutable snapshots of your bibliographic data at different stages of the migration pipeline. Migrations are iterative — versions let you track what changed between runs, verify that a transform produced the expected results, and roll back if something went wrong.</p>
 <h4>Creating a Snapshot</h4>
 <p>Click <strong>Create Version</strong> to capture a frozen copy of the current MARC file, all field mappings at the time of creation, quality scan results summary, and record count.</p>
@@ -10119,7 +10119,7 @@ const _HELP_SECTIONS = [
 <li>View the differences: added/removed/changed records and fields</li>
 </ol>
 ` },
-  { id: 'stage5', title: 'Stage 5 — Field Mapping', content: `
+  { id: 'stage5', title: 'Step 5 — Field Mapping', content: `
 <p>Define how source MARC fields map to Koha's MARC structure using the three-panel layout.</p>
 <h4>Three-Panel Layout</h4>
 <ul>
@@ -10145,7 +10145,7 @@ const _HELP_SECTIONS = [
 <li><strong>Load Template</strong> — Apply a saved template in "merge" mode (preserves existing mappings) or "replace" mode (replaces all mappings). Especially valuable when migrating multiple libraries from the same source ILS.</li>
 </ul>
 ` },
-  { id: 'stage6', title: 'Stage 6 — Transform', content: `
+  { id: 'stage6', title: 'Step 6 — Transform', content: `
 <p>Apply your field mappings to the MARC data and build the output file.</p>
 <h4>What Happens During a Build</h4>
 <ol>
@@ -10156,30 +10156,8 @@ const _HELP_SECTIONS = [
 </ol>
 <p>The first record is fully logged to the audit trail showing which source tags existed, which were mapped, and which were missing — helping you catch mapping errors early.</p>
 ` },
-  { id: 'stage7', title: 'Stage 7 — Load (Push to Koha)', content: `
-<p>Push your prepared MARC data into the target Koha instance.</p>
-<h4>Setup Tab</h4>
-<ul>
-<li><strong>Scan MARC</strong> — Analyzes the output file for controlled values (item types, locations, collection codes) to identify values that must exist in Koha before import</li>
-<li><strong>Fetch Reference Data</strong> — Pulls current libraries, patron categories, item types, and authorized values from Koha via REST API</li>
-<li><strong>Verify Counts</strong> — Checks how many bibs, items, and patrons currently exist in Koha</li>
-<li><strong>DB Stats</strong> — Shows MariaDB buffer pool usage and Elasticsearch index status</li>
-</ul>
-<h4>Migration Mode</h4>
-<p>For large migrations (10,000+ records), enabling <strong>Migration Mode</strong> dramatically improves import speed. It stops non-essential daemons (koha-es-indexer, koha-indexer, koha-zebra, koha-sip, koha-z3950-responder) and applies database tuning (<code>innodb_flush_log_at_trx_commit = 2</code> and increased buffer pool). The koha-worker and koha-plack daemons are kept running. <strong>Always disable Migration Mode after import completes</strong> to restore daemons and safe database settings.</p>
-<h4>Push Methods</h4>
-<ul>
-<li><strong>REST API</strong> — Stages each record individually via <code>POST /api/v1/biblios</code>. No plugins needed. Best for small imports (&lt;1,000 records) or testing.</li>
-<li><strong>FastMARCImport Plugin</strong> — Copies the MARC file into the Koha Docker container and runs <code>bulkmarcimport.pl</code> with configurable worker count. For medium imports.</li>
-<li><strong>Migration Toolkit Plugin</strong> — Single REST call handles DB tuning, parallel import, and reindexing in one workflow. Best for large migrations.</li>
-</ul>
-<h4>Reindex Tab</h4>
-<p>After loading, Koha's Elasticsearch index must be rebuilt for records to appear in OPAC search. Use <strong>Full reindex</strong> (via Koha's background job system) or <strong>TurboIndex Plugin</strong> for parallel reindexing on large catalogs.</p>
-<h4>Manifests Tab</h4>
-<p>Every push creates a manifest recording the method used, start/end time, records total/succeeded/failed, error messages, and Celery task ID for debugging.</p>
-` },
-  { id: 'stage8', title: 'Stage 8 — Item & Bib Reconciliation', content: `
-<p>Map source item field values to Koha's controlled vocabularies. Source ILS systems use different codes than Koha — this stage creates the translation rules.</p>
+  { id: 'stage8', title: 'Step 7 — Item & Bib Reconciliation', content: `
+<p>Map source item field values to Koha's controlled vocabularies. Source ILS systems use different codes than Koha — this step creates the translation rules. <strong>Complete this before loading data into Koha.</strong></p>
 <h4>Vocabulary Categories (MARC 952 Subfields)</h4>
 <ul>
 <li><strong>itype</strong> ($y) — Item type (e.g., "BK", "DVD", "JBOOK" → Koha item types)</li>
@@ -10200,7 +10178,7 @@ const _HELP_SECTIONS = [
 </ul>
 <p>When you click Apply: rules are sorted by sort_order and applied in sequence. Modified records are written to <code>Biblios-mapped-items.mrc</code>. Per-category CSV files are generated for reference.</p>
 ` },
-  { id: 'stage9', title: 'Stage 9 — Patron Data', content: `
+  { id: 'stage9', title: 'Step 8 — Patron Data', content: `
 <p>Import patron/borrower records into Koha from CSV, TSV, Excel (.xlsx/.xls), XML, or MARC (.mrc) files.</p>
 <h4>What Happens During Parsing</h4>
 <ol>
@@ -10216,14 +10194,34 @@ const _HELP_SECTIONS = [
 <h4>Available Transforms</h4>
 <p>copy, name_split, split (by delimiter), date_mdy_to_iso, date_dmy_to_iso, date_ymd_to_iso, case_upper/lower/title, gender_normalize, first_char, const, regex.</p>
 <h4>Value Reconciliation</h4>
-<p>After column mapping, scan for controlled list values that need translation. categorycode, branchcode, title, and lost status are validated against live Koha data. Create rename, merge, split, or delete rules (same as Stage 8 item reconciliation).</p>
+<p>After column mapping, scan for controlled list values that need translation. categorycode, branchcode, title, and lost status are validated against live Koha data. Create rename, merge, split, or delete rules (same as item reconciliation).</p>
 <h4>Apply & Push</h4>
 <p>Applies column mappings, transforms, and value rules, then writes output to <code>patrons_transformed.csv</code> with Koha borrower headers. Delete rules in "exclude_row" mode skip entire patron records; "blank_field" mode clears just the field.</p>
 ` },
-  { id: 'stage10', title: 'Stage 10 — Patron Versions', content: `
-<p>Snapshot patron data at different stages — same concept as Stage 4 for bibs. Create version snapshots after each iteration of patron loading and compare versions to verify that mapping and rule changes produce the expected results.</p>
+  { id: 'stage10', title: 'Step 9 — Patron Versions', content: `
+<p>Snapshot patron data at different stages — same concept as Step 4 for bibs. Create version snapshots after each iteration of patron loading and compare versions to verify that mapping and rule changes produce the expected results.</p>
 ` },
-  { id: 'stage11', title: 'Stage 11 — Holds & Remaining Data', content: `
+  { id: 'stage7', title: 'Step 10 — Load (Push to Koha)', content: `
+<p>Push your prepared MARC and patron data into the target Koha instance. <strong>This is the final action step</strong> — all data preparation (mapping, reconciliation, patrons) should be complete before pushing.</p>
+<h4>Setup Tab</h4>
+<ul>
+<li><strong>Scan MARC</strong> — Analyzes the output file for controlled values to identify what must exist in Koha before import</li>
+<li><strong>Fetch Reference Data</strong> — Pulls current libraries, patron categories, item types, and authorized values from Koha</li>
+<li><strong>Verify Counts</strong> — Checks how many bibs, items, and patrons currently exist in Koha</li>
+<li><strong>DB Stats</strong> — Shows MariaDB buffer pool usage and Elasticsearch index status</li>
+</ul>
+<h4>Migration Mode</h4>
+<p>For large migrations (10,000+ records), enabling <strong>Migration Mode</strong> dramatically improves import speed. It stops non-essential daemons (koha-es-indexer, koha-indexer, koha-zebra, koha-sip, koha-z3950-responder) and applies database tuning (<code>innodb_flush_log_at_trx_commit = 2</code> and increased buffer pool). <strong>Always disable Migration Mode after import completes.</strong></p>
+<h4>Push Methods</h4>
+<ul>
+<li><strong>REST API</strong> — ~1 rec/sec, no plugins needed. Best for small imports or testing.</li>
+<li><strong>FastMARCImport Plugin</strong> — Parallel workers inside Koha container. For medium imports.</li>
+<li><strong>Migration Toolkit Plugin</strong> — All-in-one: DB tuning + parallel import + reindex. Best for large migrations.</li>
+</ul>
+<h4>Reindex Tab</h4>
+<p>After loading, run an Elasticsearch reindex to make records searchable. Use TurboIndex Plugin for parallel reindexing on large catalogs.</p>
+` },
+  { id: 'stage11', title: 'Step 11 — Holds & Remaining Data', content: `
 <p><em>Coming soon.</em> This stage will support migration of:</p>
 <ul>
 <li>Active holds/reserves (linking patrons to bibliographic records)</li>
@@ -10232,7 +10230,7 @@ const _HELP_SECTIONS = [
 <li>Reading history</li>
 </ul>
 ` },
-  { id: 'stage12', title: 'Stage 12 — Aspen Discovery', content: `
+  { id: 'stage12', title: 'Step 12 — Aspen Discovery', content: `
 <p>Bulk migrate data from Koha into an Aspen Discovery instance. Cerulean authenticates to Aspen's SystemAPI using session-based login with a <code>Host: localhost</code> header for Apache vhost compatibility.</p>
 <h4>Turbo Migration</h4>
 <p>High-performance parallel extraction from Koha's database directly into Aspen's database — bypassing the API layer entirely for maximum throughput. Typical performance: ~940,000 records in 8 minutes with 8 workers.</p>
@@ -10255,7 +10253,7 @@ const _HELP_SECTIONS = [
 <li><strong>Start Indexers</strong> — Resume indexing after load completes</li>
 </ul>
 ` },
-  { id: 'stage13', title: 'Stage 13 — Evergreen ILS', content: `
+  { id: 'stage13', title: 'Step 13 — Evergreen ILS', content: `
 <p>Bulk migrate MARC records into Evergreen ILS via direct PostgreSQL access. Unlike Koha (which stores ISO 2709 binary MARC), Evergreen stores records as <strong>MARCXML text</strong> in the <code>biblio.record_entry</code> PostgreSQL table. Cerulean converts each record from ISO 2709 → MARCXML using pymarc before insertion.</p>
 <h4>Database Connection</h4>
 <p>Configure host, port, database name (default: <code>evergreen</code>), username, and password. Click <strong>Test Connection</strong> to verify connectivity and see current bib counts. Cerulean connects via psycopg2 directly — not through Evergreen's APIs.</p>

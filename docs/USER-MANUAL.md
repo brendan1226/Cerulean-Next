@@ -9,19 +9,19 @@
 
 1. [Getting Started](#getting-started)
 2. [Dashboard & Projects](#dashboard--projects)
-3. [Stage 1 — Data Ingest](#stage-1--data-ingest)
-4. [Stage 2 — ILS Detection & Migration Config](#stage-2--ils-detection--migration-config)
-5. [Stage 3 — MARC Data Quality](#stage-3--marc-data-quality)
-6. [Stage 4 — Bib Versions](#stage-4--bib-versions)
-7. [Stage 5 — Field Mapping](#stage-5--field-mapping)
-8. [Stage 6 — Transform](#stage-6--transform)
-9. [Stage 7 — Load (Push to Koha)](#stage-7--load-push-to-koha)
-10. [Stage 8 — Item & Bib Reconciliation](#stage-8--item--bib-reconciliation)
-11. [Stage 9 — Patron Data](#stage-9--patron-data)
-12. [Stage 10 — Patron Versions](#stage-10--patron-versions)
-13. [Stage 11 — Holds & Remaining Data](#stage-11--holds--remaining-data)
-14. [Stage 12 — Aspen Discovery](#stage-12--aspen-discovery)
-15. [Stage 13 — Evergreen ILS](#stage-13--evergreen-ils)
+3. [Step 1 — Data Ingest](#step-1--data-ingest)
+4. [Step 2 — ILS Detection & Migration Config](#step-2--ils-detection--migration-config)
+5. [Step 3 — MARC Data Quality](#step-3--marc-data-quality)
+6. [Step 4 — Bib Versions](#step-4--bib-versions)
+7. [Step 5 — Field Mapping](#step-5--field-mapping)
+8. [Step 6 — Transform](#step-6--transform)
+9. [Step 7 — Item & Bib Reconciliation](#step-7--item--bib-reconciliation)
+10. [Step 8 — Patron Data](#step-8--patron-data)
+11. [Step 9 — Patron Versions](#step-9--patron-versions)
+12. [Step 10 — Load (Push to Koha)](#step-10--load-push-to-koha)
+13. [Step 11 — Holds & Remaining Data](#step-11--holds--remaining-data)
+14. [Step 12 — Aspen Discovery](#step-12--aspen-discovery)
+15. [Step 13 — Evergreen ILS](#step-13--evergreen-ils)
 16. [Templates](#templates)
 17. [Plugins](#plugins)
 18. [System Settings](#system-settings)
@@ -44,7 +44,7 @@ After signing in, your name and avatar appear in the sidebar footer. Click **Sig
 The left sidebar provides access to all areas:
 
 - **Workspace** — Dashboard and New Project
-- **Project** — Stages 1-13, Project Log, Settings (visible when a project is selected)
+- **Project** — Steps 1-13 (Ingest through Evergreen), Project Log, Settings (visible when a project is selected)
 - **Platform** — Help, Templates, Suggestions, Plugins, System Settings
 
 The **pipeline bar** at the top of each stage page shows your progress through all stages. Completed stages show a checkmark.
@@ -77,7 +77,7 @@ Each project row shows the project code, library name, source ILS, stage progres
 
 ---
 
-## Stage 1 — Data Ingest
+## Step 1 — Data Ingest
 
 **Purpose:** Upload source MARC and item data files, then let the system analyze them.
 
@@ -123,7 +123,7 @@ If items/holdings are in a separate CSV file (not embedded in MARC 952 fields):
 
 ---
 
-## Stage 2 — ILS Detection & Migration Config
+## Step 2 — ILS Detection & Migration Config
 
 **Purpose:** Confirm the source ILS and configure how items are structured.
 
@@ -154,7 +154,7 @@ For simple migrations where the data is already clean and properly mapped (e.g.,
 
 ---
 
-## Stage 3 — MARC Data Quality
+## Step 3 — MARC Data Quality
 
 **Purpose:** Scan records for quality issues, understand what the system finds, and fix problems before loading into the target ILS.
 
@@ -253,7 +253,7 @@ After scanning individual records, the system performs two duplicate checks:
 
 ---
 
-## Stage 4 — Bib Versions
+## Step 4 — Bib Versions
 
 **Purpose:** Create immutable snapshots of your bibliographic data at different stages of the migration pipeline.
 
@@ -280,7 +280,7 @@ Click **Create Version** to capture:
 
 ---
 
-## Stage 5 — Field Mapping
+## Step 5 — Field Mapping
 
 **Purpose:** Define how source MARC fields map to Koha's MARC structure.
 
@@ -352,7 +352,7 @@ Templates are especially valuable when migrating multiple libraries from the sam
 
 ---
 
-## Stage 6 — Transform
+## Step 6 — Transform
 
 **Purpose:** Apply your field mappings to the MARC data and build the output file.
 
@@ -386,88 +386,7 @@ The first record is fully logged to the audit trail showing which source tags ex
 
 ---
 
-## Stage 7 — Load (Push to Koha)
-
-**Purpose:** Push your prepared MARC data into the target Koha instance.
-
-### Setup Tab
-
-Before pushing records, verify your environment:
-
-| Action | What It Does |
-|--------|-------------|
-| **Scan MARC** | Analyzes the output file for controlled values (item types, locations, collection codes) — helps identify values that need to exist in Koha before import |
-| **Fetch Reference Data** | Pulls current reference data from Koha via the REST API: libraries, patron categories, item types, authorized values |
-| **Verify Counts** | Checks how many bibs, items, and patrons currently exist in Koha |
-| **DB Stats** | Shows MariaDB buffer pool usage and Elasticsearch index status |
-
-### Migration Mode
-
-For large migrations (10,000+ records), enabling **Migration Mode** dramatically improves import speed by:
-
-**Stopping non-essential daemons:**
-
-| Daemon | Purpose | Why Stop It |
-|--------|---------|-------------|
-| koha-es-indexer | Elasticsearch incremental indexer | Biggest resource hog — tries to index every record as it's inserted |
-| koha-indexer | Zebra incremental indexer | Legacy search indexer |
-| koha-zebra | Zebra search server | Not needed during bulk load |
-| koha-sip | SIP2 circulation protocol | No patrons checking out during migration |
-| koha-z3950-responder | Z39.50 search responder | No external catalog searches during migration |
-
-**Daemons kept running:**
-- koha-worker (needed for FastMARCImport and background jobs)
-- koha-plack (needed for REST API access)
-
-**Database tuning applied:**
-- `innodb_flush_log_at_trx_commit = 2` (async flush — 10-50x faster writes, safe for bulk load since we'll re-import if it crashes)
-- `innodb_buffer_pool_size` increased (more RAM for InnoDB caching)
-
-**Important:** Always disable Migration Mode after import completes. This restores daemons and safe database settings.
-
-### Push Methods
-
-| Method | Speed | Requirements | Best For |
-|--------|-------|-------------|----------|
-| **REST API** | Slow (1 record/sec) | No plugins needed | Small imports (<1,000 records), testing |
-| **FastMARCImport Plugin** | Fast (parallel workers) | FastMARCImport plugin | Medium imports |
-| **Migration Toolkit Plugin** | Fastest (all-in-one) | MigrationToolkit plugin | Large migrations — includes DB tuning, parallel import, and reindex |
-
-#### REST API Method
-- Stages each record individually via `POST /api/v1/biblios`
-- Commits in batches
-- Stops after 10 consecutive failures if no records have succeeded (prevents spinning on auth errors or bad data)
-
-#### FastMARCImport Plugin Method
-- Copies the MARC file into the Koha Docker container
-- Runs `bulkmarcimport.pl` with configured options (match field, overlay action, worker count)
-- Parses stdout for success/failure counts
-- 600-second timeout per file
-
-#### Migration Toolkit Plugin Method
-- Single REST API call: `POST /api/v1/contrib/migrationtoolkit/import`
-- Handles DB tuning, parallel import, and reindexing in one workflow
-- Configurable worker count (1-16) and batch size
-
-### Reindex Tab
-
-After loading records, Koha's Elasticsearch index must be rebuilt for records to appear in OPAC search:
-
-- **Full reindex** — Rebuilds the entire search index via Koha's background job system
-- **TurboIndex Plugin** — Parallel reindex using multiple workers (much faster for large catalogs)
-
-### Manifests Tab
-
-Every push operation creates a manifest recording:
-- Method used (REST, FastMARC, Toolkit)
-- Start/end time
-- Records total, succeeded, and failed
-- Error messages (if any)
-- Celery task ID for debugging
-
----
-
-## Stage 8 — Item & Bib Reconciliation
+## Step 7 — Item & Bib Reconciliation
 
 **Purpose:** Map source item field values to Koha's controlled vocabularies. Source ILS systems use different codes than Koha — this stage creates the translation rules.
 
@@ -514,7 +433,7 @@ When you click Apply:
 
 ---
 
-## Stage 9 — Patron Data
+## Step 8 — Patron Data
 
 **Purpose:** Import patron/borrower records into Koha from various source formats.
 
@@ -603,7 +522,7 @@ When you click Apply:
 
 ---
 
-## Stage 10 — Patron Versions
+## Step 9 — Patron Versions
 
 **Purpose:** Snapshot patron data at different stages (same concept as Stage 4 for bibs).
 
@@ -611,7 +530,88 @@ Create version snapshots after each iteration of patron loading. Compare version
 
 ---
 
-## Stage 11 — Holds & Remaining Data
+## Step 10 — Load (Push to Koha)
+
+**Purpose:** Push your prepared MARC and patron data into the target Koha instance. This is the final action step — all data preparation (mapping, reconciliation, patrons) should be complete before pushing.
+
+### Setup Tab
+
+Before pushing records, verify your environment:
+
+| Action | What It Does |
+|--------|-------------|
+| **Scan MARC** | Analyzes the output file for controlled values (item types, locations, collection codes) — helps identify values that need to exist in Koha before import |
+| **Fetch Reference Data** | Pulls current reference data from Koha via the REST API: libraries, patron categories, item types, authorized values |
+| **Verify Counts** | Checks how many bibs, items, and patrons currently exist in Koha |
+| **DB Stats** | Shows MariaDB buffer pool usage and Elasticsearch index status |
+
+### Migration Mode
+
+For large migrations (10,000+ records), enabling **Migration Mode** dramatically improves import speed by:
+
+**Stopping non-essential daemons:**
+
+| Daemon | Purpose | Why Stop It |
+|--------|---------|-------------|
+| koha-es-indexer | Elasticsearch incremental indexer | Biggest resource hog — tries to index every record as it's inserted |
+| koha-indexer | Zebra incremental indexer | Legacy search indexer |
+| koha-zebra | Zebra search server | Not needed during bulk load |
+| koha-sip | SIP2 circulation protocol | No patrons checking out during migration |
+| koha-z3950-responder | Z39.50 search responder | No external catalog searches during migration |
+
+**Daemons kept running:**
+- koha-worker (needed for FastMARCImport and background jobs)
+- koha-plack (needed for REST API access)
+
+**Database tuning applied:**
+- `innodb_flush_log_at_trx_commit = 2` (async flush — 10-50x faster writes, safe for bulk load since we'll re-import if it crashes)
+- `innodb_buffer_pool_size` increased (more RAM for InnoDB caching)
+
+**Important:** Always disable Migration Mode after import completes. This restores daemons and safe database settings.
+
+### Push Methods
+
+| Method | Speed | Requirements | Best For |
+|--------|-------|-------------|----------|
+| **REST API** | Slow (1 record/sec) | No plugins needed | Small imports (<1,000 records), testing |
+| **FastMARCImport Plugin** | Fast (parallel workers) | FastMARCImport plugin | Medium imports |
+| **Migration Toolkit Plugin** | Fastest (all-in-one) | MigrationToolkit plugin | Large migrations — includes DB tuning, parallel import, and reindex |
+
+#### REST API Method
+- Stages each record individually via `POST /api/v1/biblios`
+- Commits in batches
+- Stops after 10 consecutive failures if no records have succeeded (prevents spinning on auth errors or bad data)
+
+#### FastMARCImport Plugin Method
+- Copies the MARC file into the Koha Docker container
+- Runs `bulkmarcimport.pl` with configured options (match field, overlay action, worker count)
+- Parses stdout for success/failure counts
+- 600-second timeout per file
+
+#### Migration Toolkit Plugin Method
+- Single REST API call: `POST /api/v1/contrib/migrationtoolkit/import`
+- Handles DB tuning, parallel import, and reindexing in one workflow
+- Configurable worker count (1-16) and batch size
+
+### Reindex Tab
+
+After loading records, Koha's Elasticsearch index must be rebuilt for records to appear in OPAC search:
+
+- **Full reindex** — Rebuilds the entire search index via Koha's background job system
+- **TurboIndex Plugin** — Parallel reindex using multiple workers (much faster for large catalogs)
+
+### Manifests Tab
+
+Every push operation creates a manifest recording:
+- Method used (REST, FastMARC, Toolkit)
+- Start/end time
+- Records total, succeeded, and failed
+- Error messages (if any)
+- Celery task ID for debugging
+
+---
+
+## Step 11 — Holds & Remaining Data
 
 **Purpose:** Migrate holds/reserves, circulation history, and other remaining data.
 
@@ -624,7 +624,7 @@ Create version snapshots after each iteration of patron loading. Compare version
 
 ---
 
-## Stage 12 — Aspen Discovery
+## Step 12 — Aspen Discovery
 
 **Purpose:** Bulk migrate data from Koha into an Aspen Discovery instance.
 
@@ -660,7 +660,7 @@ Typical performance: ~940,000 records in 25 minutes.
 
 ---
 
-## Stage 13 — Evergreen ILS
+## Step 13 — Evergreen ILS
 
 **Purpose:** Bulk migrate MARC records into an Evergreen ILS instance via direct PostgreSQL access.
 
