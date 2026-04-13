@@ -1043,13 +1043,13 @@
           <span class="nav-icon">⑥</span> Transform
           <span class="stage-badge" id="badge-s6">—</span>
         </div>
-        <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
-          <span class="nav-icon">⑦</span> Load
-          <span class="stage-badge" id="badge-s7">—</span>
-        </div>
         <div class="nav-item" data-view="stage8" onclick="navigate('stage8')">
-          <span class="nav-icon">⑧</span> Reconciliation
+          <span class="nav-icon">⑦</span> Reconciliation
           <span class="stage-badge" id="badge-s8">—</span>
+        </div>
+        <div class="nav-item" data-view="stage7" onclick="navigate('stage7')">
+          <span class="nav-icon">⑧</span> Load
+          <span class="stage-badge" id="badge-s7">—</span>
         </div>
         <div class="nav-item" data-view="stage9" onclick="navigate('stage9')">
           <span class="nav-icon">⑨</span> Patrons
@@ -1311,30 +1311,31 @@ async function checkHealth() {
 
 // ── Pipeline helpers ─────────────────────────────────────────────────
 function pipelineBar(project) {
+  // Display order: Reconcile (stage8) before Load (stage7)
   const stages = [
-    { n: 1, label: 'Ingest' },
-    { n: 2, label: 'Config' },
-    { n: 3, label: 'Quality' },
-    { n: 4, label: 'Versions' },
-    { n: 5, label: 'Mapping' },
-    { n: 6, label: 'Transform' },
-    { n: 7, label: 'Load' },
-    { n: 8, label: 'Reconcile' },
-    { n: 9, label: 'Patrons' },
-    { n: 10, label: 'Pat. Ver.' },
-    { n: 11, label: 'Holds' },
+    { n: 1, view: 'stage1',  label: 'Ingest' },
+    { n: 2, view: 'stage2',  label: 'Config' },
+    { n: 3, view: 'stage3',  label: 'Quality' },
+    { n: 4, view: 'stage4',  label: 'Versions' },
+    { n: 5, view: 'stage5',  label: 'Mapping' },
+    { n: 6, view: 'stage6',  label: 'Transform' },
+    { n: 8, view: 'stage8',  label: 'Reconcile' },
+    { n: 7, view: 'stage7',  label: 'Load' },
+    { n: 9, view: 'stage9',  label: 'Patrons' },
+    { n: 10, view: 'stage10', label: 'Pat. Ver.' },
+    { n: 11, view: 'stage11', label: 'Holds' },
   ];
   return `<div class="pipeline-bar">
     ${stages.map((s, i) => {
       const done = project[`stage_${s.n}_complete`];
-      const active = project.current_stage === s.n && !done;
+      const active = state.currentView === s.view;
       return `
         ${i > 0 ? `<div class="pipeline-connector${done ? ' complete' : ''}"></div>` : ''}
-        <div class="pipeline-stage">
+        <div class="pipeline-stage" style="cursor:pointer" onclick="navigate('${s.view}')" title="Go to ${s.label}">
           <div class="pipeline-stage-dot ${done ? 'complete' : active ? 'active' : ''}">
-            ${done ? '✓' : s.n}
+            ${done ? '✓' : i + 1}
           </div>
-          <div class="pipeline-stage-label">${s.label}</div>
+          <div class="pipeline-stage-label" style="${active ? 'color:var(--cerulean);font-weight:600' : ''}">${s.label}</div>
         </div>`;
     }).join('')}
   </div>`;
