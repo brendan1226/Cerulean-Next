@@ -7783,6 +7783,14 @@ function s7RenderSetupGrid() {
           + '</tr>';
       }
       html += '</tbody></table>';
+
+      // Download + Upload buttons
+      html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
+      html += '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7DownloadCSV(\'' + esc(cat.key) + '\',\'' + esc(cat.label) + '\')">↓ CSV</button>';
+      html += '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7DownloadSQL(\'' + esc(cat.key) + '\',\'' + esc(cat.label) + '\')">↓ SQL</button>';
+      html += '<label class="btn btn-ghost btn-sm" style="font-size:10px;cursor:pointer">↑ Upload CSV<input type="file" accept=".csv,.tsv,.txt" style="display:none" onchange="s7UploadCSV(\'' + esc(cat.key) + '\', this.files[0])"></label>';
+      html += '<span class="text-dim" style="font-size:10px;margin-left:auto">Download to edit descriptions, upload to apply changes</span>';
+      html += '</div>';
     }
 
     // Action buttons
@@ -7955,6 +7963,129 @@ async function s7PushMissingItemTypes() {
   } catch (e) {
     statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Failed: ' + e.message + '</span>';
   }
+}
+
+// ── Reference data download/upload helpers ───────────────────────────
+
+function _s7GetCategoryData(catKey) {
+  const needed = _s7NeededRefs ? (_s7NeededRefs[catKey] || []) : [];
+  // Read descriptions from the input fields
+  return needed.map(n => {
+    const input = document.querySelector(`.s7-desc-input[data-category="${catKey}"][data-code="${n.value}"]`);
+    return {
+      code: n.value,
+      description: input ? input.value.trim() : n.value,
+      record_count: n.record_count,
+    };
+  });
+}
+
+function s7DownloadCSV(catKey, catLabel) {
+  const rows = _s7GetCategoryData(catKey);
+  if (!rows.length) { toast('No data to download', 'warn'); return; }
+  let csv = 'code,description,record_count\n';
+  rows.forEach(r => {
+    csv += '"' + r.code.replace(/"/g, '""') + '","' + r.description.replace(/"/g, '""') + '",' + r.record_count + '\n';
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = catKey + '_reference_data.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function s7DownloadSQL(catKey, catLabel) {
+  const rows = _s7GetCategoryData(catKey);
+  if (!rows.length) { toast('No data to download', 'warn'); return; }
+  const sqlEsc = (s) => s.replace(/'/g, "''");
+  let sql = '-- Cerulean Next reference data export\n';
+  sql += '-- Category: ' + catLabel + '\n';
+  sql += '-- Generated: ' + new Date().toISOString() + '\n\n';
+
+  if (catKey === 'libraries') {
+    sql += '-- INSERT INTO branches (branchcode, branchname)\n';
+    rows.forEach(r => {
+      sql += "INSERT IGNORE INTO branches (branchcode, branchname) VALUES ('" + sqlEsc(r.code) + "', '" + sqlEsc(r.description) + "');\n";
+    });
+  } else if (catKey === 'patron_categories') {
+    sql += '-- INSERT INTO categories (categorycode, description, enrolmentperiod)\n';
+    rows.forEach(r => {
+      sql += "INSERT IGNORE INTO categories (categorycode, description, enrolmentperiod) VALUES ('" + sqlEsc(r.code) + "', '" + sqlEsc(r.description) + "', 99);\n";
+    });
+  } else if (catKey === 'item_types') {
+    sql += '-- INSERT INTO itemtypes (itemtype, description)\n';
+    rows.forEach(r => {
+      sql += "INSERT IGNORE INTO itemtypes (itemtype, description) VALUES ('" + sqlEsc(r.code) + "', '" + sqlEsc(r.description) + "');\n";
+    });
+  } else {
+    // Authorised values (LOC, CCODE, etc.)
+    const avCat = catKey === 'locations' ? 'LOC' : catKey === 'ccodes' ? 'CCODE' : catKey.toUpperCase();
+    sql += "-- INSERT INTO authorised_values (category, authorised_value, lib)\n";
+    rows.forEach(r => {
+      sql += "INSERT IGNORE INTO authorised_values (category, authorised_value, lib) VALUES ('" + sqlEsc(avCat) + "', '" + sqlEsc(r.code) + "', '" + sqlEsc(r.description) + "');\n";
+    });
+  }
+
+  const blob = new Blob([sql], { type: 'text/sql' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = catKey + '_reference_data.sql';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function s7UploadCSV(catKey, file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split('\n').filter(l => l.trim());
+    if (lines.length < 2) { toast('CSV must have a header row and at least one data row', 'warn'); return; }
+
+    // Parse header
+    const header = lines[0].toLowerCase().replace(/['"]/g, '').split(/[,\t]/);
+    const codeIdx = header.findIndex(h => h.trim() === 'code' || h.trim() === 'branchcode' || h.trim() === 'itemtype' || h.trim() === 'categorycode' || h.trim() === 'authorised_value');
+    const descIdx = header.findIndex(h => h.trim() === 'description' || h.trim() === 'branchname' || h.trim() === 'name' || h.trim() === 'lib');
+
+    if (codeIdx < 0) { toast('CSV must have a "code" column', 'warn'); return; }
+
+    let updated = 0;
+    for (let i = 1; i < lines.length; i++) {
+      // Simple CSV parse (handles quoted fields)
+      const row = lines[i].match(/("([^"]|"")*"|[^,\t]*)/g) || [];
+      const code = (row[codeIdx] || '').replace(/^"|"$/g, '').replace(/""/g, '"').trim();
+      const desc = descIdx >= 0 ? (row[descIdx] || '').replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
+
+      if (!code) continue;
+
+      // Update the description input if it exists
+      const input = document.querySelector('.s7-desc-input[data-category="' + catKey + '"][data-code="' + code + '"]');
+      if (input && desc) {
+        input.value = desc;
+        updated++;
+      } else if (!input && desc) {
+        // New code not in the scan — add to _s7NeededRefs
+        if (_s7NeededRefs && _s7NeededRefs[catKey]) {
+          _s7NeededRefs[catKey].push({ value: code, record_count: 0 });
+        }
+      }
+    }
+
+    if (updated > 0) {
+      toast(updated + ' descriptions updated from CSV', 'success');
+    } else {
+      toast('No matching codes found in CSV', 'warn');
+    }
+
+    // Re-render if new codes were added
+    if (_s7NeededRefs?.[catKey]?.some(n => n.record_count === 0)) {
+      s7RenderSetupGrid();
+    }
+  };
+  reader.readAsText(file);
 }
 
 async function renderS7Bibs() {
