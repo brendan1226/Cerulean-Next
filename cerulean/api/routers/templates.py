@@ -4,15 +4,21 @@ cerulean/api/routers/templates.py
 GET    /templates                          — list templates (filter by scope/ils)
 POST   /templates                          — save current maps as template
 GET    /templates/{tid}                    — template detail
+GET    /templates/{tid}/csv                — download template as CSV
 PATCH  /templates/{tid}                    — edit name/version/scope/description
 DELETE /templates/{tid}                    — delete template
 POST   /templates/{tid}/promote            — promote project→global
+POST   /templates/import-csv              — create template from uploaded CSV
 POST   /projects/{id}/maps/load-template   — load template into project maps
 """
 
+import csv
+import io
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,6 +187,126 @@ async def load_template(
     result = task.get(timeout=30)  # wait up to 30s — template loads are fast
 
     return TemplateLoadResult(**result)
+
+
+# ── CSV Export ────────────────────────────────────────────────────────
+
+_CSV_HEADERS = [
+    "source_tag", "source_sub", "target_tag", "target_sub",
+    "transform_type", "transform_fn", "preset_key", "delete_source", "notes",
+]
+
+
+@router.get("/templates/{template_id}/csv")
+async def export_template_csv(template_id: str, db: AsyncSession = Depends(get_db)):
+    """Download a template as CSV for editing in Google Sheets / Excel."""
+    template = await _require_template(template_id, db)
+    maps = template.maps or []
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=_CSV_HEADERS, extrasaction="ignore")
+    writer.writeheader()
+    for m in maps:
+        row = {k: (m.get(k, "") or "") for k in _CSV_HEADERS}
+        if row.get("delete_source") in (True, "True", "true"):
+            row["delete_source"] = "true"
+        elif row.get("delete_source") in (False, "False", "false", ""):
+            row["delete_source"] = "false"
+        writer.writerow(row)
+
+    filename = f"{template.name.replace(' ', '_')}_v{template.version}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── CSV Import ────────────────────────────────────────────────────────
+
+@router.post("/templates/import-csv", response_model=MapTemplateOut, status_code=201)
+async def import_template_csv(
+    file: UploadFile,
+    name: str = Query(..., description="Template name"),
+    request: Request = None,
+    version: str = Query("1.0"),
+    scope: str = Query("project"),
+    description: str = Query(None),
+    source_ils: str = Query(None),
+    project_id: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a template from an uploaded CSV file (Google Sheets export, Excel CSV, etc.)."""
+    content = await file.read()
+    # Handle BOM from Google Sheets/Excel
+    text = content.decode("utf-8-sig")
+
+    reader = csv.DictReader(io.StringIO(text))
+    maps = []
+    seen = set()
+
+    for row in reader:
+        # Normalize keys (strip whitespace, lowercase)
+        row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+
+        source_tag = row.get("source_tag", "").strip()
+        target_tag = row.get("target_tag", "").strip()
+        if not source_tag or not target_tag:
+            continue
+
+        source_sub = row.get("source_sub") or None
+        target_sub = row.get("target_sub") or None
+
+        # Deduplicate
+        key = (source_tag, source_sub or "", target_tag, target_sub or "")
+        if key in seen:
+            continue
+        seen.add(key)
+
+        entry = {
+            "source_tag": source_tag,
+            "source_sub": source_sub if source_sub else None,
+            "target_tag": target_tag,
+            "target_sub": target_sub if target_sub else None,
+            "transform_type": row.get("transform_type", "copy") or "copy",
+            "transform_fn": row.get("transform_fn") or None,
+            "preset_key": row.get("preset_key") or None,
+            "delete_source": row.get("delete_source", "").lower() in ("true", "1", "yes"),
+            "notes": row.get("notes") or None,
+        }
+        maps.append(entry)
+
+    if not maps:
+        raise HTTPException(400, detail="No valid mapping rows found in CSV. Ensure columns: source_tag, target_tag")
+
+    # Get uploader info
+    user_email = None
+    user_id = getattr(request.state, "user_id", None) if request else None
+    if user_id:
+        from cerulean.models import User
+        user = await db.get(User, user_id)
+        if user:
+            user_email = user.email
+
+    template = MapTemplate(
+        id=str(uuid.uuid4()),
+        name=name,
+        version=version,
+        description=description,
+        scope=scope,
+        project_id=project_id if scope == "project" else None,
+        source_ils=source_ils,
+        ai_generated=False,
+        reviewed=True,
+        use_count=0,
+        maps=maps,
+        created_by=user_email,
+    )
+    db.add(template)
+    await db.flush()
+    await db.refresh(template)
+
+    return template
 
 
 async def _require_template(template_id: str, db: AsyncSession) -> MapTemplate:

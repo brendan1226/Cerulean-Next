@@ -2302,6 +2302,7 @@ async function _renderFieldMappingUI(el) {
         <div id="ai-suggest-progress" style="display:none;min-width:200px"></div>
         <button class="btn btn-ghost btn-sm" onclick="openSaveTemplateModal()">⊞ Save Template</button>
         <button class="btn btn-ghost btn-sm" onclick="openLoadTemplateModal()">⇄ Load Template</button>
+        <button class="btn btn-ghost btn-sm" onclick="openImportCSVTemplateModal()">↑ Import CSV</button>
       </div>
     </div>
     <div class="s2-panels">
@@ -3677,7 +3678,104 @@ async function promoteTemplate(templateId) {
   try {
     await api('POST', `/templates/${templateId}/promote`);
     toast('Template promoted to global', 'success');
+    if (state.currentView === 'templates') renderTemplates(document.getElementById('view'));
   } catch (e) { console.error(e); }
+}
+
+async function deleteTemplate(templateId) {
+  if (!confirm('Delete this template?')) return;
+  try {
+    await fetch(`${API_BASE}/templates/${templateId}`, {
+      method: 'DELETE',
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+    });
+    toast('Template deleted', 'info');
+    if (state.currentView === 'templates') renderTemplates(document.getElementById('view'));
+  } catch (e) { toast('Delete failed: ' + (e.message || e), 'error'); }
+}
+
+function openImportCSVTemplateModal() {
+  openModal(`
+    <div class="modal-title">Import Template from CSV</div>
+    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
+      Upload a CSV file with field mappings. The CSV should have columns:<br>
+      <code style="font-size:11px">source_tag, source_sub, target_tag, target_sub, transform_type, transform_fn, preset_key, delete_source, notes</code><br>
+      Only <code>source_tag</code> and <code>target_tag</code> are required. You can export a template as CSV to see the format.
+    </p>
+    <div class="form-group">
+      <label class="form-label">CSV File *</label>
+      <input type="file" id="csv-tmpl-file" accept=".csv,.tsv,.txt" class="form-input">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Template Name *</label>
+        <input class="form-input" id="csv-tmpl-name" placeholder="e.g. Symphony → Koha Standard">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Version</label>
+        <input class="form-input" id="csv-tmpl-version" value="1.0">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="form-label">Scope</label>
+        <select class="form-select" id="csv-tmpl-scope">
+          <option value="global">Global (all engineers)</option>
+          <option value="project">Project only</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Source ILS</label>
+        <input class="form-input" id="csv-tmpl-ils" placeholder="e.g. Symphony, Polaris">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea class="form-textarea" id="csv-tmpl-desc" placeholder="Optional notes about this template"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitImportCSVTemplate()">Import</button>
+    </div>`);
+}
+
+async function submitImportCSVTemplate() {
+  const fileInput = document.getElementById('csv-tmpl-file');
+  const name = document.getElementById('csv-tmpl-name')?.value?.trim();
+  if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
+  if (!name) { toast('Template name is required', 'warn'); return; }
+
+  const version = document.getElementById('csv-tmpl-version')?.value?.trim() || '1.0';
+  const scope = document.getElementById('csv-tmpl-scope')?.value || 'global';
+  const source_ils = document.getElementById('csv-tmpl-ils')?.value?.trim() || '';
+  const description = document.getElementById('csv-tmpl-desc')?.value?.trim() || '';
+  const project_id = state.currentProject?.id || '';
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  const params = new URLSearchParams({ name, version, scope });
+  if (description) params.append('description', description);
+  if (source_ils) params.append('source_ils', source_ils);
+  if (project_id && scope === 'project') params.append('project_id', project_id);
+
+  try {
+    const res = await fetch(`${API_BASE}/templates/import-csv?${params}`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const tmpl = await res.json();
+    closeModal();
+    toast(`Template "${tmpl.name}" imported with ${(tmpl.maps||[]).length} maps`, 'success');
+    if (state.currentView === 'templates') renderTemplates(document.getElementById('view'));
+  } catch (e) {
+    toast('Import failed: ' + e.message, 'error');
+  }
 }
 
 // ── Stage stubs ───────────────────────────────────────────────────────
@@ -3923,8 +4021,9 @@ async function renderTemplates(el) {
     <div class="page-header">
       <div>
         <div class="page-title">Map Templates</div>
-        <div class="page-subtitle">Shared mapping sets — global and project-scoped</div>
+        <div class="page-subtitle">Shared mapping sets — global and project-scoped. Export to Google Sheets, edit, and re-import.</div>
       </div>
+      <button class="btn btn-primary" onclick="openImportCSVTemplateModal()">↑ Import CSV</button>
     </div>
     <div id="templates-page-wrap"><div class="spinner"></div></div>`;
 
@@ -3955,7 +4054,10 @@ function templateCard(t) {
         <span class="text-dim mono" style="margin-left:8px">v${esc(t.version)}</span>
       </div>
       <div style="display:flex;gap:6px">
-        ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
+        <a class="btn btn-ghost btn-sm" href="${API_BASE}/templates/${esc(t.id)}/csv" style="text-decoration:none;font-size:10px">↓ CSV</a>
+        ${state.currentProject ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="loadThisTemplate('${esc(t.id)}')">Load</button>` : ''}
+        ${t.scope==='project' ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" data-tmpl-id="${esc(t.id)}" onclick="promoteTemplate(this.dataset.tmplId)">↑ Global</button>` : ''}
+        <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteTemplate('${esc(t.id)}')">Delete</button>
       </div>
     </div>
     <div style="display:flex;gap:12px;font-size:12px;color:var(--text-secondary)">

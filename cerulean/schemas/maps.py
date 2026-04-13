@@ -105,6 +105,8 @@ class TemplateMapEntry(BaseModel):
     target_sub: str | None = None
     transform_type: str = "copy"
     transform_fn: str | None = None
+    preset_key: str | None = None
+    delete_source: bool = False
     notes: str | None = None
 
 
