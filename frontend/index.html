@@ -5798,8 +5798,10 @@ async function renderRecScan() {
       <div class="card-header"><span class="card-title">Scan Item Values</span></div>
       <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
         Scan all 952 fields to extract unique values per vocab category (itype, loc, ccode, branches, etc.).
+        Results are saved — you only need to re-scan if the source file changes.
       </p>
       <button class="btn btn-primary" onclick="recStartScan()">▶ Start Scan</button>
+      <button class="btn btn-ghost" onclick="recLoadValues()" style="margin-left:8px">↻ Reload Results</button>
       <div id="rec-scan-status" style="margin-top:12px"></div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -5817,8 +5819,11 @@ async function renderRecScan() {
           <option value="holdingbranch">holdingbranch ($b)</option>
         </select>
       </div>
-      <div id="rec-values-list"><span class="text-dim" style="font-size:12px">Run a scan first.</span></div>
+      <div id="rec-values-list"><div class="spinner"></div></div>
     </div>`;
+
+  // Auto-load existing scan results
+  recLoadValues();
 }
 
 async function recStartScan() {
@@ -5844,15 +5849,18 @@ async function recLoadValues() {
   try {
     const values = await window.api('GET', `/projects/${p.id}/reconcile/values?vocab=${vocab}`);
     if (!values || !values.length) {
-      el.innerHTML = '<span class="text-dim" style="font-size:12px">No values found for this category. Run a scan first.</span>';
+      el.innerHTML = '<span class="text-dim" style="font-size:12px">No values found for <strong>' + esc(vocab) + '</strong>. Either no records have this field, or you need to run a scan first.</span>';
       return;
     }
+    const totalRecords = values.reduce((sum, v) => sum + v.record_count, 0);
     el.innerHTML = `
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">${values.length} unique values across ${totalRecords.toLocaleString()} records</div>
       <table class="data-table" style="font-size:12px;width:100%">
-        <thead><tr><th>Value</th><th>Records</th></tr></thead>
+        <thead><tr><th>Value</th><th style="text-align:right">Records</th><th style="text-align:right">%</th></tr></thead>
         <tbody>${values.map(v => `<tr>
           <td class="mono">${esc(v.source_value)}</td>
-          <td>${v.record_count.toLocaleString()}</td>
+          <td style="text-align:right">${v.record_count.toLocaleString()}</td>
+          <td style="text-align:right;color:var(--text-dim)">${totalRecords > 0 ? (v.record_count / totalRecords * 100).toFixed(1) : 0}%</td>
         </tr>`).join('')}</tbody>
       </table>`;
   } catch (e) {
