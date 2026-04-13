@@ -215,6 +215,115 @@ This reconnects automatically if the connection drops.
 
 ---
 
+## Linux Instructions
+
+### Step 1: Find Your KTD Port
+
+```bash
+docker ps | grep koha
+```
+
+Look for the port mapping (e.g., `0.0.0.0:8081->8081/tcp`). Note the left-side port.
+
+### Step 2: Start the SSH Tunnel
+
+```bash
+ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
+```
+
+Replace `8081` with your KTD port (both occurrences). **Keep this terminal open.**
+
+### Step 3: Verify the Tunnel (on the server)
+
+In another terminal:
+
+```bash
+ssh root@cerulean-next.gallagher-family-hub.com
+curl -s http://localhost:8081/api/v1/ | head -5
+```
+
+You should see a JSON response from Koha.
+
+### Step 4: Find the Docker Gateway IP
+
+On the server:
+
+```bash
+docker network inspect cerulean_cerulean | grep Gateway
+```
+
+Note the IP (e.g., `172.19.0.1`).
+
+### Step 5: Configure Cerulean
+
+1. Open Cerulean in your browser: `https://cerulean-next.gallagher-family-hub.com`
+2. Open your project → **Settings**
+3. Set **Koha URL** to `http://172.19.0.1:8081` (gateway IP from Step 4)
+4. Set **Auth Type** to Basic Auth
+5. Enter your KTD staff username and password (default: `koha` / `koha`)
+6. Click **Save**
+
+### Step 6: Test the Connection
+
+1. Go to **Stage 7 → Setup**
+2. Click **Run Preflight**
+3. You should see a successful connection with your Koha version
+
+### Making the Tunnel Persistent (Linux)
+
+**Option A: autossh (recommended)**
+
+```bash
+# Install autossh
+sudo apt install autossh    # Debian/Ubuntu
+sudo dnf install autossh    # Fedora/RHEL
+
+# Start a persistent tunnel (runs in background)
+autossh -M 0 -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -f
+```
+
+To stop the tunnel:
+
+```bash
+pkill -f "autossh.*8081"
+```
+
+**Option B: systemd service**
+
+Create `/etc/systemd/system/cerulean-tunnel.service`:
+
+```ini
+[Unit]
+Description=Cerulean SSH Tunnel to KTD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes
+Restart=always
+RestartSec=10
+User=YOUR-USERNAME
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable cerulean-tunnel
+sudo systemctl start cerulean-tunnel
+
+# Check status
+sudo systemctl status cerulean-tunnel
+```
+
+This auto-starts on boot and restarts if the connection drops.
+
+---
+
 ## Troubleshooting
 
 ### "Connection refused" when testing the tunnel

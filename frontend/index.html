@@ -10133,6 +10133,15 @@ const _HELP_SECTIONS = [
 <li>In Cerulean, set Koha URL to <code>http://GATEWAY-IP:8081</code> (e.g., <code>http://172.19.0.1:8081</code>)</li>
 </ol>
 <p>For a persistent tunnel: <code>brew install autossh && autossh -M 0 -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -f</code></p>
+<h4>Linux</h4>
+<ol>
+<li>Find your KTD port: <code>docker ps | grep koha</code></li>
+<li>Start the tunnel: <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code></li>
+<li>Keep the terminal open</li>
+<li>Set Koha URL in Cerulean to <code>http://GATEWAY-IP:8081</code></li>
+</ol>
+<p>For a persistent tunnel: <code>sudo apt install autossh && autossh -M 0 -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -f</code></p>
+<p>Or create a systemd service for auto-start on boot (see the full guide for details).</p>
 <h4>Windows</h4>
 <ol>
 <li>Find your KTD port: <code>docker ps | findstr koha</code></li>
