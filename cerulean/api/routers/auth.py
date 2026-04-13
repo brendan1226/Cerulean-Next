@@ -35,6 +35,9 @@ async def google_login(request: Request):
     _ensure_oauth_registered()
     settings = get_settings()
     callback_url = str(request.url_for("google_callback"))
+    # Behind a reverse proxy, the URL may be http:// — force https:// in production
+    if callback_url.startswith("http://") and request.headers.get("x-forwarded-proto") == "https":
+        callback_url = callback_url.replace("http://", "https://", 1)
     return await oauth.google.authorize_redirect(
         request,
         callback_url,
