@@ -109,7 +109,8 @@ async def create_suggestion(
     db.add(suggestion)
     await db.flush()
     await db.refresh(suggestion)
-    return suggestion
+    # Re-fetch with comments loaded for response serialization
+    return await _require_suggestion(suggestion.id, db)
 
 
 # ── Edit / Update Status ─────────────────────────────────────────────────
@@ -139,8 +140,7 @@ async def update_suggestion(
         suggestion.type = body.type
 
     await db.flush()
-    await db.refresh(suggestion)
-    return suggestion
+    return await _require_suggestion(suggestion_id, db)
 
 
 # ── Delete ───────────────────────────────────────────────────────────────
@@ -254,7 +254,12 @@ async def delete_comment(
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 async def _require_suggestion(suggestion_id: str, db: AsyncSession) -> Suggestion:
-    s = await db.get(Suggestion, suggestion_id)
+    result = await db.execute(
+        select(Suggestion)
+        .options(selectinload(Suggestion.comments))
+        .where(Suggestion.id == suggestion_id)
+    )
+    s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Suggestion not found."})
     return s
