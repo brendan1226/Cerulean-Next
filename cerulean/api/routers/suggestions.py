@@ -9,7 +9,7 @@ PATCH /suggestions/{id}       — update status (admin)
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,10 +65,20 @@ async def create_suggestion(body: SuggestionCreate, db: AsyncSession = Depends(g
 @router.post("/{suggestion_id}/vote", response_model=VoteResponse)
 async def vote_suggestion(
     suggestion_id: str,
-    user_email: str = Query(..., description="Voter identity (replace with auth token later)"),
+    request: Request,
+    user_email: str | None = Query(None, description="Voter identity (optional, uses auth if available)"),
     db: AsyncSession = Depends(get_db),
 ):
     """Toggle upvote. Returns voted=True if vote was added, False if removed."""
+    # Use authenticated user email if available, fall back to query param
+    if not user_email:
+        user_id = getattr(request.state, "user_id", None)
+        if user_id:
+            from cerulean.models import User
+            user = await db.get(User, user_id)
+            user_email = user.email if user else "anonymous"
+        else:
+            user_email = "anonymous"
     suggestion = await _require_suggestion(suggestion_id, db)
 
     existing = (await db.execute(
