@@ -172,6 +172,15 @@ async def serve_user_manual():
     return PlainTextResponse("Manual not found", status_code=404)
 
 
+@app.get("/help/connect-local-koha")
+async def serve_connect_local_koha():
+    guide = Path(__file__).resolve().parent.parent / "docs" / "CONNECT-LOCAL-KOHA.md"
+    if not guide.is_file():
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("Guide not found", status_code=404)
+    return FileResponse(path=str(guide), filename="Connect-Local-Koha.md", media_type="text/markdown")
+
+
 @app.get("/")
 async def serve_frontend():
     return FileResponse(_FRONTEND_DIR / "index.html")
