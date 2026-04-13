@@ -1,7 +1,7 @@
 """
 cerulean/schemas/events.py
 ─────────────────────────────────────────────────────────────────────────────
-Pydantic schemas for AuditEvent, Suggestion, and related types.
+Pydantic schemas for AuditEvent, Suggestion, Comment, and related types.
 """
 
 from datetime import datetime
@@ -39,8 +39,28 @@ class SuggestionCreate(BaseModel):
     project_id: str | None = None
 
 
+class SuggestionEdit(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    type: str | None = None
+
+
 class SuggestionUpdate(BaseModel):
-    status: str         # admin only: "open"|"confirmed"|"in_progress"|"shipped"|"closed"
+    status: str | None = None
+    title: str | None = None
+    body: str | None = None
+    type: str | None = None
+
+
+class CommentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    suggestion_id: str
+    author_email: str
+    author_name: str
+    body: str
+    created_at: datetime
 
 
 class SuggestionOut(BaseModel):
@@ -56,6 +76,11 @@ class SuggestionOut(BaseModel):
     vote_count: int
     created_at: datetime
     updated_at: datetime
+    comments: list[CommentOut] = []
+
+
+class CommentCreate(BaseModel):
+    body: str
 
 
 class VoteResponse(BaseModel):

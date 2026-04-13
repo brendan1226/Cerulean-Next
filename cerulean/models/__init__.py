@@ -827,6 +827,7 @@ class Suggestion(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
     votes: Mapped[list["SuggestionVote"]] = relationship(back_populates="suggestion", cascade="all, delete-orphan")
+    comments: Mapped[list["SuggestionComment"]] = relationship(back_populates="suggestion", cascade="all, delete-orphan", order_by="SuggestionComment.created_at")
 
 
 class SuggestionVote(Base):
@@ -840,6 +841,21 @@ class SuggestionVote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     suggestion: Mapped["Suggestion"] = relationship(back_populates="votes")
+
+
+class SuggestionComment(Base):
+    """Threaded comment on a suggestion."""
+
+    __tablename__ = "suggestion_comments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    suggestion_id: Mapped[str] = mapped_column(String(36), ForeignKey("suggestions.id"), nullable=False)
+    author_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    author_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    suggestion: Mapped["Suggestion"] = relationship(back_populates="comments")
 
 
 # ══════════════════════════════════════════════════════════════════════════
