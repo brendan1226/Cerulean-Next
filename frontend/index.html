@@ -3836,8 +3836,8 @@ async function renderProjectLog(el) {
         <div class="page-subtitle">${p.library_name}</div>
       </div>
       <div style="display:flex;gap:8px">
-        <a class="btn btn-ghost btn-sm" href="${API_BASE}/projects/${p.id}/log/export?format=csv" target="_blank">⬇ CSV</a>
-        <a class="btn btn-ghost btn-sm" href="${API_BASE}/projects/${p.id}/log/export?format=txt" target="_blank">⬇ TXT</a>
+        <button class="btn btn-ghost btn-sm" onclick="authDownload('/projects/${p.id}/log/export?format=csv','project_log.csv')">⬇ CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="authDownload('/projects/${p.id}/log/export?format=txt','project_log.txt')">⬇ TXT</button>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -4091,22 +4091,30 @@ async function seedSampleTemplate() {
   } catch (e) { toast('Failed: ' + e.message, 'error'); }
 }
 
-async function downloadTemplateCSV(templateId, templateName) {
+// ── Authenticated file download helper ───────────────────────────────
+// All download links to /api/v1/* must use this instead of <a href>
+// because direct links don't include the JWT Authorization header.
+async function authDownload(path, filename) {
   try {
-    const res = await fetch(`${API_BASE}/templates/${templateId}/csv`, {
+    const url = path.startsWith('http') ? path : (path.startsWith('/api/') ? window.location.origin + path : `${API_BASE}${path}`);
+    const res = await fetch(url, {
       headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = (templateName || 'template').replace(/\s+/g, '_') + '.csv';
+    a.href = blobUrl;
+    a.download = filename || 'download';
     a.click();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(blobUrl);
   } catch (e) {
     toast('Download failed: ' + e.message, 'error');
   }
+}
+
+function downloadTemplateCSV(templateId, templateName) {
+  authDownload(`/templates/${templateId}/csv`, (templateName || 'template').replace(/\s+/g, '_') + '.csv');
 }
 
 async function previewTemplate(templateId) {
@@ -6522,7 +6530,7 @@ async function _recShowCategoryFile(filename, category) {
         <span style="font-weight:500;font-size:13px">${esc(category)} — ${r.rows.length} values</span>
         <div style="display:flex;gap:8px">
           <span id="rec-desc-status" class="text-dim" style="font-size:11px"></span>
-          <a href="${apiBase}/projects/${p.id}/reconcile/files/${filename}/download"
+          <a href="#" onclick="event.preventDefault();authDownload('/projects/${p.id}/reconcile/files/${filename}/download','${filename}')"
              class="btn btn-ghost btn-sm" download>Download CSV</a>
         </div>
       </div>
@@ -7613,7 +7621,7 @@ async function renderPatronApply() {
         <div class="card" style="margin-top:16px">
           <div class="card-header">
             <span class="card-title">Transformed Patron Preview</span>
-            <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/patrons/output-files/patrons_transformed.csv/download" download="patrons_transformed.csv">Download Full CSV</a>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/patrons/output-files/patrons_transformed.csv/download','patrons_transformed.csv')">Download Full CSV</button>
           </div>
           <div id="patron-transform-preview"><div class="spinner"></div></div>
         </div>`;
@@ -7638,7 +7646,7 @@ async function renderPatronApply() {
               <td class="mono">${(f.row_count || f.value_count || 0).toLocaleString()}</td>
               <td style="text-align:right">
                 <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="previewPatronFile('${esc(f.filename)}')">Preview</button>
-                <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/patrons/output-files/${encodeURIComponent(f.filename)}/download" download="${esc(f.filename)}">Download</a>
+                <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/patrons/output-files/${encodeURIComponent(f.filename)}/download','${esc(f.filename)}')">Download</button>
               </td>
             </tr>`).join('')}</tbody>
           </table>
@@ -8527,7 +8535,7 @@ async function s7LoadFiles() {
             <td>${_fmtBytes(f.size)}</td>
             <td style="text-align:right;white-space:nowrap">
               <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7PreviewFile('${esc(f.filename)}', ${f.record_count || 0})">Preview</button>
-              <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
+              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}','${esc(f.filename)}')">Download</button>
             </td>
           </tr>`).join('')}</tbody></table>`;
     }
@@ -8541,7 +8549,7 @@ async function s7LoadFiles() {
             <td>${_fmtBytes(f.size)}</td>
             <td style="text-align:right;white-space:nowrap">
               <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="s7PreviewCSV('${esc(f.filename)}', '${esc(f.source)}')">Preview</button>
-              <a class="btn btn-ghost btn-sm" style="font-size:10px" href="/api/v1/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}" download="${esc(f.filename)}">Download</a>
+              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/push/files/download?filename=${encodeURIComponent(f.filename)}','${esc(f.filename)}')">Download</button>
             </td>
           </tr>`).join('')}</tbody></table>`;
     }
@@ -10955,7 +10963,7 @@ async function loadPluginList() {
           <td style="padding:6px 8px" class="mono text-dim">${esc(pl.filename)}</td>
           <td style="padding:6px 8px;text-align:right">${pl.file_size_bytes ? (pl.file_size_bytes / 1024).toFixed(0) + ' KB' : '—'}</td>
           <td style="padding:6px 8px;text-align:right;white-space:nowrap">
-            <a href="${API_BASE}/plugins/${pl.id}/download" class="btn btn-ghost btn-sm" style="text-decoration:none">Download</a>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();authDownload('/plugins/${pl.id}/download','${esc(pl.filename)}')">Download</button>
             ${hasKoha ? '<button class="btn btn-primary btn-sm" onclick="installPlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Install to Koha</button>' : ''}
             <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deletePlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Delete</button>
           </td>
