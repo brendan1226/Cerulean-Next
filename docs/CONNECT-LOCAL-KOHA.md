@@ -22,7 +22,7 @@ The SSH tunnel makes your local KTD port appear as `localhost:8081` on the Cerul
 ## Prerequisites
 
 - Koha Test Docker (KTD) running locally
-- SSH access to the Cerulean server
+- SSH access to the Cerulean server (ask Brendan for the root password)
 - Your KTD Koha staff credentials (for API access)
 
 ---
@@ -48,9 +48,9 @@ Common KTD ports:
 ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
 ```
 
-Replace:
-- `8081` with your KTD port (both occurrences)
-- `cerulean-next.gallagher-family-hub.com` with your Cerulean server IP (e.g., `138.197.87.225`)
+Replace `8081` with your KTD port (both occurrences).
+
+You will be prompted for the root password — **ask Brendan if you don't have it**.
 
 The `-N` flag means "don't open a shell, just forward the port." **Keep this terminal open** — the tunnel stays alive as long as the SSH session runs.
 
@@ -132,9 +132,9 @@ Windows 10/11 includes OpenSSH by default:
 ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
 ```
 
-Replace:
-- `8081` with your KTD port (both occurrences)
-- `cerulean-next.gallagher-family-hub.com` with your Cerulean server IP
+Replace `8081` with your KTD port (both occurrences).
+
+You will be prompted for the root password — **ask Brendan if you don't have it**.
 
 **Keep this PowerShell window open.**
 
@@ -231,7 +231,7 @@ Look for the port mapping (e.g., `0.0.0.0:8081->8081/tcp`). Note the left-side p
 ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
 ```
 
-Replace `8081` with your KTD port (both occurrences). **Keep this terminal open.**
+Replace `8081` with your KTD port (both occurrences). You will be prompted for the root password — **ask Brendan if you don't have it**. **Keep this terminal open.**
 
 ### Step 3: Verify the Tunnel (on the server)
 
