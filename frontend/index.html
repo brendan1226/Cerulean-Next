@@ -5730,11 +5730,22 @@ window.renderStage8_Reconcile = async function(el) {
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Stage 8 — Item + Bib Reconciliation</div>
+        <div class="page-title">Step 7 — Item + Bib Reconciliation</div>
         <div class="page-subtitle">${p.library_name}</div>
       </div>
     </div>
     ${pipelineBar(p)}
+    <div class="alert alert-info" style="margin-bottom:16px">
+      <div>
+        <strong>What this step does:</strong> Scans your MARC 952 fields and translates source item values (itype, location, branch codes, etc.) to match Koha's controlled vocabularies. This rewrites the values <em>in your MARC file</em> before loading.
+        <div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">
+          <strong>When to skip:</strong> If your source data already uses the exact same codes as Koha (e.g., Koha-to-Koha migration), you can skip this step and go straight to <a href="#" onclick="event.preventDefault();navigate('stage7')" style="color:var(--cerulean)">Load</a>. The Load Setup tab will still show you what reference data Koha needs — but it won't change your file's values.
+        </div>
+        <div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">
+          <strong>When to use:</strong> If migrating from Symphony, Polaris, Millennium, or any non-Koha ILS where item codes differ (e.g., "JUV" → "JUVENILE", "MAIN" → "MAINLIB"). Scan first, create mapping rules, then Apply to produce the push-ready file.
+        </div>
+      </div>
+    </div>
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchRecTab('source', this)">Source</button>
       <button class="tab-btn" onclick="switchRecTab('scan', this)">Scan</button>
