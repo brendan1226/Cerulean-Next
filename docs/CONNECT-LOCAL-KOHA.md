@@ -45,12 +45,12 @@ Common KTD ports:
 ### Step 2: Start the SSH Tunnel
 
 ```bash
-ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N
+ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
 ```
 
 Replace:
 - `8081` with your KTD port (both occurrences)
-- `YOUR-SERVER-IP` with your Cerulean server IP (e.g., `138.197.87.225`)
+- `cerulean-next.gallagher-family-hub.com` with your Cerulean server IP (e.g., `138.197.87.225`)
 
 The `-N` flag means "don't open a shell, just forward the port." **Keep this terminal open** — the tunnel stays alive as long as the SSH session runs.
 
@@ -59,7 +59,7 @@ The `-N` flag means "don't open a shell, just forward the port." **Keep this ter
 In another terminal, SSH to the server and test:
 
 ```bash
-ssh root@YOUR-SERVER-IP
+ssh root@cerulean-next.gallagher-family-hub.com
 curl -s http://localhost:8081/api/v1/ | head -5
 ```
 
@@ -99,7 +99,7 @@ Instead of keeping a terminal open, use `autossh` which auto-reconnects if the c
 brew install autossh
 
 # Start a persistent tunnel (runs in background)
-autossh -M 0 -R 8081:localhost:8081 root@YOUR-SERVER-IP -N -f
+autossh -M 0 -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -f
 ```
 
 The `-f` flag backgrounds the process. It will keep reconnecting as long as your Mac is awake.
@@ -129,12 +129,12 @@ Look for the port mapping (e.g., `0.0.0.0:8081->8081/tcp`). Note the left-side p
 Windows 10/11 includes OpenSSH by default:
 
 ```powershell
-ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N
+ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N
 ```
 
 Replace:
 - `8081` with your KTD port (both occurrences)
-- `YOUR-SERVER-IP` with your Cerulean server IP
+- `cerulean-next.gallagher-family-hub.com` with your Cerulean server IP
 
 **Keep this PowerShell window open.**
 
@@ -143,7 +143,7 @@ Replace:
 If you prefer PuTTY:
 
 1. Open PuTTY
-2. Enter `root@YOUR-SERVER-IP` in the Host Name field
+2. Enter `root@cerulean-next.gallagher-family-hub.com` in the Host Name field
 3. Go to **Connection → SSH → Tunnels**
 4. In **Source port**, enter `8081`
 5. In **Destination**, enter `localhost:8081`
@@ -195,7 +195,7 @@ Note the IP (e.g., `172.19.0.1`).
 2. Open an admin Command Prompt:
 
 ```cmd
-nssm install CeruleanTunnel "C:\Windows\System32\OpenSSH\ssh.exe" "-R 8081:localhost:8081 root@YOUR-SERVER-IP -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i C:\Users\YOU\.ssh\id_rsa"
+nssm install CeruleanTunnel "C:\Windows\System32\OpenSSH\ssh.exe" "-R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i C:\Users\YOU\.ssh\id_rsa"
 nssm start CeruleanTunnel
 ```
 
@@ -206,7 +206,7 @@ Create a `.bat` file in your Startup folder (`Win+R` → `shell:startup`):
 ```bat
 @echo off
 :loop
-ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3
+ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3
 timeout /t 5
 goto loop
 ```
@@ -230,12 +230,12 @@ This reconnects automatically if the connection drops.
 
 ### "Permission denied" on SSH
 
-- Ensure your SSH key is set up: `ssh-copy-id root@YOUR-SERVER-IP`
+- Ensure your SSH key is set up: `ssh-copy-id root@cerulean-next.gallagher-family-hub.com`
 - Or use password auth (less secure for persistent tunnels)
 
 ### Tunnel drops frequently
 
-- Add keepalive options: `ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3`
+- Add keepalive options: `ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -o ServerAliveInterval=60 -o ServerAliveCountMax=3`
 - Use `autossh` (Mac) or the reconnecting batch script (Windows)
 
 ### Multiple engineers connecting their own KTD

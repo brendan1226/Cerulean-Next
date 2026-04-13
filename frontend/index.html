@@ -10127,16 +10127,16 @@ const _HELP_SECTIONS = [
 <h4>Mac</h4>
 <ol>
 <li>Find your KTD port: <code>docker ps | grep koha</code> (look for the port mapping, e.g., <code>8081</code>)</li>
-<li>Start the tunnel: <code>ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N</code></li>
+<li>Start the tunnel: <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code></li>
 <li>Keep the terminal open</li>
 <li>Find the Docker gateway IP on the server: <code>docker network inspect cerulean_cerulean | grep Gateway</code></li>
 <li>In Cerulean, set Koha URL to <code>http://GATEWAY-IP:8081</code> (e.g., <code>http://172.19.0.1:8081</code>)</li>
 </ol>
-<p>For a persistent tunnel: <code>brew install autossh && autossh -M 0 -R 8081:localhost:8081 root@YOUR-SERVER-IP -N -f</code></p>
+<p>For a persistent tunnel: <code>brew install autossh && autossh -M 0 -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N -f</code></p>
 <h4>Windows</h4>
 <ol>
 <li>Find your KTD port: <code>docker ps | findstr koha</code></li>
-<li>Start the tunnel in PowerShell: <code>ssh -R 8081:localhost:8081 root@YOUR-SERVER-IP -N</code></li>
+<li>Start the tunnel in PowerShell: <code>ssh -R 8081:localhost:8081 root@cerulean-next.gallagher-family-hub.com -N</code></li>
 <li>Or use PuTTY: Connection &rarr; SSH &rarr; Tunnels &rarr; Source: 8081, Destination: localhost:8081, select <strong>Remote</strong>, click Add</li>
 <li>Set Koha URL in Cerulean to <code>http://GATEWAY-IP:8081</code></li>
 </ol>
