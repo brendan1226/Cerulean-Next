@@ -4139,7 +4139,7 @@ async function previewTemplate(templateId) {
                 <td style="white-space:nowrap">
                   ${transformBadge(m)}
                   ${m.delete_source ? '<span class="badge badge-red" style="font-size:8px">MOVE</span>' : ''}
-                  ${m.transform_type === 'lookup' && m.transform_fn ? '<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:0 3px" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\\'none\\'?\\'\\':\\'none\\'">show</button><span style="display:none;font-size:10px;color:var(--text-dim)" class="mono">' + esc(m.transform_fn.substring(0,80)) + '</span>' : ''}
+                  ${m.transform_type === 'lookup' && m.transform_fn ? '<span class="mono text-dim" style="font-size:10px">' + esc(m.transform_fn.substring(0,60)) + (m.transform_fn.length > 60 ? '...' : '') + '</span>' : ''}
                 </td>
                 <td class="text-dim" style="font-size:10px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(m.notes || '')}</td>
               </tr>`).join('')}
