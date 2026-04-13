@@ -9721,7 +9721,7 @@ const _HELP_SECTIONS = [
   { id: 'getting-started', title: 'Getting Started', content: `
 <p>Cerulean Next is ByWater Solutions' MARC migration platform. It guides you through a 13-stage pipeline to migrate library data from any ILS into Koha, Aspen Discovery, or Evergreen.</p>
 <h4>Signing In</h4>
-<p>Click <strong>Sign in with Google</strong> using your <code>@bywatersolutions.com</code> account. Your session lasts 8 hours.</p>
+<p>Click <strong>Sign in with Google</strong> using your <code>@bywatersolutions.com</code> account. Sessions last 8 hours by default (configurable in System Settings).</p>
 <h4>Creating a Project</h4>
 <ol>
 <li>Click <strong>New Project</strong> in the sidebar</li>
@@ -9730,198 +9730,229 @@ const _HELP_SECTIONS = [
 <li>Set visibility: <strong>Private</strong> (only you) or <strong>Shared</strong> (all team members)</li>
 </ol>
 <h4>Navigation</h4>
-<p>The sidebar shows all stages. The <strong>pipeline bar</strong> at the top of each stage page shows your progress with checkmarks for completed stages.</p>
+<p>The sidebar shows all stages. The <strong>pipeline bar</strong> at the top of each stage page tracks your progress with checkmarks for completed stages.</p>
+<p>For the full manual, click <strong>Download User Manual</strong> at the top of this page.</p>
 ` },
   { id: 'stage1', title: 'Stage 1 — Data Ingest', content: `
-<p>Upload your source MARC and item data files.</p>
-<h4>Supported Formats</h4>
-<p><code>.mrc</code>, <code>.marc</code>, <code>.mrk</code>, <code>.csv</code>, <code>.xml</code> — up to 2 GB per file.</p>
-<h4>How To</h4>
+<p>Upload your source MARC and item data files. Drag-drop or browse for <code>.mrc</code>, <code>.marc</code>, <code>.mrk</code>, <code>.csv</code>, or <code>.xml</code> files (up to 2 GB).</p>
+<h4>What the System Does Automatically</h4>
 <ol>
-<li>Drag-drop files onto the upload area, or click to browse</li>
-<li>Cerulean auto-detects format, counts records, and analyzes tag frequency</li>
-<li>If items are in a separate CSV, upload that too — it will be categorized automatically</li>
+<li><strong>Format detection</strong> — Validates MARC leader and record structure; determines ISO 2709, MRK, CSV, or MARCXML</li>
+<li><strong>Record counting</strong> — Iterates every record for an exact count</li>
+<li><strong>ILS detection</strong> — Samples up to 200 records and checks for ILS-specific fields:
+  <ul>
+  <li><em>SirsiDynix Symphony</em>: "Sirsi" in 035$a or heavy 999 field usage</li>
+  <li><em>Innovative Millennium/Sierra</em>: 907 (bib record number) or 945 (item) fields</li>
+  <li><em>Polaris</em>: 949 fields with $t subfield</li>
+  <li><em>Koha</em>: 952 (items) or 942 (item type) fields</li>
+  </ul>
+  A confidence score (0-100%) is calculated from matching vs. sampled records.
+</li>
+<li><strong>Tag frequency analysis</strong> — Counts every MARC tag across all records (e.g., "245: 42,118 records"). Subfield-level frequency is also calculated.</li>
+<li><strong>Elasticsearch indexing</strong> — If configured, records are indexed for full-text search (non-blocking).</li>
 </ol>
-<h4>What to Check</h4>
-<ul>
-<li>Record count matches your expectations</li>
-<li>ILS signal detection (Symphony, Polaris, Millennium, etc.)</li>
-<li>Tag frequency shows expected fields (245, 001, 852/952)</li>
-</ul>
+<h4>Item CSV Files</h4>
+<p>For separate item/holdings CSVs: delimiter is auto-detected (comma, tab, pipe, semicolon), header row is auto-detected (first row with 3+ unique fields), and per-column stats (unique count + 20 samples) are calculated.</p>
 ` },
   { id: 'stage2', title: 'Stage 2 — ILS Detection & Config', content: `
-<p>Confirm the source ILS and configure item structure.</p>
-<h4>Item Structure</h4>
-<ul>
-<li><strong>Embedded</strong> — Items in MARC 952 fields within bib records</li>
-<li><strong>Separate</strong> — Items in a separate CSV file</li>
-<li><strong>None</strong> — No item data</li>
-</ul>
+<p>Confirm the detected source ILS and configure item structure.</p>
+<h4>Item Structure Options</h4>
+<table style="width:100%;font-size:12px;border-collapse:collapse">
+<tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>Embedded</strong></td><td style="padding:4px;border-bottom:1px solid var(--border)">Items in MARC 952 (Koha), 949 (Polaris), 945 (Millennium), or 999 (Symphony) fields</td></tr>
+<tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>Separate</strong></td><td style="padding:4px;border-bottom:1px solid var(--border)">Items in a separate CSV file uploaded in Stage 1</td></tr>
+<tr><td style="padding:4px"><strong>None</strong></td><td style="padding:4px">No item data (bibs only)</td></tr>
+</table>
 <h4>MARC Browser</h4>
-<p>Navigate through records to verify data quality. View fields, subfields, and indicators.</p>
+<p>Navigate records to verify data quality. View fields, subfields, indicators. Item tags are auto-highlighted.</p>
 <h4>Quick Path</h4>
-<p>For simple migrations (e.g., Koha-to-Koha), click <strong>Mark as Ready to Load</strong> to skip stages 3-6 and go directly to Stage 7.</p>
+<p>For clean data (e.g., Koha-to-Koha), click <strong>Mark as Ready to Load</strong> to skip stages 3-6.</p>
 ` },
   { id: 'stage3', title: 'Stage 3 — MARC Data Quality', content: `
-<p>Scan records for quality issues and fix them before loading.</p>
-<h4>Running a Scan</h4>
-<ol>
-<li>Select files to scan</li>
-<li>Click <strong>Run Quality Scan</strong></li>
-<li>Review issues grouped by category: encoding, diacritics, indicators, subfield structure, leader/008, duplicates, blank fields</li>
-</ol>
+<p>The quality scanner performs <strong>8 categories</strong> of checks on every record in your files.</p>
+<h4>1. Encoding Issues</h4>
+<p>Tests every field for valid UTF-8 encoding. Catches Latin-1/Windows-1252 characters that weren't converted, MARC-8 data, and corrupted byte sequences. <em>Severity: Error</em></p>
+<h4>2. Diacritics</h4>
+<p>Detects <strong>orphan combining characters</strong> (accents/tildes at the start of a value without a base character) and <strong>decomposed Unicode</strong> (separate base + combining mark instead of single precomposed character). Auto-fix: NFC normalization. <em>Severity: Warning</em></p>
+<h4>3. Indicator Values</h4>
+<p>MARC indicators must be a space or digit 0-9. Flags letters, special characters, or control characters. Auto-fix: replace with space. <em>Severity: Warning</em></p>
+<h4>4. Subfield Structure</h4>
+<p><strong>245 must have $a</strong> (title required, flagged as error). <strong>100/110/111 should have $a</strong> (author, flagged as warning).</p>
+<h4>5. Field Length</h4>
+<p>Max MARC field: 9,999 bytes. Oversized fields cause import failures. <em>Severity: Error</em></p>
+<h4>6. Leader & 008 Validation</h4>
+<p>Validates specific leader byte positions:</p>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Pos 5</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Record status</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">a, c, d, n, p</td></tr>
+<tr><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Pos 6</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Type of record</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">a, c-g, i-k, m-p, r, t</td></tr>
+<tr><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Pos 7</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Bib level</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">a-d, i, m, s</td></tr>
+<tr><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Pos 9</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">Encoding</td><td style="padding:2px 4px;border-bottom:1px solid var(--border)">space (MARC-8), a (UTF-8)</td></tr>
+<tr><td style="padding:2px 4px">Pos 17</td><td style="padding:2px 4px">Encoding level</td><td style="padding:2px 4px">space, 1-8, u, z</td></tr>
+</table>
+<p>008 must be exactly 40 characters. Short fields are padded with fill characters (|). Auto-fix: replace invalid bytes with safe defaults.</p>
+<h4>7. Blank/Empty Fields</h4>
+<p>Flags control fields with blank data, data fields with all-empty subfields, and records missing a 245 (title) field entirely.</p>
+<h4>8. Duplicate Detection</h4>
+<p><strong>001 duplicates</strong>: flags records sharing the same control number (often a data export error). <strong>ISBN duplicates</strong> (020$a): flags records sharing the same ISBN after stripping hyphens and qualifiers (may be legitimate duplicates for merging).</p>
 <h4>Fixing Issues</h4>
 <ul>
-<li><strong>Auto-fix</strong> — Apply safe automatic corrections per category</li>
+<li><strong>Auto-fix</strong> — Invalid leader bytes &rarr; safe defaults, short 008 &rarr; padded, bad indicators &rarr; spaces, decomposed Unicode &rarr; NFC. The file is rewritten to disk.</li>
 <li><strong>Manual edit</strong> — Click an issue, then click field values to edit inline</li>
-<li><strong>Ignore</strong> — Mark acceptable issues as ignored</li>
 <li><strong>Bulk</strong> — "Ignore all" or "Auto-fix all" per category</li>
 </ul>
 ` },
   { id: 'stage4', title: 'Stage 4 — Bib Versions', content: `
-<p>Create snapshots of your bibliographic data at different transformation stages.</p>
-<ul>
-<li><strong>Create Version</strong> — Captures current MARC state, field maps, and quality results</li>
-<li><strong>Compare</strong> — Select two versions to see what changed</li>
-<li><strong>Label</strong> — Click version names to rename them for easy reference</li>
-</ul>
-<p>Use versions to track iterative progress and verify transformations produce expected results.</p>
+<p>Create immutable snapshots of your bibliographic data at different pipeline stages.</p>
+<p>Each version captures: a frozen MARC file copy, all field mappings, quality scan results, and the record count. Use <strong>Compare</strong> to diff two versions and verify transformations produce expected results.</p>
+<p>Migrations are iterative — versions let you track what changed between runs and roll back if needed.</p>
 ` },
   { id: 'stage5', title: 'Stage 5 — Field Mapping', content: `
-<p>Define how source MARC fields map to Koha fields.</p>
-<h4>Three-Panel Layout</h4>
-<ul>
-<li><strong>Left</strong> — File selector + tag frequency browser</li>
-<li><strong>Center</strong> — Record inspector (navigate individual records)</li>
-<li><strong>Right</strong> — Field mapping editor</li>
-</ul>
-<h4>Creating Mappings</h4>
-<ol>
-<li>Click <strong>+ Add</strong> in the right panel</li>
-<li>Select source MARC tag/subfield and target Koha field</li>
-<li>Optionally add transforms (copy, regex, constant, lookup)</li>
-</ol>
+<p>Define how source MARC fields map to Koha's structure using the three-panel editor.</p>
+<h4>Transform Types</h4>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:3px 4px;border-bottom:1px solid var(--border)"><strong>Copy</strong></td><td style="padding:3px 4px;border-bottom:1px solid var(--border)">Direct passthrough (most common)</td></tr>
+<tr><td style="padding:3px 4px;border-bottom:1px solid var(--border)"><strong>Regex</strong></td><td style="padding:3px 4px;border-bottom:1px solid var(--border)">Perl-style substitution, e.g., <code>s/^REF /R/i</code></td></tr>
+<tr><td style="padding:3px 4px;border-bottom:1px solid var(--border)"><strong>Lookup</strong></td><td style="padding:3px 4px;border-bottom:1px solid var(--border)">JSON table, e.g., <code>{"JUV":"JUVENILE"}</code></td></tr>
+<tr><td style="padding:3px 4px;border-bottom:1px solid var(--border)"><strong>Constant</strong></td><td style="padding:3px 4px;border-bottom:1px solid var(--border)">Fixed value for every record</td></tr>
+<tr><td style="padding:3px 4px;border-bottom:1px solid var(--border)"><strong>Function</strong></td><td style="padding:3px 4px;border-bottom:1px solid var(--border)">Sandboxed Python (safe builtins only, no file/import access)</td></tr>
+<tr><td style="padding:3px 4px"><strong>Preset</strong></td><td style="padding:3px 4px">Built-in: date converters, case changes, text_trim, clean_isbn, extract_year, etc.</td></tr>
+</table>
 <h4>AI-Assisted Mapping</h4>
-<p>Click <strong>AI Suggest</strong> to have Claude analyze your data and suggest mappings. Review and approve/reject each suggestion.</p>
+<p>Click <strong>AI Suggest</strong> — Claude receives your top 100 tags + up to 50 sample records and suggests mappings with confidence scores (0-100%) and reasoning. The AI is especially good at identifying location codes (852$a/b, 949$l), call numbers (092, 852$h+i), barcodes (876$p, 949$i), and item types. <strong>All suggestions require manual approval.</strong></p>
 <h4>Templates</h4>
-<p>Save mappings as a <strong>template</strong> for reuse. Templates can be project-scoped or global (shared across all projects).</p>
+<p>Save mappings as reusable templates (project-scoped or global). Load templates in "merge" mode (preserves approved maps) or "replace" mode. Great for migrating multiple libraries from the same source ILS.</p>
 ` },
   { id: 'stage6', title: 'Stage 6 — Transform', content: `
-<p>Apply field mappings and build the output MARC file.</p>
+<p>Apply your field mappings and build the output MARC file.</p>
+<h4>What Happens During Build</h4>
 <ol>
-<li>Select MARC files to transform</li>
-<li>Optionally check <strong>Include items data</strong> for CSV joining</li>
-<li>Click <strong>Build Output</strong></li>
-<li>View the transformation manifest (records processed, successes, errors)</li>
+<li><strong>Validation</strong> — Each map is checked: tags must be 3-digit numeric, transform types valid, regex/lookup/preset configs well-formed</li>
+<li><strong>Per-record transformation</strong> — Maps grouped by (source, target) to preserve repeating field relationships. Transforms applied per subfield. Source fields deleted only after all maps finish reading them.</li>
+<li><strong>Items CSV join</strong> (optional) — Matches CSV rows to MARC records by key column (e.g., 001). Each matching row becomes a 952 field with subfields from the column map.</li>
+<li><strong>Diagnostics</strong> — First record is fully logged showing which tags existed, mapped, or were missing.</li>
 </ol>
+<p>Per-map statistics track: records with the source field, successful transforms, and errors.</p>
 ` },
   { id: 'stage7', title: 'Stage 7 — Load (Push to Koha)', content: `
 <p>Push prepared data into the target Koha instance.</p>
-<h4>Setup Tab</h4>
-<ul>
-<li><strong>Scan MARC</strong> — Analyze output for controlled values</li>
-<li><strong>Fetch Reference Data</strong> — Pull libraries, categories, item types from Koha</li>
-<li><strong>Verify Counts</strong> — Check existing records in Koha</li>
-</ul>
 <h4>Migration Mode</h4>
-<p>For large imports, enable Migration Mode to stop background daemons and tune the database. This dramatically speeds up imports. <strong>Remember to disable it after the import.</strong></p>
-<h4>Push Methods</h4>
+<p>For large imports (10,000+ records), enable Migration Mode to:</p>
 <ul>
-<li><strong>REST API</strong> — Standard staging + commit</li>
-<li><strong>FastMARCImport</strong> — High-performance parallel import (plugin required)</li>
-<li><strong>Migration Toolkit</strong> — All-in-one with DB tuning and reindex (plugin required)</li>
+<li><strong>Stop daemons</strong>: koha-es-indexer (biggest resource hog), koha-indexer, koha-zebra, koha-sip, koha-z3950-responder</li>
+<li><strong>Tune database</strong>: <code>innodb_flush_log_at_trx_commit=2</code> (async flush, 10-50x faster writes), increased buffer pool</li>
+<li><strong>Kept running</strong>: koha-worker (needed for plugins), koha-plack (needed for REST API)</li>
 </ul>
-<h4>Reindex</h4>
-<p>After loading, run an <strong>Elasticsearch reindex</strong> to make records searchable.</p>
+<p><strong>Always disable Migration Mode after import</strong> to restore safe settings.</p>
+<h4>Push Methods</h4>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>REST API</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">~1 rec/sec, no plugins needed</td><td style="padding:3px;border-bottom:1px solid var(--border)">Small imports, testing</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>FastMARCImport</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">Parallel workers, plugin required</td><td style="padding:3px;border-bottom:1px solid var(--border)">Medium imports</td></tr>
+<tr><td style="padding:3px"><strong>Migration Toolkit</strong></td><td style="padding:3px">All-in-one (tuning + import + reindex)</td><td style="padding:3px">Large migrations</td></tr>
+</table>
+<p>REST API auto-aborts after 10 consecutive failures with 0 successes (prevents spinning on auth errors). After import, run <strong>Elasticsearch reindex</strong> from the Reindex tab.</p>
 ` },
   { id: 'stage8', title: 'Stage 8 — Reconciliation', content: `
 <p>Map source item field values to Koha's controlled vocabularies.</p>
-<h4>Categories</h4>
-<table style="width:100%;font-size:12px;border-collapse:collapse"><tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>itype</strong> (952$y)</td><td style="padding:4px;border-bottom:1px solid var(--border)">Item type</td></tr><tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>loc</strong> (952$c)</td><td style="padding:4px;border-bottom:1px solid var(--border)">Shelving location</td></tr><tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>ccode</strong> (952$8)</td><td style="padding:4px;border-bottom:1px solid var(--border)">Collection code</td></tr><tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>homebranch</strong> (952$a)</td><td style="padding:4px;border-bottom:1px solid var(--border)">Home library</td></tr><tr><td style="padding:4px"><strong>holdingbranch</strong> (952$b)</td><td style="padding:4px">Current holding library</td></tr></table>
-<h4>Workflow</h4>
-<p>Source &rarr; Scan &rarr; Rules &rarr; Validate &rarr; Apply &rarr; Report</p>
+<h4>Scanned Categories</h4>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>itype</strong> (952$y)</td><td style="padding:3px;border-bottom:1px solid var(--border)">Item type (BK, DVD, etc.)</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>loc</strong> (952$c)</td><td style="padding:3px;border-bottom:1px solid var(--border)">Shelving location</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>ccode</strong> (952$8)</td><td style="padding:3px;border-bottom:1px solid var(--border)">Collection code</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>not_loan</strong> (952$7)</td><td style="padding:3px;border-bottom:1px solid var(--border)">Not for loan status</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>withdrawn</strong> (952$0) / <strong>damaged</strong> (952$4)</td><td style="padding:3px;border-bottom:1px solid var(--border)">Status flags</td></tr>
+<tr><td style="padding:3px"><strong>homebranch</strong> (952$a) / <strong>holdingbranch</strong> (952$b)</td><td style="padding:3px">Library branch codes</td></tr>
+</table>
+<h4>Rule Operations</h4>
+<ul>
+<li><strong>Rename</strong> — "JUV" &rarr; "JUVENILE"</li>
+<li><strong>Merge</strong> — "JV", "JUV", "JUVEN" all &rarr; "JUVENILE"</li>
+<li><strong>Split</strong> — Conditionally assign based on other fields (e.g., if 952$a="MAIN" then "ADULT" else "CHILD")</li>
+<li><strong>Delete</strong> — Remove the subfield or entire 952 field</li>
+</ul>
+<p>Workflow: Source &rarr; Scan &rarr; Rules &rarr; Validate &rarr; Apply &rarr; Report</p>
 ` },
   { id: 'stage9', title: 'Stage 9 — Patron Data', content: `
-<p>Import patron/borrower records into Koha.</p>
-<ol>
-<li><strong>Upload</strong> — CSV, TSV, Excel, XML, or MARC patron files</li>
-<li><strong>Column Mapping</strong> — Map columns to Koha borrower fields (surname, firstname, email, categorycode, branchcode, etc.)</li>
-<li><strong>Value Reconciliation</strong> — Map patron categories, library codes, and title codes to Koha equivalents</li>
-<li><strong>Apply & Push</strong> — Send patron records to Koha</li>
-</ol>
-<p>Use <strong>AI Suggest</strong> for automatic column mapping.</p>
+<p>Import patron/borrower records from CSV, TSV, Excel (.xlsx/.xls), XML, or MARC files.</p>
+<h4>Behind the Scenes</h4>
+<ul>
+<li><strong>Encoding detection</strong> via chardet (UTF-8, Latin-1, Windows-1252, etc.)</li>
+<li><strong>Delimiter detection</strong> via csv.Sniffer (comma, tab, pipe, semicolon)</li>
+<li><strong>Header detection</strong> — first row with 3+ unique non-numeric values</li>
+<li><strong>Excel</strong> — reads via openpyxl/xlrd with configurable sheet name</li>
+<li><strong>XML</strong> — flattens repeating elements into rows</li>
+<li><strong>MARC</strong> — flattens to key-value pairs (tag$subcode: value)</li>
+</ul>
+<h4>AI Column Mapping</h4>
+<p>Claude receives headers + 20 sample rows and suggests mappings to all 78 Koha borrower fields. It auto-detects name formats ("Last, First" vs "First Last") and suggests name_split transforms. Controlled list columns (categorycode, branchcode, title, lost) are flagged for value reconciliation.</p>
+<h4>Patron Transforms</h4>
+<p>copy, name_split (surname/firstname/middlename), split (by delimiter), date converters (MDY/DMY/YMD/MARC to ISO), case changes, gender_normalize, first_char, const, regex.</p>
 ` },
-  { id: 'stage10', title: 'Stage 10 — Patron Versions', content: `
-<p>Same as Stage 4 but for patron records. Create snapshots after each patron load iteration and compare versions.</p>
-` },
-  { id: 'stage11', title: 'Stage 11 — Holds & Remaining Data', content: `
-<p><em>Coming soon.</em> This stage will support migration of:</p>
-<ul><li>Active holds/reserves</li><li>Checkout history</li><li>Fines and fees</li><li>Reading history</li></ul>
+  { id: 'stage10-11', title: 'Stage 10-11 — Patron Versions & Holds', content: `
+<h4>Stage 10 — Patron Versions</h4>
+<p>Same as Stage 4 (Bib Versions) but for patron records. Create snapshots after each patron load iteration, compare versions to verify changes.</p>
+<h4>Stage 11 — Holds & Remaining Data</h4>
+<p><em>Coming soon.</em> Will support: active holds/reserves, checkout history, fines and fees, reading history.</p>
 ` },
   { id: 'stage12', title: 'Stage 12 — Aspen Discovery', content: `
 <p>Bulk migrate data from Koha into Aspen Discovery.</p>
 <h4>Turbo Migration</h4>
-<p>Parallel extraction from Koha's database directly into Aspen. Configure workers (1-16) and batch size.</p>
+<p>Parallel extraction from Koha's DB directly into Aspen's DB. Configure 1-16 workers. Typical: ~940K records in 8 minutes (8 workers). Cerulean authenticates via session-based login to Aspen's SystemAPI.</p>
 <h4>Turbo Reindex</h4>
-<p>Rebuild Aspen's Solr search index. Optionally clear Solr first for a clean rebuild.</p>
+<p>Rebuild Aspen's Solr search index. Optionally clear Solr first. Typical: ~940K records in 25 minutes.</p>
 <h4>Indexer Control</h4>
-<p>Stop Aspen's indexers during bulk load, then restart them after completion.</p>
+<p>Stop Aspen indexers during bulk load (prevents wasted CPU), restart after completion.</p>
 ` },
   { id: 'stage13', title: 'Stage 13 — Evergreen ILS', content: `
-<p>Bulk migrate MARC records into Evergreen via direct PostgreSQL access.</p>
-<h4>Push Bibs</h4>
-<p>Inserts MARCXML into <code>biblio.record_entry</code>. Choose a trigger mode:</p>
-<ul>
-<li><strong>Skip indexing only</strong> (recommended) — Fast, with automatic metarecord remap</li>
-<li><strong>All triggers on</strong> — Slowest but safest</li>
-<li><strong>All triggers off</strong> — Fastest, needs full pingest</li>
-</ul>
+<p>Bulk migrate into Evergreen via direct PostgreSQL. Records stored as MARCXML (converted from ISO 2709 automatically).</p>
+<h4>Trigger Modes</h4>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>Skip indexing only</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">Disables <code>aaa_indexing_ingest_or_delete</code> + <code>bbb_simple_rec_trigger</code>. Fast. Needs pingest + metarecord remap after.</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>All triggers on</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">Slowest but safest — indexes build as records insert.</td></tr>
+<tr><td style="padding:3px"><strong>All triggers off</strong></td><td style="padding:3px">Fastest — needs full pingest + remap + possibly more.</td></tr>
+</table>
+<h4>Critical: Metarecord Remap</h4>
+<p>When triggers are disabled, <code>metabib.metarecord_source_map</code> is NOT populated. The OPAC search visibility filter joins this table — <strong>records are invisible to search without it</strong>. The remap checkbox (on by default) calls <code>metabib.remap_metarecord_for_bib()</code> in 5K-id chunks after insert.</p>
 <h4>Pingest</h4>
-<p>Parallel ingest to build search indexes. Defaults: 2 workers, batch size 25.</p>
-<h4>Metarecord Remap</h4>
-<p>If records are invisible in OPAC search, run a metarecord remap to populate <code>metabib.metarecord_source_map</code>.</p>
+<p>Parallel ingest via <code>pingest.pl</code> in the container. Defaults: 2 workers, batch size 25 (small batches are faster due to PG query plan caching).</p>
 <h4>Restart OpenSRF</h4>
-<p>After remap, restart memcached + osrf_control + apache2 to clear caches.</p>
+<p>After remap: restart memcached + osrf_control + apache2. Required because OpenSRF and mod_perl cache metarecord state. OPAC briefly unavailable (10-30s).</p>
 ` },
   { id: 'plugins', title: 'Plugins', content: `
-<p>Upload and manage Koha plugins (.kpz files).</p>
-<h4>Upload</h4>
-<p>Navigate to Plugins, select a <code>.kpz</code> file, and click Upload.</p>
-<h4>Install to Koha</h4>
-<p>With a project selected that has a Koha URL, click <strong>Install to Koha</strong>. Cerulean uploads the plugin and restarts Plack workers automatically.</p>
-<h4>Download</h4>
-<p>Click <strong>Download</strong> to get the .kpz file for manual installation via Koha's admin interface.</p>
+<p>Upload .kpz Koha plugin files. Two installation options:</p>
+<ul>
+<li><strong>Install to Koha</strong> — Auto-uploads via REST API (Cerulean Endpoints plugin) or Docker fallback (<code>install_plugins.pl</code>). Restarts Plack workers automatically.</li>
+<li><strong>Download</strong> — Get the .kpz for manual install via Koha admin (Administration &gt; Plugins &gt; Upload).</li>
+</ul>
 <h4>Available Plugins</h4>
-<table style="width:100%;font-size:12px;border-collapse:collapse">
-<tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>Migration Toolkit</strong></td><td style="padding:4px;border-bottom:1px solid var(--border)">All-in-one: FastMARCImport + TurboIndex + DB tuning + preflight</td></tr>
-<tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>Cerulean Endpoints</strong></td><td style="padding:4px;border-bottom:1px solid var(--border)">Migration mode, reference data, plugin management</td></tr>
-<tr><td style="padding:4px;border-bottom:1px solid var(--border)"><strong>FastMARCImport</strong></td><td style="padding:4px;border-bottom:1px solid var(--border)">High-performance parallel MARC import</td></tr>
-<tr><td style="padding:4px"><strong>TurboIndex</strong></td><td style="padding:4px">Parallel Elasticsearch reindexing</td></tr>
+<table style="width:100%;font-size:11px;border-collapse:collapse">
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>Migration Toolkit</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">All-in-one: FastMARCImport + TurboIndex + DB tuning + preflight</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>Cerulean Endpoints</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">Migration mode, reference data, plugin management, system info</td></tr>
+<tr><td style="padding:3px;border-bottom:1px solid var(--border)"><strong>FastMARCImport</strong></td><td style="padding:3px;border-bottom:1px solid var(--border)">High-performance parallel MARC import (standalone)</td></tr>
+<tr><td style="padding:3px"><strong>TurboIndex</strong></td><td style="padding:3px">Parallel Elasticsearch reindexing (standalone)</td></tr>
 </table>
 ` },
   { id: 'settings', title: 'System Settings', content: `
-<p>Platform-wide configuration (admin).</p>
+<p>Platform-wide configuration. Settings stored in the database override environment variables and take effect immediately (no restart needed).</p>
 <ul>
-<li><strong>Google OAuth</strong> — Client ID, Client Secret, Allowed Domain</li>
-<li><strong>JWT Expiry</strong> — Login session duration (default: 8 hours)</li>
-<li><strong>Anthropic API Key</strong> — Required for AI field mapping</li>
-<li><strong>Claude Model</strong> — Which model to use for AI features</li>
+<li><strong>Google OAuth</strong> — Client ID, Secret, Allowed Domain. Get credentials from Google Cloud Console &gt; APIs &amp; Services &gt; Credentials.</li>
+<li><strong>JWT Expiry</strong> — Login session duration in minutes (default: 480 = 8 hours)</li>
+<li><strong>Anthropic API Key</strong> — Required for AI field mapping and patron column mapping</li>
+<li><strong>Claude Model</strong> — Model ID for AI features</li>
 </ul>
-<p>Changes take effect immediately without a container restart.</p>
 ` },
   { id: 'troubleshooting', title: 'Troubleshooting', content: `
-<h4>"Internal Server Error" on a page</h4>
-<p>Check the <strong>Project Log</strong> for details. Verify Koha URL is reachable and database migrations are current.</p>
-<h4>File upload fails</h4>
-<p>Max size: 2 GB. Ensure valid MARC format. Check server disk space.</p>
+<h4>Quality scan finds thousands of issues</h4>
+<p>This is normal for older catalogs. Focus on <strong>errors</strong> (red) first. Use "Auto-fix all" for safe categories (leader defaults, indicator spaces, NFC normalization). <strong>Encoding errors</strong> often mean the source is MARC-8 or Latin-1 — re-export from the source ILS with UTF-8 if possible.</p>
+<h4>Push succeeds but records not in OPAC search</h4>
+<p><strong>Koha:</strong> Run Elasticsearch reindex (Stage 7). If Migration Mode is on, disable it first (restarts the indexer daemon).<br>
+<strong>Evergreen:</strong> Run Metarecord Remap + Restart OpenSRF (Stage 13 cards 3 &amp; 4).</p>
+<h4>AI mapping suggestions are empty or poor</h4>
+<p>Verify API key in System Settings. Ensure Stage 1 completed (records analyzed). More records = better suggestions (20+ sample records ideal).</p>
 <h4>Push to Koha fails</h4>
-<p>Verify Koha URL and credentials in Project Settings. Test from Stage 7 Setup tab. Ensure required plugins are installed.</p>
-<h4>Records not in OPAC search</h4>
-<p><strong>Koha:</strong> Run Elasticsearch reindex (Stage 7 Reindex tab).<br><strong>Evergreen:</strong> Run Metarecord Remap + Restart OpenSRF (Stage 13).</p>
-<h4>AI mapping empty</h4>
-<p>Verify Anthropic API key in System Settings. Ensure MARC files are uploaded and analyzed.</p>
+<p>Verify URL &amp; credentials in Project Settings. Test from Stage 7 Setup. Check plugins installed. For Docker-based Koha: verify containers on same Docker network.</p>
+<h4>Task stuck in "running"</h4>
+<p>Check worker logs. If a worker crashed mid-task, restart the worker container. The task bar shows active tasks.</p>
 <h4>OAuth not working</h4>
-<p>Check Client ID/Secret in System Settings. Verify redirect URI matches in Google Cloud Console.</p>
+<p>Check Client ID/Secret in System Settings. Redirect URI must match exactly: <code>https://your-domain/api/v1/auth/google/callback</code>. Use "Internal" app type for org-only access.</p>
 ` },
 ];
 
@@ -10212,6 +10243,7 @@ window.saveSystemSettings = async function() {
     'project-settings': renderProjectSettings,
     templates:     renderTemplates,
     suggestions:   renderSuggestions,
+    help:          window.renderHelp,
     plugins:       window.renderPlugins,
     'system-settings': window.renderSystemSettings,
   };
