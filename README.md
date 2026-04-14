@@ -216,8 +216,13 @@ See [docs/CONNECT-LOCAL-KOHA.md](docs/CONNECT-LOCAL-KOHA.md) for full instructio
 
 - **[User Manual (PDF)](docs/Cerulean-Next-User-Manual.pdf)** — Comprehensive guide for migration specialists
 - **[User Manual (Markdown)](docs/USER-MANUAL.md)** — Same content in markdown format
+- **[API Reference](docs/API-REFERENCE.md)** — All 150+ API endpoints documented
+- **[Architecture Guide](docs/ARCHITECTURE.md)** — Codebase structure, models, patterns for developers
 - **[Deploy to DigitalOcean](docs/DEPLOY-DIGITALOCEAN.md)** — Production deployment guide
 - **[Connect Local Koha](docs/CONNECT-LOCAL-KOHA.md)** — SSH tunnel setup for Mac/Windows/Linux
+- **[Contributing](CONTRIBUTING.md)** — Code style, PR process, development workflow
+- **[Changelog](CHANGELOG.md)** — Version history and feature releases
+- **[AI Agent Context](CLAUDE.md)** — Context document for AI coding agents (Claude Code, Cursor, etc.)
 - **In-app Help** — Searchable interactive help accessible from the sidebar
 
 ## Koha Plugins
