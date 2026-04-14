@@ -1638,6 +1638,7 @@ async function loadFiles() {
             <td>${statusBadge(f.status)}</td>
             <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
             <td style="white-space:nowrap">
+              ${f.status === 'indexed' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/files/${esc(f.id)}/export-mrk','${esc(f.filename.replace('.mrc','.mrk'))}')" title="Download as MRK (MarcEdit format)">↓ MRK</button>` : ''}
               ${f.status === 'not_marc' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--amber)" onclick="recategorizeFile('${esc(f.id)}','items')" title="Re-categorize as items file">→ Items</button>` : ''}
               <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button>
             </td>
@@ -4785,6 +4786,7 @@ window.renderStage3_Quality = async function(el) {
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchQ3Tab('summary', this)">Summary</button>
       <button class="tab-btn" onclick="switchQ3Tab('issues', this)">Issues</button>
+      <button class="tab-btn" onclick="switchQ3Tab('batch', this)">Batch Edit</button>
     </div>
     <div id="q3-tab"></div>`;
   renderQ3Summary();
@@ -4793,7 +4795,220 @@ window.renderStage3_Quality = async function(el) {
 function switchQ3Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  ({ summary: renderQ3Summary, issues: renderQ3Issues })[tab]();
+  ({ summary: renderQ3Summary, issues: renderQ3Issues, batch: renderQ3BatchEdit })[tab]();
+}
+
+function renderQ3BatchEdit() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('q3-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div class="alert alert-info" style="margin-bottom:16px">
+      Batch edit operations apply changes across all records in your MARC file. Changes create a new <code>_edited.mrc</code> file — your original is preserved.
+      <br><span style="font-size:11px;color:var(--text-dim)">Inspired by MarcEdit's batch editing tools. Download as MRK to edit in MarcEdit, or use these tools directly.</span>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Find & Replace</span></div>
+        <div class="form-group">
+          <label class="form-label">Tag (optional, blank = all)</label>
+          <input class="form-input mono" id="be-fr-tag" placeholder="e.g. 245" style="width:80px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfield (optional)</label>
+          <input class="form-input mono" id="be-fr-sub" placeholder="e.g. a" style="width:60px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Find *</label>
+          <input class="form-input" id="be-fr-find" placeholder="Text to find">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Replace with</label>
+          <input class="form-input" id="be-fr-replace" placeholder="Replacement text">
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="be-fr-case"> Case sensitive</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="be-fr-whole"> Replace whole field</label>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="runBatchFindReplace()">Run Find & Replace</button>
+        <div id="be-fr-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Regex Substitution</span></div>
+        <div class="form-group">
+          <label class="form-label">Tag *</label>
+          <input class="form-input mono" id="be-rx-tag" placeholder="e.g. 245" style="width:80px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfield (optional)</label>
+          <input class="form-input mono" id="be-rx-sub" placeholder="e.g. a" style="width:60px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Pattern *</label>
+          <input class="form-input mono" id="be-rx-pattern" placeholder="e.g. ^(\\d{4}).*">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Replacement</label>
+          <input class="form-input mono" id="be-rx-replace" placeholder="e.g. \\1">
+        </div>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-bottom:12px"><input type="checkbox" id="be-rx-icase"> Case insensitive</label>
+        <button class="btn btn-primary btn-sm" onclick="runBatchRegex()">Run Regex</button>
+        <div id="be-rx-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Add Field</span></div>
+        <div class="form-group">
+          <label class="form-label">Tag *</label>
+          <input class="form-input mono" id="be-add-tag" placeholder="e.g. 590" style="width:80px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Indicators</label>
+          <div style="display:flex;gap:4px">
+            <input class="form-input mono" id="be-add-ind1" value=" " maxlength="1" style="width:36px;text-align:center">
+            <input class="form-input mono" id="be-add-ind2" value=" " maxlength="1" style="width:36px;text-align:center">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfields (code=value, one per line)</label>
+          <textarea class="form-textarea mono" id="be-add-subs" placeholder="a=Local note from migration&#10;5=MAIN" style="min-height:60px;font-size:12px"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Condition (optional)</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="form-select" id="be-add-cond-type" style="width:120px;font-size:12px">
+              <option value="">No condition</option>
+              <option value="exists">If tag exists</option>
+              <option value="missing">If tag missing</option>
+            </select>
+            <input class="form-input mono" id="be-add-cond-tag" placeholder="Tag" style="width:60px">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="runBatchAddField()">Add Field</button>
+        <div id="be-add-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Delete Field</span></div>
+        <div class="form-group">
+          <label class="form-label">Tag *</label>
+          <input class="form-input mono" id="be-del-tag" placeholder="e.g. 9XX or 852" style="width:80px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Subfield only (optional — deletes subfield, not whole field)</label>
+          <input class="form-input mono" id="be-del-sub" placeholder="e.g. 9" style="width:60px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Only if contains (optional)</label>
+          <input class="form-input" id="be-del-filter" placeholder="e.g. DISCARD">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="runBatchDeleteField()">Delete Field</button>
+        <div id="be-del-result" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+}
+
+function _renderBatchResult(elId, r) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `
+    <div style="font-size:12px;margin-bottom:8px">
+      <span class="badge badge-green">${r.records_modified.toLocaleString()} modified</span>
+      <span class="text-dim" style="margin-left:8px">${r.records_processed.toLocaleString()} processed, ${r.modifications.toLocaleString()} changes</span>
+      <div class="text-dim mono" style="font-size:10px;margin-top:4px">Output: ${esc(r.output_file)}</div>
+    </div>
+    ${r.preview_samples?.length ? '<div style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:6px;max-height:150px;overflow:auto">' +
+      r.preview_samples.map(s => '<div style="margin-bottom:4px"><span class="mono text-dim">rec ' + s.record + ' ' + esc(s.tag || '') + (s.sub ? '$' + esc(s.sub) : '') + ':</span> ' +
+        (s.before != null ? '<span style="color:var(--red);text-decoration:line-through">' + esc(s.before) + '</span> → <span style="color:var(--green)">' + esc(s.after) + '</span>' :
+        s.added ? '<span style="color:var(--green)">' + esc(s.added) + '</span>' :
+        s.deleted != null ? '<span style="color:var(--red)">' + s.deleted + ' field(s) deleted</span>' : '')
+        + '</div>').join('') + '</div>' : ''}`;
+}
+
+async function runBatchFindReplace() {
+  const p = state.currentProject;
+  const find = document.getElementById('be-fr-find')?.value;
+  if (!find) { toast('Enter text to find', 'warn'); return; }
+  document.getElementById('be-fr-result').innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/batch-edit/find-replace', {
+      tag: document.getElementById('be-fr-tag')?.value?.trim() || null,
+      subfield: document.getElementById('be-fr-sub')?.value?.trim() || null,
+      find: find,
+      replace: document.getElementById('be-fr-replace')?.value || '',
+      case_sensitive: document.getElementById('be-fr-case')?.checked || false,
+      whole_field: document.getElementById('be-fr-whole')?.checked || false,
+    });
+    _renderBatchResult('be-fr-result', r);
+    toast(r.modifications + ' changes applied', 'success');
+  } catch (e) { document.getElementById('be-fr-result').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runBatchRegex() {
+  const p = state.currentProject;
+  const tag = document.getElementById('be-rx-tag')?.value?.trim();
+  const pattern = document.getElementById('be-rx-pattern')?.value;
+  if (!tag || !pattern) { toast('Tag and pattern are required', 'warn'); return; }
+  document.getElementById('be-rx-result').innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/batch-edit/regex', {
+      tag: tag,
+      subfield: document.getElementById('be-rx-sub')?.value?.trim() || null,
+      pattern: pattern,
+      replacement: document.getElementById('be-rx-replace')?.value || '',
+      flags: document.getElementById('be-rx-icase')?.checked ? 'i' : '',
+    });
+    _renderBatchResult('be-rx-result', r);
+    toast(r.modifications + ' changes applied', 'success');
+  } catch (e) { document.getElementById('be-rx-result').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runBatchAddField() {
+  const p = state.currentProject;
+  const tag = document.getElementById('be-add-tag')?.value?.trim();
+  if (!tag) { toast('Tag is required', 'warn'); return; }
+  const subsText = document.getElementById('be-add-subs')?.value || '';
+  const subfields = subsText.split('\n').filter(l => l.includes('=')).map(l => {
+    const [code, ...rest] = l.split('=');
+    return { code: code.trim(), value: rest.join('=').trim() };
+  });
+  if (!subfields.length) { toast('Enter at least one subfield (code=value)', 'warn'); return; }
+
+  const condType = document.getElementById('be-add-cond-type')?.value;
+  const condTag = document.getElementById('be-add-cond-tag')?.value?.trim();
+
+  document.getElementById('be-add-result').innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/batch-edit/add-field', {
+      tag: tag,
+      indicators: [document.getElementById('be-add-ind1')?.value || ' ', document.getElementById('be-add-ind2')?.value || ' '],
+      subfields: subfields,
+      condition_tag: condType && condTag ? condTag : null,
+      condition_exists: condType === 'exists',
+    });
+    _renderBatchResult('be-add-result', r);
+    toast(r.records_modified + ' records updated', 'success');
+  } catch (e) { document.getElementById('be-add-result').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runBatchDeleteField() {
+  const p = state.currentProject;
+  const tag = document.getElementById('be-del-tag')?.value?.trim();
+  if (!tag) { toast('Tag is required', 'warn'); return; }
+  if (!confirm('Delete field ' + tag + ' from all records? This creates a new _edited.mrc file.')) return;
+  document.getElementById('be-del-result').innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/batch-edit/delete-field', {
+      tag: tag,
+      subfield: document.getElementById('be-del-sub')?.value?.trim() || null,
+      value_contains: document.getElementById('be-del-filter')?.value?.trim() || null,
+    });
+    _renderBatchResult('be-del-result', r);
+    toast(r.modifications + ' deletions applied', 'success');
+  } catch (e) { document.getElementById('be-del-result').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
 
 async function renderQ3Summary() {

@@ -83,8 +83,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         path = request.url.path
 
-        # Allow public paths, non-API paths (frontend, vendor, health)
-        if path in _PUBLIC_PATHS or not path.startswith("/api/v1/"):
+        # Allow public paths, non-API paths (frontend, vendor, health), OAI-PMH
+        if path in _PUBLIC_PATHS or not path.startswith("/api/v1/") or path.startswith("/api/v1/oai/"):
             return await call_next(request)
 
         # Skip auth entirely when Google OAuth is not configured (dev mode)
@@ -115,12 +115,14 @@ app.add_middleware(AuthMiddleware)
 
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import auth, plugins, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
+from cerulean.api.routers import auth, batch_edit, oai, plugins, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
 from cerulean.api.routers import settings as settings_router  # noqa: E402 — avoid shadowing config `settings`
 
 app.include_router(auth.router,               prefix="/api/v1")
 app.include_router(settings_router.router,    prefix="/api/v1")
 app.include_router(plugins.router,            prefix="/api/v1")
+app.include_router(batch_edit.router,         prefix="/api/v1")
+app.include_router(oai.router,               prefix="/api/v1")
 app.include_router(projects.router,    prefix="/api/v1")
 app.include_router(files.router,       prefix="/api/v1")
 app.include_router(maps.router,        prefix="/api/v1")

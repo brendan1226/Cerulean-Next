@@ -313,6 +313,48 @@ async def search_project_records(
     return search_records(es, project_id, q, offset=offset, limit=limit)
 
 
+# ── MRK Export ────────────────────────────────────────────────────────
+
+
+@router.get("/{project_id}/files/{file_id}/export-mrk")
+async def export_file_as_mrk(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export a MARC file as MRK (mnemonic text format) for editing in MarcEdit.
+
+    MRK format uses readable text like:
+        =LDR  01234nam a2200289 a 4500
+        =245  10$aTitle$bSubtitle
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+
+    marc_file = await _get_marc_file(project_id, file_id, db)
+    source = Path(marc_file.storage_path)
+    if not source.is_file():
+        raise HTTPException(404, detail="Source file not found on disk.")
+
+    def generate_mrk():
+        with open(str(source), "rb") as fh:
+            reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+            for record in reader:
+                if record is None:
+                    continue
+                # pymarc's str(record) outputs MRK format
+                yield str(record) + "\n"
+
+    safe_name = marc_file.filename.rsplit(".", 1)[0] if "." in marc_file.filename else marc_file.filename
+    safe_name = safe_name.encode("ascii", "ignore").decode("ascii") or "export"
+
+    return StreamingResponse(
+        generate_mrk(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.mrk"'},
+    )
+
+
 # ── Mark Ready to Load ────────────────────────────────────────────────
 
 
