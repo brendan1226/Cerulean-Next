@@ -11735,7 +11735,7 @@ window.renderMacros = async function(el) {
   loadMacroList();
 };
 
-async function loadMacroList() {
+window.loadMacroList = async function() {
   const el = document.getElementById('macro-list');
   if (!el) return;
   try {
@@ -11763,7 +11763,7 @@ async function loadMacroList() {
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
 
-async function previewMacro(macroId) {
+window.previewMacro = async function(macroId) {
   const el = document.getElementById('macro-detail');
   if (!el) return;
   el.innerHTML = '<div class="spinner" style="padding:20px"></div>';
@@ -11799,7 +11799,7 @@ async function previewMacro(macroId) {
   } catch (e) { el.innerHTML = '<div class="card"><span class="text-red">' + esc(e.message) + '</span></div>'; }
 }
 
-async function runMacro(macroId, macroName) {
+window.runMacro = async function(macroId, macroName) {
   const p = state.currentProject;
   if (!confirm('Run macro "' + macroName + '" on project ' + p.code + '?')) return;
   const el = document.getElementById('macro-run-result') || document.getElementById('macro-detail');
@@ -11834,7 +11834,7 @@ async function runMacro(macroId, macroName) {
   }
 }
 
-async function deleteMacro(macroId) {
+window.deleteMacro = async function(macroId) {
   if (!confirm('Delete this macro?')) return;
   try {
     await fetch(API_BASE + '/macros/' + macroId, { method: 'DELETE', headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {} });
@@ -11843,7 +11843,7 @@ async function deleteMacro(macroId) {
   } catch (e) { toast('Delete failed', 'error'); }
 }
 
-function openCreateMacroModal() {
+window.openCreateMacroModal = function() {
   openModal(`
     <div class="modal-title">Create Macro</div>
     <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
@@ -11875,7 +11875,7 @@ function openCreateMacroModal() {
     </div>`);
 }
 
-async function submitCreateMacro() {
+window.submitCreateMacro = async function() {
   const name = document.getElementById('macro-name')?.value?.trim();
   if (!name) { toast('Name required', 'warn'); return; }
   let ops;
