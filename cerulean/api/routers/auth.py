@@ -28,6 +28,17 @@ from cerulean.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_LOG_FILE = "/tmp/cerulean.log"
+
+def _append_log(message: str):
+    """Append a timestamped message to the system log file."""
+    try:
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        with open(_LOG_FILE, "a") as f:
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
+
 
 @router.get("/google/login")
 async def google_login(request: Request):
@@ -70,7 +81,9 @@ async def google_callback(
     email = user_info["email"]
     if not validate_email_domain(email):
         from cerulean.core.logging import get_logger
-        get_logger(__name__).warn(f"Login rejected: {email} (domain not allowed)", email=email)
+        reject_msg = f"Login rejected: {email} (domain not allowed)"
+        get_logger(__name__).warn(reject_msg, email=email)
+        _append_log(reject_msg)
         return HTMLResponse(
             f"<h2>Access denied</h2>"
             f"<p>Only @{settings.google_allowed_domain} accounts are allowed.</p>"
@@ -107,12 +120,13 @@ async def google_callback(
     from cerulean.core.logging import get_logger
     logger = get_logger(__name__)
     is_new = user.last_login is None or (datetime.utcnow() - user.created_at).total_seconds() < 5
-    logger.info(
+    log_msg = (
         f"User authenticated: {email} ({user.name})"
-        f"{' [NEW USER]' if is_new else ''}",
-        email=email,
-        user_id=user.id,
+        f"{' [NEW USER]' if is_new else ''}"
     )
+    logger.info(log_msg, email=email, user_id=user.id)
+    # Also write to file for the System Logs viewer
+    _append_log(log_msg)
 
     access_token = create_access_token(user.id)
 
@@ -150,25 +164,80 @@ async def get_server_logs(
     filter: str = "",
     lines: int = 100,
 ):
-    """Read recent Docker container logs. Returns parsed log lines."""
-    import subprocess
+    """Read recent server logs from multiple sources."""
+    all_lines = []
 
+    # Source 1: Read from /proc/1/fd/2 (stderr of PID 1 = uvicorn)
+    # This captures uvicorn access logs and app stderr
+    for fd_path in ["/proc/1/fd/1", "/proc/1/fd/2"]:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["tail", "-n", str(min(lines * 2, 1000)), fd_path],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.stdout:
+                all_lines.extend(result.stdout.strip().split("\n"))
+        except Exception:
+            pass
+
+    # Source 2: Read from /tmp/cerulean.log if it exists
     try:
-        cmd = ["docker", "logs", "--tail", str(min(lines, 500)), "cerulean-web-1"]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        all_lines = (result.stdout + result.stderr).strip().split("\n")
+        from pathlib import Path
+        log_file = Path("/tmp/cerulean.log")
+        if log_file.is_file():
+            log_lines = log_file.read_text().strip().split("\n")
+            all_lines.extend(log_lines[-500:])
+    except Exception:
+        pass
 
-        if filter == "auth":
-            all_lines = [l for l in all_lines if "authenticated" in l or "rejected" in l or "NEW USER" in l or "Login" in l]
-        elif filter == "error":
-            all_lines = [l for l in all_lines if "error" in l.lower() or "traceback" in l.lower() or "500" in l]
+    # Source 3: Docker logs via socket (no Docker CLI needed)
+    if not all_lines:
+        try:
+            import httpx
+            transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
+            with httpx.Client(transport=transport, timeout=5.0) as client:
+                # Find the web container
+                containers = client.get("http://localhost/containers/json").json()
+                web_container = None
+                for c in containers:
+                    names = c.get("Names", [])
+                    if any("web" in n for n in names):
+                        web_container = c["Id"]
+                        break
+                if web_container:
+                    resp = client.get(
+                        f"http://localhost/containers/{web_container}/logs",
+                        params={"stdout": "true", "stderr": "true", "tail": str(min(lines * 2, 1000))},
+                    )
+                    raw = resp.text
+                    # Strip Docker log frame headers (8-byte prefix per line)
+                    for line in raw.split("\n"):
+                        if len(line) > 8:
+                            all_lines.append(line[8:] if ord(line[0]) in (0, 1, 2) else line)
+                        elif line.strip():
+                            all_lines.append(line)
+        except Exception:
+            pass
 
-        return {"lines": all_lines[-lines:], "total": len(all_lines)}
-    except FileNotFoundError:
-        # Docker CLI not available inside container — read from log file fallback
-        return {"lines": ["Docker CLI not available. View logs via: docker compose logs web"], "total": 1}
-    except Exception as exc:
-        return {"lines": [f"Error reading logs: {str(exc)[:200]}"], "total": 1}
+    if not all_lines:
+        all_lines = ["No log sources available. Check container configuration."]
+
+    # Deduplicate and filter
+    seen = set()
+    unique_lines = []
+    for l in all_lines:
+        l = l.strip()
+        if l and l not in seen:
+            seen.add(l)
+            unique_lines.append(l)
+
+    if filter == "auth":
+        unique_lines = [l for l in unique_lines if "authenticated" in l or "rejected" in l or "NEW USER" in l or "Login" in l or "User" in l]
+    elif filter == "error":
+        unique_lines = [l for l in unique_lines if "error" in l.lower() or "traceback" in l.lower() or "500" in l or "fail" in l.lower()]
+
+    return {"lines": unique_lines[-lines:], "total": len(unique_lines)}
 
 
 @router.get("/users")
