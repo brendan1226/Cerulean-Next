@@ -23,7 +23,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 _MANAGED_SETTINGS = {
     "google_client_id": ("Google OAuth Client ID", False, ""),
     "google_client_secret": ("Google OAuth Client Secret", True, ""),
-    "google_allowed_domain": ("Allowed email domain for login", False, "bywatersolutions.com"),
+    "google_allowed_domain": ("Allowed email domains (comma-separated)", False, "bywatersolutions.com"),
     "jwt_expiry_minutes": ("JWT token expiry (minutes)", False, "480"),
     "anthropic_api_key": ("Anthropic API key for AI features", True, ""),
     "anthropic_model": ("Claude model ID", False, "claude-sonnet-4-20250514"),

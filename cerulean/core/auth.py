@@ -95,6 +95,12 @@ async def get_current_user(
 # ── Domain validation ──────────────────────────────────────────────────
 
 def validate_email_domain(email: str) -> bool:
-    """Check that the email is from the allowed domain."""
+    """Check that the email is from an allowed domain.
+
+    Supports multiple comma-separated domains in google_allowed_domain,
+    e.g. 'bywatersolutions.com,open-fifth.co.uk'
+    """
     settings = get_settings()
-    return email.lower().endswith(f"@{settings.google_allowed_domain}")
+    domains = [d.strip().lower() for d in settings.google_allowed_domain.split(",") if d.strip()]
+    email_lower = email.lower()
+    return any(email_lower.endswith(f"@{d}") for d in domains)

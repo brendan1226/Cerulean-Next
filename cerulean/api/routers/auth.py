@@ -41,7 +41,8 @@ async def google_login(request: Request):
     return await oauth.google.authorize_redirect(
         request,
         callback_url,
-        hd=settings.google_allowed_domain,
+        # Only hint the domain if there's a single one (multi-domain: let user pick)
+        **({'hd': settings.google_allowed_domain} if ',' not in settings.google_allowed_domain else {}),
     )
 
 
