@@ -155,13 +155,20 @@ async def list_all_tasks(
     await require_project(project_id, db)
     from sqlalchemy import or_, desc
 
+    # Only show tasks from the last 7 days
+    cutoff = datetime.utcnow() - __import__('datetime').timedelta(days=7)
+
     tasks: list[dict] = []
 
     # Transform manifests
     tm_rows = (
         await db.execute(
             select(TransformManifest)
-            .where(TransformManifest.project_id == project_id)
+            .where(
+                TransformManifest.project_id == project_id,
+                TransformManifest.started_at >= cutoff,
+                TransformManifest.status != "archived",
+            )
             .order_by(desc(TransformManifest.started_at))
             .limit(limit)
         )
@@ -169,13 +176,19 @@ async def list_all_tasks(
 
     for m in tm_rows:
         entry = _manifest_to_task_detail(m.celery_task_id, m.task_type, m)
+        entry["manifest_id"] = m.id
+        entry["manifest_type"] = "transform"
         tasks.append(entry)
 
     # Push manifests
     pm_rows = (
         await db.execute(
             select(PushManifest)
-            .where(PushManifest.project_id == project_id)
+            .where(
+                PushManifest.project_id == project_id,
+                PushManifest.started_at >= cutoff,
+                PushManifest.status != "archived",
+            )
             .order_by(desc(PushManifest.started_at))
             .limit(limit)
         )
@@ -183,12 +196,57 @@ async def list_all_tasks(
 
     for m in pm_rows:
         entry = _manifest_to_task_detail(m.celery_task_id, m.task_type, m)
+        entry["manifest_id"] = m.id
+        entry["manifest_type"] = "push"
         tasks.append(entry)
 
     # Sort by started_at descending
     tasks.sort(key=lambda t: t.get("started_at") or "", reverse=True)
 
     return tasks[:limit]
+
+
+@router.post("/{project_id}/tasks/{manifest_id}/archive")
+async def archive_task(
+    project_id: str,
+    manifest_id: str,
+    manifest_type: str = "auto",
+    db: AsyncSession = Depends(get_db),
+):
+    """Archive a completed/errored task so it no longer appears in Job Watcher.
+
+    The manifest row stays in the database (status='archived') but is
+    filtered out of the /tasks/all query. Useful for cleaning up the
+    Job Watcher after reviewing completed or failed tasks.
+    """
+    await require_project(project_id, db)
+
+    archived = False
+
+    # Try TransformManifest
+    if manifest_type in ("auto", "transform"):
+        tm = (await db.execute(
+            select(TransformManifest).where(TransformManifest.id == manifest_id)
+        )).scalars().first()
+        if tm:
+            tm.status = "archived"
+            archived = True
+
+    # Try PushManifest
+    if manifest_type in ("auto", "push") and not archived:
+        pm = (await db.execute(
+            select(PushManifest).where(PushManifest.id == manifest_id)
+        )).scalars().first()
+        if pm:
+            pm.status = "archived"
+            archived = True
+
+    if not archived:
+        from fastapi import HTTPException
+        raise HTTPException(404, detail="Manifest not found.")
+
+    await db.flush()
+    return {"status": "archived", "manifest_id": manifest_id}
 
 
 def _manifest_to_task_detail(celery_task_id, task_type, manifest) -> dict:

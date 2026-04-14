@@ -1581,7 +1581,7 @@ async function refreshJobWatcher() {
       // Control buttons
       const pausedBadge = t.is_paused ? ' <span class="badge badge-amber" style="font-size:9px">PAUSED</span>' : '';
       let controlsHtml = '';
-      if (isRunning || t.is_paused) {
+      if (isRunning || t.is_paused || isComplete || isError) {
         controlsHtml = '<div style="display:flex;gap:4px;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">';
         if (t.can_pause) {
           controlsHtml += '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="jobAction(\'pause\',\'' + esc(t.task_id) + '\')">⏸ Pause</button>';
@@ -1591,6 +1591,9 @@ async function refreshJobWatcher() {
         }
         if (t.can_cancel) {
           controlsHtml += '<button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="jobAction(\'cancel\',\'' + esc(t.task_id) + '\')">✕ Cancel</button>';
+        }
+        if (isComplete || isError || t.status === 'cancelled') {
+          controlsHtml += '<button class="btn btn-ghost btn-sm" style="font-size:10px;margin-left:auto" onclick="archiveJob(\'' + esc(t.manifest_id) + '\',\'' + esc(t.manifest_type || 'auto') + '\')">Archive</button>';
         }
         controlsHtml += '</div>';
       }
@@ -1648,6 +1651,18 @@ function _updateJobBadge(runningCount) {
     countBadge.textContent = runningCount > 0 ? runningCount + ' running' : 'No active jobs';
   }
 }
+
+window.archiveJob = async function(manifestId, manifestType) {
+  const p = state.currentProject;
+  if (!p || !manifestId) return;
+  try {
+    await window.api('POST', `/projects/${p.id}/tasks/${manifestId}/archive?manifest_type=${manifestType}`);
+    toast('Job archived', 'info');
+    refreshJobWatcher();
+  } catch (e) {
+    toast('Archive failed: ' + e.message, 'error');
+  }
+};
 
 window.jobAction = async function(action, taskId) {
   const p = state.currentProject;
