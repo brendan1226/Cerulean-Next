@@ -11106,16 +11106,21 @@ async function renderS11Holds() {
   wrap.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
-        <div class="card-header"><span class="card-title">Upload Holds CSV</span></div>
+        <div class="card-header"><span class="card-title">Add Holds Data</span></div>
         <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
-          Upload a CSV with columns like: <code>patron_barcode, legacy_bib_id, pickup_library_id, hold_date</code>
-          or pre-resolved Koha IDs: <code>patron_id, biblio_id, pickup_library_id</code>.
-          Item-level holds: include <code>item_barcode</code> or <code>item_id</code>.
+          Select a CSV from Stage 1 uploads or upload a new file.
+          Columns: <code>patron_barcode, legacy_bib_id, pickup_library_id, hold_date</code>
+          or pre-resolved: <code>patron_id, biblio_id</code>.
+          For item-level holds: include <code>item_barcode</code> or <code>item_id</code>.
         </p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="file" id="holds-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
-          <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('holds')">Upload & Validate</button>
-        </div>
+        <div id="s11-holds-stage1-files" style="margin-bottom:8px"><div class="loading-msg"><div class="spinner"></div>Loading Stage 1 files...</div></div>
+        <details style="margin-top:4px">
+          <summary style="cursor:pointer;font-weight:600;font-size:12px;padding:4px 0">Or upload a new file</summary>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <input type="file" id="holds-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+            <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('holds')">Upload & Validate</button>
+          </div>
+        </details>
         <div id="holds-upload-status" style="margin-top:8px"></div>
       </div>
 
@@ -11128,6 +11133,7 @@ async function renderS11Holds() {
     <div id="s11-holds-validation" style="margin-top:16px"></div>
     <div id="s11-holds-push" style="margin-top:16px"></div>`;
 
+  loadS11Stage1Files('holds');
   loadS11HoldsFiles();
 }
 
@@ -11139,15 +11145,20 @@ async function renderS11Circ() {
   wrap.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
-        <div class="card-header"><span class="card-title">Upload Circ History CSV</span></div>
+        <div class="card-header"><span class="card-title">Add Circ History Data</span></div>
         <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
-          Upload completed checkouts. Columns: <code>patron_barcode, item_barcode, issuedate, returndate, branchcode</code>
+          Select a CSV from Stage 1 uploads or upload a new file.
+          Columns: <code>patron_barcode, item_barcode, issuedate, returndate, branchcode</code>
           or pre-resolved: <code>borrowernumber, itemnumber, issuedate, returndate</code>.
         </p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="file" id="circ-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
-          <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('circ_history')">Upload & Validate</button>
-        </div>
+        <div id="s11-circ-stage1-files" style="margin-bottom:8px"><div class="loading-msg"><div class="spinner"></div>Loading Stage 1 files...</div></div>
+        <details style="margin-top:4px">
+          <summary style="cursor:pointer;font-weight:600;font-size:12px;padding:4px 0">Or upload a new file</summary>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <input type="file" id="circ-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+            <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('circ_history')">Upload & Validate</button>
+          </div>
+        </details>
         <div id="circ-upload-status" style="margin-top:8px"></div>
       </div>
 
@@ -11159,6 +11170,7 @@ async function renderS11Circ() {
 
     <div id="s11-circ-actions" style="margin-top:16px"></div>`;
 
+  loadS11Stage1Files('circ_history');
   loadS11CircFiles();
 }
 
@@ -11170,16 +11182,20 @@ async function renderS11Fines() {
   wrap.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
-        <div class="card-header"><span class="card-title">Upload Fines & Fees CSV</span></div>
+        <div class="card-header"><span class="card-title">Add Fines & Fees Data</span></div>
         <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
-          Upload outstanding fines, fees, lost item charges, etc.
+          Select a CSV from Stage 1 uploads or upload a new file.
           Columns: <code>patron_barcode, amount, description, date, accounttype</code>.
           The plugin uses <code>resolve_ids: true</code> — send patron barcodes, not borrowernumbers.
         </p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="file" id="fines-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
-          <button class="btn btn-primary btn-sm" onclick="uploadFinesFile()">Upload</button>
-        </div>
+        <div id="s11-fines-stage1-files" style="margin-bottom:8px"><div class="loading-msg"><div class="spinner"></div>Loading Stage 1 files...</div></div>
+        <details style="margin-top:4px">
+          <summary style="cursor:pointer;font-weight:600;font-size:12px;padding:4px 0">Or upload a new file</summary>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <input type="file" id="fines-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+            <button class="btn btn-primary btn-sm" onclick="uploadFinesFile()">Upload</button>
+          </div>
+        </details>
         <div id="fines-upload-status" style="margin-top:8px"></div>
       </div>
 
@@ -11189,6 +11205,7 @@ async function renderS11Fines() {
       </div>
     </div>`;
 
+  loadS11Stage1Files('fines');
   loadS11FinesFiles();
 }
 
@@ -11305,6 +11322,78 @@ window.uploadHoldsFile = async function(category) {
     setTimeout(() => { if (category === 'holds') loadS11HoldsFiles(); else loadS11CircFiles(); }, 3000);
   } catch (e) {
     statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+async function loadS11Stage1Files(category) {
+  const p = state.currentProject;
+  const elId = category === 'holds' ? 's11-holds-stage1-files'
+    : category === 'circ_history' ? 's11-circ-stage1-files'
+    : 's11-fines-stage1-files';
+  const el = document.getElementById(elId);
+  if (!el) return;
+
+  try {
+    const files = await window.api('GET', '/projects/' + p.id + '/files');
+    const csvFiles = (files || []).filter(f =>
+      (f.file_category === 'items_csv' || f.file_category === 'items' || f.file_category === 'marc')
+      && f.status === 'indexed'
+      && f.filename
+      && (f.filename.toLowerCase().endsWith('.csv') || f.filename.toLowerCase().endsWith('.tsv') || f.filename.toLowerCase().endsWith('.txt'))
+    );
+
+    if (!csvFiles.length) {
+      el.innerHTML = '<span class="text-dim" style="font-size:11px">No CSV files in Stage 1. Upload a new file below.</span>';
+      return;
+    }
+
+    el.innerHTML = '<div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Select from Stage 1 uploads:</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:4px">'
+      + csvFiles.map(f =>
+        '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="selectS11File(\'' + esc(f.id) + '\',\'' + esc(category) + '\',\'' + esc(f.filename) + '\')">'
+        + esc(f.filename) + ' (' + (f.record_count ? f.record_count.toLocaleString() + ' rows' : '?') + ')'
+        + '</button>'
+      ).join('')
+      + '</div>';
+  } catch (e) {
+    el.innerHTML = '<span class="text-dim" style="font-size:11px">Could not load Stage 1 files.</span>';
+  }
+}
+
+window.selectS11File = async function(fileId, category, filename) {
+  const p = state.currentProject;
+  const statusId = category === 'holds' ? 'holds-upload-status'
+    : category === 'circ_history' ? 'circ-upload-status'
+    : 'fines-upload-status';
+  const statusEl = document.getElementById(statusId);
+  if (statusEl) statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Copying ' + esc(filename) + ' and validating...</div>';
+
+  try {
+    // Copy the Stage 1 file to the holds directory by reading and re-uploading
+    const res = await fetch(`${API_BASE}/projects/${p.id}/files/${fileId}/records/0`, {
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+    });
+
+    // Actually, we need to copy the raw file. Let's use a server-side endpoint instead.
+    // For now, download the file and re-upload it
+    const dlRes = await fetch(`${API_BASE}/projects/${p.id}/files/${fileId}/export-mrk`, {
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+    });
+
+    // Simpler approach: just tell the backend to use this file directly
+    const r = await window.api('POST', `/projects/${p.id}/holds/select-stage1-file`, {
+      file_id: fileId,
+      category: category,
+    });
+    if (statusEl) statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + esc(r.message) + '</span>';
+    toast(r.message, 'success');
+    setTimeout(() => {
+      if (category === 'holds') loadS11HoldsFiles();
+      else if (category === 'circ_history') loadS11CircFiles();
+      else loadS11FinesFiles();
+    }, 3000);
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
   }
 };
 

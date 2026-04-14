@@ -357,6 +357,73 @@ async def push_fines(
     return {"task_id": task.id, "manifest_id": manifest.id, "message": "Fines push started."}
 
 
+# ── Select Stage 1 File ──────────────────────────────────────────────
+
+@router.post("/{project_id}/holds/select-stage1-file")
+async def select_stage1_file(
+    project_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Copy a Stage 1 uploaded file into the holds directory for use in Step 11."""
+    from cerulean.models import MARCFile
+    import shutil
+
+    await require_project(project_id, db)
+    file_id = body.get("file_id")
+    category = body.get("category", "holds")
+
+    if category not in ("holds", "circ_history", "fines"):
+        raise HTTPException(400, detail="Invalid category.")
+
+    marc_file = await db.get(MARCFile, file_id)
+    if not marc_file or marc_file.project_id != project_id:
+        raise HTTPException(404, detail="Stage 1 file not found.")
+
+    src = Path(marc_file.storage_path)
+    if not src.is_file():
+        raise HTTPException(404, detail="Source file not found on disk.")
+
+    # Copy to holds directory
+    holds_dir = Path(settings.data_root) / project_id / "holds"
+    holds_dir.mkdir(parents=True, exist_ok=True)
+
+    new_id = str(uuid.uuid4())
+    dest = holds_dir / f"{new_id}.csv"
+    shutil.copy2(str(src), str(dest))
+
+    # Create HoldsFile record
+    holds_file = HoldsFile(
+        id=new_id,
+        project_id=project_id,
+        filename=marc_file.filename,
+        file_category=category,
+        storage_path=str(dest),
+    )
+    db.add(holds_file)
+    await db.flush()
+
+    # Auto-validate
+    from cerulean.api.routers.tasks import register_task
+    task = None
+    if category == "holds":
+        from cerulean.tasks.holds import validate_holds_task
+        task = validate_holds_task.apply_async(args=[project_id, new_id], queue="push")
+        register_task(project_id, task.id, "holds_validate")
+    elif category == "circ_history":
+        from cerulean.tasks.holds import validate_circ_task
+        task = validate_circ_task.apply_async(args=[project_id, new_id], queue="push")
+        register_task(project_id, task.id, "circ_validate")
+
+    return {
+        "file_id": new_id,
+        "filename": marc_file.filename,
+        "category": category,
+        "task_id": task.id if task else None,
+        "message": f"'{marc_file.filename}' added as {category} file." + (" Validation started." if task else ""),
+    }
+
+
 # ── Delete File ──────────────────────────────────────────────────────
 
 @router.delete("/{project_id}/holds/files/{file_id}", status_code=204)
