@@ -30,6 +30,7 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_ALLOWED_DOMAIN=${GOOGLE_ALLOWED_DOMAIN:-bywatersolutions.com}
+      - TZ=America/Los_Angeles
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +61,7 @@ services:
       - DATA_ROOT=/data/projects
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
+      - TZ=America/Los_Angeles
     depends_on:
       - postgres
       - redis

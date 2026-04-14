@@ -70,6 +70,6 @@ celery_app.conf.update(
     task_track_started=True,
     result_expires=86400,           # 24 hours
     # Timezone
-    timezone="UTC",
+    timezone="America/Los_Angeles",
     enable_utc=True,
 )

@@ -1092,6 +1092,9 @@
       <div class="nav-item" data-view="plugins" onclick="navigate('plugins')">
         <span class="nav-icon">⧉</span> Plugins
       </div>
+      <div class="nav-item" data-view="system-logs" onclick="navigate('system-logs')">
+        <span class="nav-icon">▤</span> System Logs
+      </div>
       <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
         <span class="nav-icon">⚙</span> System Settings
       </div>
@@ -1238,6 +1241,7 @@ function updateBreadcrumb(view) {
     suggestions: 'Suggestions',
     help: 'Help',
     plugins: 'Plugins',
+    'system-logs': 'System Logs',
     'system-settings': 'System Settings',
   };
   const crumb = document.getElementById('breadcrumb');
@@ -11043,6 +11047,100 @@ window.deletePlugin = async function(pluginId, pluginName) {
   }
 };
 
+// ── System Logs page ─────────────────────────────────────────────────
+
+window.renderSystemLogs = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">System Logs</div>
+        <div class="page-subtitle">User activity, authentication events, and system status</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="renderSystemLogs(document.getElementById('view'))">↻ Refresh</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Registered Users</span></div>
+      <div id="sys-users-list"><div class="spinner"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Server Logs</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select class="form-select" id="syslog-filter" style="font-size:11px;width:140px" onchange="loadSystemLogs()">
+            <option value="">All</option>
+            <option value="auth">Authentication</option>
+            <option value="error">Errors</option>
+          </select>
+          <input type="number" id="syslog-lines" value="100" min="10" max="500" style="font-size:11px;width:60px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)" onchange="loadSystemLogs()">
+        </div>
+      </div>
+      <div id="sys-log-viewer" class="log-terminal" style="height:400px"><div class="spinner"></div></div>
+    </div>`;
+
+  loadSystemUsers();
+  loadSystemLogs();
+};
+
+async function loadSystemUsers() {
+  const el = document.getElementById('sys-users-list');
+  if (!el) return;
+  try {
+    const users = await window.api('GET', '/auth/users');
+    if (!users || !users.length) {
+      el.innerHTML = '<span class="text-dim" style="font-size:12px">No users registered yet.</span>';
+      return;
+    }
+    el.innerHTML = `
+      <table class="data-table" style="font-size:12px;width:100%">
+        <thead><tr>
+          <th></th><th>Name</th><th>Email</th><th>Last Login</th><th>Joined</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${users.map(u => `<tr>
+            <td>${u.picture ? '<img src="' + esc(u.picture) + '" style="width:24px;height:24px;border-radius:50%">' : ''}</td>
+            <td style="font-weight:600">${esc(u.name)}</td>
+            <td class="mono text-dim">${esc(u.email)}</td>
+            <td class="text-dim" style="font-size:11px">${u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}</td>
+            <td class="text-dim" style="font-size:11px">${u.created_at ? new Date(u.created_at).toLocaleString() : '—'}</td>
+            <td>${u.is_active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Inactive</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
+async function loadSystemLogs() {
+  const el = document.getElementById('sys-log-viewer');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+
+  const filter = document.getElementById('syslog-filter')?.value || '';
+  const lines = parseInt(document.getElementById('syslog-lines')?.value) || 100;
+
+  try {
+    const r = await window.api('GET', `/auth/server-logs?filter=${filter}&lines=${lines}`);
+    if (!r || !r.lines || !r.lines.length) {
+      el.innerHTML = '<span class="text-dim">No log entries found.</span>';
+      return;
+    }
+    el.innerHTML = r.lines.map(line => {
+      const isAuth = line.includes('authenticated') || line.includes('rejected') || line.includes('NEW USER');
+      const isError = line.toLowerCase().includes('error') || line.toLowerCase().includes('traceback');
+      const isWarn = line.toLowerCase().includes('warn');
+      const cls = isError ? 'color:var(--red)' : isAuth ? 'color:var(--cerulean)' : isWarn ? 'color:var(--amber)' : 'color:var(--text-secondary)';
+      return '<div class="log-line" style="' + cls + '">' + esc(line) + '</div>';
+    }).join('');
+    // Scroll to bottom
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+}
+
 // ── System Settings page ─────────────────────────────────────────────
 
 window.renderSystemSettings = async function(el) {
@@ -11139,6 +11237,7 @@ window.saveSystemSettings = async function() {
     suggestions:   renderSuggestions,
     help:          window.renderHelp,
     plugins:       window.renderPlugins,
+    'system-logs':  window.renderSystemLogs,
     'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];

@@ -143,3 +143,50 @@ async def auth_me(user: User = Depends(get_current_user)):
         "name": user.name,
         "picture": user.picture,
     }
+
+
+@router.get("/server-logs")
+async def get_server_logs(
+    filter: str = "",
+    lines: int = 100,
+):
+    """Read recent Docker container logs. Returns parsed log lines."""
+    import subprocess
+
+    try:
+        cmd = ["docker", "logs", "--tail", str(min(lines, 500)), "cerulean-web-1"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        all_lines = (result.stdout + result.stderr).strip().split("\n")
+
+        if filter == "auth":
+            all_lines = [l for l in all_lines if "authenticated" in l or "rejected" in l or "NEW USER" in l or "Login" in l]
+        elif filter == "error":
+            all_lines = [l for l in all_lines if "error" in l.lower() or "traceback" in l.lower() or "500" in l]
+
+        return {"lines": all_lines[-lines:], "total": len(all_lines)}
+    except FileNotFoundError:
+        # Docker CLI not available inside container — read from log file fallback
+        return {"lines": ["Docker CLI not available. View logs via: docker compose logs web"], "total": 1}
+    except Exception as exc:
+        return {"lines": [f"Error reading logs: {str(exc)[:200]}"], "total": 1}
+
+
+@router.get("/users")
+async def list_users(db: AsyncSession = Depends(get_db)):
+    """List all registered users with login info."""
+    result = await db.execute(
+        select(User).order_by(User.last_login.desc().nullslast())
+    )
+    users = result.scalars().all()
+    return [
+        {
+            "id": u.id,
+            "email": u.email,
+            "name": u.name,
+            "picture": u.picture,
+            "is_active": u.is_active,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
