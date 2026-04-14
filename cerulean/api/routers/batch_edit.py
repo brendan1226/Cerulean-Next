@@ -396,3 +396,112 @@ async def regex_replace(
         output_file=output.name,
         preview_samples=samples,
     )
+
+
+# ── Call Number Generation ───────────────────────────────────────────
+
+class CallNumberRequest(BaseModel):
+    file_path: str | None = None
+    scheme: str = "dewey"           # "dewey" | "lc"
+    source_tag: str = "082"         # where to read classification from
+    source_sub: str = "a"
+    target_tag: str = "952"         # where to write call number
+    target_sub: str = "o"
+    prefix_tag: str | None = None
+    prefix_sub: str | None = None
+    skip_if_exists: bool = True
+
+@router.post("/{project_id}/batch-edit/call-numbers", response_model=BatchEditResult)
+async def generate_call_numbers(
+    project_id: str,
+    body: CallNumberRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate call numbers from classification fields (082/050) into target (952$o)."""
+    await require_project(project_id, db)
+    source = _find_marc_file(project_id, body.file_path)
+
+    records = []
+    modified_count = 0
+    total_mods = 0
+    samples = []
+
+    with open(str(source), "rb") as fh:
+        reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+        for record in reader:
+            if record is None:
+                continue
+
+            if body.skip_if_exists:
+                existing = record.get_fields(body.target_tag)
+                has_target = any(
+                    sf.code == body.target_sub and sf.value.strip()
+                    for f in existing if hasattr(f, "subfields")
+                    for sf in f.subfields
+                )
+                if has_target:
+                    records.append(record)
+                    continue
+
+            class_value = ""
+            for f in record.get_fields(body.source_tag):
+                if hasattr(f, "subfields"):
+                    for sf in f.subfields:
+                        if sf.code == body.source_sub:
+                            class_value = sf.value.strip()
+                            break
+                elif hasattr(f, "data"):
+                    class_value = f.data.strip()
+                if class_value:
+                    break
+
+            if not class_value:
+                records.append(record)
+                continue
+
+            call_number = class_value
+            author_fields = record.get_fields("100")
+            if author_fields and hasattr(author_fields[0], "subfields"):
+                for sf in author_fields[0].subfields:
+                    if sf.code == "a":
+                        surname = sf.value.strip().rstrip(",").strip()
+                        if surname:
+                            call_number += " " + surname[0].upper()
+                        break
+
+            if body.prefix_tag and body.prefix_sub:
+                for f in record.get_fields(body.prefix_tag):
+                    if hasattr(f, "subfields"):
+                        for sf in f.subfields:
+                            if sf.code == body.prefix_sub:
+                                call_number = sf.value.strip() + " " + call_number
+                                break
+
+            target_fields = record.get_fields(body.target_tag)
+            if target_fields and hasattr(target_fields[0], "subfields"):
+                target_fields[0].subfields.append(pymarc.Subfield(code=body.target_sub, value=call_number))
+            else:
+                record.add_ordered_field(pymarc.Field(
+                    tag=body.target_tag, indicators=[" ", " "],
+                    subfields=[pymarc.Subfield(code=body.target_sub, value=call_number)],
+                ))
+
+            modified_count += 1
+            total_mods += 1
+            if len(samples) < 5:
+                samples.append({"record": len(records), "tag": body.target_tag, "sub": body.target_sub, "before": "", "after": call_number[:80]})
+            records.append(record)
+
+    output = source.parent / f"{source.stem}_edited{source.suffix}"
+    _write_records(records, output)
+
+    await audit_log(db, project_id, stage=3, level="info", tag="[batch-edit]",
+                    message=f"Call numbers: {body.source_tag}${body.source_sub} → {body.target_tag}${body.target_sub} — {total_mods} generated")
+
+    return BatchEditResult(
+        records_processed=len(records),
+        records_modified=modified_count,
+        modifications=total_mods,
+        output_file=output.name,
+        preview_samples=samples,
+    )

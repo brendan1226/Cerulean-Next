@@ -1097,6 +1097,9 @@
         <div class="nav-item" data-view="marc-file-mgr" onclick="navigate('marc-file-mgr')">
           <span class="nav-icon">⊟</span> File Manager
         </div>
+        <div class="nav-item" data-view="macros" onclick="navigate('macros')">
+          <span class="nav-icon">▷</span> Macros
+        </div>
       </div>
 
       <div class="nav-section-label">Platform</div>
@@ -1230,6 +1233,7 @@ function navigate(view, params = {}) {
     'marc-sql':     window.renderMarcSql,
     'marc-export':  window.renderMarcExport,
     'marc-file-mgr': window.renderMarcFileMgr,
+    macros:         window.renderMacros,
     help:         window.renderHelp,
     plugins:      window.renderPlugins,
     'system-settings': window.renderSystemSettings,
@@ -1263,6 +1267,7 @@ function updateBreadcrumb(view) {
     'marc-sql': 'SQL Explorer',
     'marc-export': 'Export & Extract',
     'marc-file-mgr': 'File Manager',
+    macros: 'Macros',
     help: 'Help',
     plugins: 'Plugins',
     'system-logs': 'System Logs',
@@ -4903,6 +4908,7 @@ window.renderStage3_Quality = async function(el) {
       <button class="tab-btn" onclick="switchQ3Tab('issues', this)">Issues</button>
       <button class="tab-btn" onclick="switchQ3Tab('batch', this)">Batch Edit</button>
       <button class="tab-btn" onclick="switchQ3Tab('clusters', this)">Clusters</button>
+      <button class="tab-btn" onclick="switchQ3Tab('rda', this)">RDA Helper</button>
     </div>
     <div id="q3-tab"></div>`;
   renderQ3Summary();
@@ -4911,7 +4917,7 @@ window.renderStage3_Quality = async function(el) {
 function switchQ3Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  ({ summary: renderQ3Summary, issues: renderQ3Issues, batch: renderQ3BatchEdit, clusters: renderQ3Clusters })[tab]();
+  ({ summary: renderQ3Summary, issues: renderQ3Issues, batch: renderQ3BatchEdit, clusters: renderQ3Clusters, rda: renderQ3Rda })[tab]();
 }
 
 function renderQ3BatchEdit() {
@@ -5023,6 +5029,37 @@ function renderQ3BatchEdit() {
         </div>
         <button class="btn btn-primary btn-sm" onclick="runBatchDeleteField()">Delete Field</button>
         <div id="be-del-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card" style="grid-column:span 2">
+        <div class="card-header"><span class="card-title">Generate Call Numbers</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Copy classification number (Dewey/LC) into the call number field. Optionally appends author cutter (first letter of 100$a surname).</p>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Source tag</label>
+            <select class="form-select" id="be-cn-source" style="font-size:12px">
+              <option value="082$a">082$a (Dewey)</option>
+              <option value="050$a">050$a (LC)</option>
+              <option value="090$a">090$a (Local)</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Target</label>
+            <select class="form-select" id="be-cn-target" style="font-size:12px">
+              <option value="952$o">952$o (Koha item call#)</option>
+              <option value="090$a">090$a</option>
+              <option value="099$a">099$a</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Options</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" id="be-cn-skip" checked> Skip if exists</label>
+          </div>
+          <div style="display:flex;align-items:end">
+            <button class="btn btn-primary btn-sm" onclick="runBatchCallNumbers()">Generate</button>
+          </div>
+        </div>
+        <div id="be-cn-result"></div>
       </div>
     </div>`;
 }
@@ -5215,6 +5252,116 @@ function exportClusters() {
   a.download = 'clusters_' + r.field.replace('$', '_') + '.csv';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── RDA Helper ──────────────────────────────────────────────────────
+
+function renderQ3Rda() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('q3-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div class="alert alert-info" style="margin-bottom:16px">
+      The RDA Helper auto-generates <strong>336</strong> (content type), <strong>337</strong> (media type), and <strong>338</strong> (carrier type) fields based on each record's leader bytes. These fields are required for RDA-compliant cataloging.
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Scan for RDA Fields</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Check how many records are missing 336/337/338 fields.</p>
+        <button class="btn btn-primary btn-sm" onclick="runRdaScan()">Scan</button>
+        <div id="rda-scan-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Apply RDA Fields</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Auto-generate fields based on leader position 6 (type of record) and position 7 (bibliographic level).</p>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rda-gen-336" checked> 336 — Content Type (text, performed music, etc.)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rda-gen-337" checked> 337 — Media Type (unmediated, audio, video, etc.)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="rda-gen-338" checked> 338 — Carrier Type (volume, audio disc, online resource, etc.)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:8px"><input type="checkbox" id="rda-overwrite"> Overwrite existing RDA fields</label>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="runRdaApply()">Apply RDA</button>
+        <div id="rda-apply-result" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><span class="card-title">RDA Mapping Reference</span></div>
+      <div style="max-height:300px;overflow:auto">
+        <table class="data-table" style="font-size:11px;width:100%">
+          <thead><tr><th>Leader Pos 6</th><th>Type</th><th>336 Content</th><th>337 Media</th><th>338 Carrier</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">a</td><td>Language material</td><td>text (txt)</td><td>unmediated (n)</td><td>volume (nc)</td></tr>
+            <tr><td class="mono">c</td><td>Notated music</td><td>notated music (ntm)</td><td>unmediated (n)</td><td>volume (nc)</td></tr>
+            <tr><td class="mono">e</td><td>Cartographic</td><td>cartographic image (cri)</td><td>unmediated (n)</td><td>sheet (nb)</td></tr>
+            <tr><td class="mono">g</td><td>Projected medium</td><td>two-dimensional moving image (tdi)</td><td>video (v)</td><td>videodisc (vd)</td></tr>
+            <tr><td class="mono">i</td><td>Nonmusical sound</td><td>spoken word (spw)</td><td>audio (s)</td><td>audio disc (sd)</td></tr>
+            <tr><td class="mono">j</td><td>Musical sound</td><td>performed music (prm)</td><td>audio (s)</td><td>audio disc (sd)</td></tr>
+            <tr><td class="mono">k</td><td>2D graphic</td><td>still image (sti)</td><td>unmediated (n)</td><td>sheet (nb)</td></tr>
+            <tr><td class="mono">m</td><td>Computer file</td><td>computer program (cop)</td><td>computer (c)</td><td>online resource (cr)</td></tr>
+            <tr><td class="mono">r</td><td>3D artifact</td><td>three-dimensional form (tdf)</td><td>unmediated (n)</td><td>object (nr)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function runRdaScan() {
+  const p = state.currentProject;
+  const el = document.getElementById('rda-scan-result');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/rda/scan');
+    el.innerHTML = `
+      <div class="stat-grid" style="margin-top:8px">
+        <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value">${r.total_records.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Has All RDA</div><div class="stat-value text-green">${r.has_all_rda.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Missing Any</div><div class="stat-value text-amber">${r.missing_any.toLocaleString()}</div></div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;display:flex;gap:16px">
+        <span>Missing 336: <strong class="text-red">${r.missing_336.toLocaleString()}</strong></span>
+        <span>Missing 337: <strong class="text-red">${r.missing_337.toLocaleString()}</strong></span>
+        <span>Missing 338: <strong class="text-red">${r.missing_338.toLocaleString()}</strong></span>
+      </div>`;
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runRdaApply() {
+  const p = state.currentProject;
+  const el = document.getElementById('rda-apply-result');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/rda/apply', {
+      generate_336: document.getElementById('rda-gen-336')?.checked ?? true,
+      generate_337: document.getElementById('rda-gen-337')?.checked ?? true,
+      generate_338: document.getElementById('rda-gen-338')?.checked ?? true,
+      overwrite_existing: document.getElementById('rda-overwrite')?.checked ?? false,
+    });
+    el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.fields_added + ' fields added</span>'
+      + ' to ' + r.records_modified.toLocaleString() + ' of ' + r.records_processed.toLocaleString() + ' records'
+      + '<div class="mono text-dim" style="margin-top:4px;font-size:11px">Output: ' + esc(r.output_file) + '</div></div>';
+    toast(r.fields_added + ' RDA fields generated', 'success');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runBatchCallNumbers() {
+  const p = state.currentProject;
+  const el = document.getElementById('be-cn-result');
+  el.innerHTML = '<div class="spinner"></div>';
+  const [srcTag, srcSub] = (document.getElementById('be-cn-source')?.value || '082$a').split('$');
+  const [tgtTag, tgtSub] = (document.getElementById('be-cn-target')?.value || '952$o').split('$');
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/batch-edit/call-numbers', {
+      source_tag: srcTag, source_sub: srcSub || 'a',
+      target_tag: tgtTag, target_sub: tgtSub || 'o',
+      skip_if_exists: document.getElementById('be-cn-skip')?.checked ?? true,
+    });
+    _renderBatchResult('be-cn-result', r);
+    toast(r.modifications + ' call numbers generated', 'success');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
 
 // ── MARC Tools: SQL Explorer ─────────────────────────────────────────
@@ -11356,6 +11503,191 @@ window.restartEvergreenServices = async function() {
     el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
   }
 };
+
+// ── MARC Tools: Macros ───────────────────────────────────────────────
+
+window.renderMacros = async function(el) {
+  const p = state.currentProject;
+  if (!p) { el.innerHTML = '<div class="empty-state"><div class="empty-title">Select a project first</div></div>'; return; }
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Macros</div>
+        <div class="page-subtitle">Save and replay sequences of batch edit operations</div>
+      </div>
+      <button class="btn btn-primary" onclick="openCreateMacroModal()">+ Create Macro</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div id="macro-list"><div class="spinner"></div></div>
+      <div id="macro-detail">
+        <div class="card"><div class="empty-state" style="padding:40px"><div class="text-dim" style="font-size:12px">Select a macro to view its operations</div></div></div>
+      </div>
+    </div>`;
+
+  loadMacroList();
+};
+
+async function loadMacroList() {
+  const el = document.getElementById('macro-list');
+  if (!el) return;
+  try {
+    const macros = await window.api('GET', '/macros');
+    if (!macros?.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-title">No macros yet</div><div class="text-secondary" style="font-size:12px;margin-top:8px">Create a macro to save a sequence of batch edit operations for reuse.</div></div>';
+      return;
+    }
+    el.innerHTML = macros.map(m => `
+      <div class="card" style="margin-bottom:8px;cursor:pointer" onclick="previewMacro('${esc(m.id)}')">
+        <div class="card-header">
+          <span class="card-title" style="font-size:13px">${esc(m.name)}</span>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-primary btn-sm" style="font-size:10px" onclick="event.stopPropagation();runMacro('${esc(m.id)}','${esc(m.name)}')">Run</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="event.stopPropagation();deleteMacro('${esc(m.id)}')">Del</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;font-size:11px;color:var(--text-dim)">
+          <span>${m.operation_count} operations</span>
+          <span>Used ${m.use_count}×</span>
+          ${m.created_by ? '<span>by ' + esc(m.created_by.split('@')[0]) + '</span>' : ''}
+        </div>
+        ${m.description ? '<div class="text-dim" style="font-size:11px;margin-top:4px">' + esc(m.description) + '</div>' : ''}
+      </div>`).join('');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function previewMacro(macroId) {
+  const el = document.getElementById('macro-detail');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="padding:20px"></div>';
+  try {
+    const m = await window.api('GET', '/macros/' + macroId);
+    const opLabels = { find_replace: 'Find & Replace', regex: 'Regex', add_field: 'Add Field', delete_field: 'Delete Field' };
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-header"><span class="card-title">${esc(m.name)}</span></div>
+        ${m.description ? '<p class="text-secondary" style="font-size:12px;margin-bottom:12px">' + esc(m.description) + '</p>' : ''}
+        <div style="max-height:400px;overflow:auto">
+          <table class="data-table" style="font-size:11px;width:100%">
+            <thead><tr><th>#</th><th>Operation</th><th>Details</th></tr></thead>
+            <tbody>
+              ${m.operations.map((op, i) => {
+                const type = op.type || 'unknown';
+                let details = '';
+                if (type === 'find_replace') details = 'Find: "' + esc((op.find||'').substring(0,30)) + '" → "' + esc((op.replace||'').substring(0,30)) + '"' + (op.tag ? ' in ' + op.tag : '');
+                else if (type === 'regex') details = op.tag + ': s/' + esc((op.pattern||'').substring(0,20)) + '/' + esc((op.replacement||'').substring(0,20)) + '/';
+                else if (type === 'add_field') details = 'Add ' + (op.tag||'') + ' with ' + ((op.subfields||[]).length) + ' subfield(s)';
+                else if (type === 'delete_field') details = 'Delete ' + (op.tag||'') + (op.subfield ? '$' + op.subfield : '');
+                return '<tr><td>' + (i+1) + '</td><td><span class="badge badge-dim">' + esc(opLabels[type] || type) + '</span></td><td>' + details + '</td></tr>';
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="runMacro('${esc(m.id)}','${esc(m.name)}')">Run on Current Project</button>
+        </div>
+        <div id="macro-run-result" style="margin-top:12px"></div>
+      </div>`;
+  } catch (e) { el.innerHTML = '<div class="card"><span class="text-red">' + esc(e.message) + '</span></div>'; }
+}
+
+async function runMacro(macroId, macroName) {
+  const p = state.currentProject;
+  if (!confirm('Run macro "' + macroName + '" on project ' + p.code + '?')) return;
+  const el = document.getElementById('macro-run-result') || document.getElementById('macro-detail');
+  if (el === document.getElementById('macro-detail')) {
+    el.innerHTML = '<div class="card"><div class="spinner" style="padding:20px"></div></div>';
+  } else {
+    el.innerHTML = '<div class="spinner"></div>';
+  }
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/macros/' + macroId + '/run');
+    const html = '<div style="font-size:12px"><span class="badge badge-green">' + r.total_modifications + ' total changes</span>'
+      + ' across ' + r.operations_run + ' operations'
+      + '<div style="margin-top:8px;max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:4px">'
+      + '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>#</th><th>Type</th><th>Modified</th><th>Changes</th></tr></thead><tbody>'
+      + r.results.map(s => '<tr><td>' + s.step + '</td><td>' + esc(s.type) + '</td>'
+        + '<td>' + (s.records_modified != null ? s.records_modified : '<span class="text-red">' + esc(s.error||'error') + '</span>') + '</td>'
+        + '<td>' + (s.modifications != null ? s.modifications : '') + '</td></tr>').join('')
+      + '</tbody></table></div></div>';
+    if (el === document.getElementById('macro-detail')) {
+      el.innerHTML = '<div class="card">' + html + '</div>';
+    } else {
+      el.innerHTML = html;
+    }
+    toast(r.total_modifications + ' changes from macro', 'success');
+  } catch (e) {
+    const errHtml = '<span class="text-red">' + esc(e.message) + '</span>';
+    if (el === document.getElementById('macro-detail')) {
+      el.innerHTML = '<div class="card">' + errHtml + '</div>';
+    } else {
+      el.innerHTML = errHtml;
+    }
+  }
+}
+
+async function deleteMacro(macroId) {
+  if (!confirm('Delete this macro?')) return;
+  try {
+    await fetch(API_BASE + '/macros/' + macroId, { method: 'DELETE', headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {} });
+    toast('Macro deleted', 'info');
+    loadMacroList();
+  } catch (e) { toast('Delete failed', 'error'); }
+}
+
+function openCreateMacroModal() {
+  openModal(`
+    <div class="modal-title">Create Macro</div>
+    <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+      Define a sequence of batch edit operations. Each operation will run in order on the project's MARC data.
+    </p>
+    <div class="form-group">
+      <label class="form-label">Macro Name *</label>
+      <input class="form-input" id="macro-name" placeholder="e.g. Clean Symphony Data">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea class="form-textarea" id="macro-desc" placeholder="What does this macro do?"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Operations (JSON array)</label>
+      <textarea class="form-textarea mono" id="macro-ops" style="min-height:200px;font-size:11px" placeholder='[
+  {"type": "find_replace", "find": "old text", "replace": "new text", "tag": "245"},
+  {"type": "delete_field", "tag": "9XX"},
+  {"type": "regex", "tag": "260", "subfield": "c", "pattern": "c(\\\\d{4}).*", "replacement": "\\\\1"},
+  {"type": "add_field", "tag": "590", "subfields": [{"code": "a", "value": "Migrated from Symphony"}]}
+]'></textarea>
+      <div class="text-dim" style="font-size:10px;margin-top:4px">
+        Types: <code>find_replace</code>, <code>regex</code>, <code>add_field</code>, <code>delete_field</code>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCreateMacro()">Create</button>
+    </div>`);
+}
+
+async function submitCreateMacro() {
+  const name = document.getElementById('macro-name')?.value?.trim();
+  if (!name) { toast('Name required', 'warn'); return; }
+  let ops;
+  try {
+    ops = JSON.parse(document.getElementById('macro-ops')?.value || '[]');
+  } catch (e) { toast('Invalid JSON: ' + e.message, 'error'); return; }
+  if (!ops.length) { toast('Add at least one operation', 'warn'); return; }
+
+  try {
+    await window.api('POST', '/macros', {
+      name,
+      description: document.getElementById('macro-desc')?.value?.trim() || null,
+      operations: ops,
+    });
+    closeModal();
+    toast('Macro created', 'success');
+    loadMacroList();
+  } catch (e) { toast('Create failed: ' + e.message, 'error'); }
+}
 
 // ── Help / Interactive Guide ─────────────────────────────────────────
 

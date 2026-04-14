@@ -76,6 +76,27 @@ class Plugin(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# MACRO (saved batch edit sequences)
+# ══════════════════════════════════════════════════════════════════════════
+
+class Macro(Base):
+    """A reusable sequence of batch edit operations."""
+
+    __tablename__ = "macros"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    operations: Mapped[list] = mapped_column(JSONB, nullable=False)  # array of operation dicts
+    scope: Mapped[str] = mapped_column(String(20), default="global")  # "global" | "project"
+    project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"))
+    created_by: Mapped[str | None] = mapped_column(String(200))
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # SYSTEM SETTINGS (key-value store for app-wide configuration)
 # ══════════════════════════════════════════════════════════════════════════
 
