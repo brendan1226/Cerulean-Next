@@ -206,6 +206,28 @@ def _manifest_to_task_detail(celery_task_id, task_type, manifest) -> dict:
     error_message = getattr(manifest, "error_message", None)
     result_data = getattr(manifest, "result_data", None)
 
+    # Extract records from result_data if the manifest columns are empty
+    # (TransformManifest stores totals in result_data JSONB, not in columns)
+    if result_data and isinstance(result_data, dict):
+        if not records_total:
+            records_total = result_data.get("total_records", 0) or result_data.get("records_total", 0) or 0
+        if not records_success:
+            records_success = result_data.get("records_success", 0) or result_data.get("num_added", 0) or 0
+        if not records_failed:
+            records_failed = result_data.get("records_failed", 0) or result_data.get("num_errors", 0) or 0
+
+    # For transform manifests, check total_records column directly
+    if hasattr(manifest, "total_records") and manifest.total_records and not records_total:
+        records_total = manifest.total_records
+
+    # Check if task is paused
+    is_paused = False
+    if celery_task_id:
+        try:
+            is_paused = bool(_redis.get(f"cerulean:pause:task:{celery_task_id}"))
+        except Exception:
+            pass
+
     # Calculate rate
     rate = 0
     if duration and duration > 0 and records_total > 0:
@@ -225,6 +247,10 @@ def _manifest_to_task_detail(celery_task_id, task_type, manifest) -> dict:
         "error_message": error_message[:200] if error_message else None,
         "progress": {},
         "eta_seconds": None,
+        "is_paused": is_paused,
+        "can_cancel": status == "running",
+        "can_pause": status == "running" and not is_paused,
+        "can_resume": is_paused,
     }
 
     # Enrich running tasks with live Celery state

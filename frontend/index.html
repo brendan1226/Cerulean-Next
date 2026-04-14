@@ -1578,10 +1578,27 @@ async function refreshJobWatcher() {
       // ETA
       const etaStr = t.eta_seconds != null && t.eta_seconds > 0 ? _fmtDuration(t.eta_seconds) : '';
 
+      // Control buttons
+      const pausedBadge = t.is_paused ? ' <span class="badge badge-amber" style="font-size:9px">PAUSED</span>' : '';
+      let controlsHtml = '';
+      if (isRunning || t.is_paused) {
+        controlsHtml = '<div style="display:flex;gap:4px;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">';
+        if (t.can_pause) {
+          controlsHtml += '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="jobAction(\'pause\',\'' + esc(t.task_id) + '\')">⏸ Pause</button>';
+        }
+        if (t.can_resume) {
+          controlsHtml += '<button class="btn btn-primary btn-sm" style="font-size:10px" onclick="jobAction(\'resume\',\'' + esc(t.task_id) + '\')">▶ Resume</button>';
+        }
+        if (t.can_cancel) {
+          controlsHtml += '<button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="jobAction(\'cancel\',\'' + esc(t.task_id) + '\')">✕ Cancel</button>';
+        }
+        controlsHtml += '</div>';
+      }
+
       return `
         <div class="job-card ${cardClass}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-weight:600">${esc(typeLabel)}</span>
+            <span style="font-weight:600">${esc(typeLabel)}${pausedBadge}</span>
             ${statusBadge}
           </div>
           <div class="job-metrics">
@@ -1607,6 +1624,7 @@ async function refreshJobWatcher() {
           </div>
           ${progressHtml}
           ${errorHtml}
+          ${controlsHtml}
         </div>`;
     }).join('');
 
@@ -1630,6 +1648,19 @@ function _updateJobBadge(runningCount) {
     countBadge.textContent = runningCount > 0 ? runningCount + ' running' : 'No active jobs';
   }
 }
+
+window.jobAction = async function(action, taskId) {
+  const p = state.currentProject;
+  if (!p || !taskId) return;
+  if (action === 'cancel' && !confirm('Cancel this job? The task will be terminated.')) return;
+  try {
+    await window.api('POST', `/projects/${p.id}/tasks/${taskId}/${action}`);
+    toast('Job ' + action + (action === 'cancel' ? 'led' : 'd'), action === 'cancel' ? 'warn' : 'success');
+    refreshJobWatcher();
+  } catch (e) {
+    toast('Action failed: ' + e.message, 'error');
+  }
+};
 
 function _fmtDuration(seconds) {
   if (seconds < 60) return seconds + 's';
