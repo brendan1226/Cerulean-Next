@@ -120,12 +120,52 @@ docker compose exec web alembic upgrade head
 
 ## Production Deployment
 
-See [docs/DEPLOY-DIGITALOCEAN.md](docs/DEPLOY-DIGITALOCEAN.md) for full deployment instructions including:
-- DigitalOcean Droplet setup
-- SSL via Let's Encrypt
-- nginx reverse proxy
-- Data migration from local to production
-- Google OAuth configuration
+### Recommended Hosting Environments
+
+| Environment | Recommended For | Notes |
+|------------|----------------|-------|
+| **DigitalOcean Droplet** | Small–medium teams (1–10 users) | Simplest setup. Single VM with Docker Compose. Our production instance runs here. |
+| **AWS EC2 / Lightsail** | Teams familiar with AWS | Same Docker Compose stack. Use EBS for persistent storage. |
+| **Google Cloud Compute** | Google Workspace shops | Natural fit if already using Google OAuth. |
+| **Azure VM** | Microsoft-centric organizations | Works identically to any Linux VM. |
+| **On-premises Linux server** | Organizations requiring data sovereignty | Any Linux box with Docker installed. No cloud dependency. |
+| **Kubernetes** | Large-scale / enterprise | Would require splitting docker-compose into K8s manifests. Not provided out of the box. |
+
+### Minimum Server Requirements
+
+| Users | RAM | CPU | Disk | Notes |
+|-------|-----|-----|------|-------|
+| 1–3 | 4 GB | 2 vCPU | 50 GB | Development and small migrations |
+| 4–8 | 8 GB | 4 vCPU | 100 GB | **Recommended for production** — handles concurrent migrations |
+| 8–20 | 16 GB | 8 vCPU | 200 GB | Heavy use with large MARC files (1M+ records) |
+
+Disk space depends on your MARC file sizes. A typical migration project with 500K bibs uses ~2–5 GB including all intermediate files (transformed, merged, split, etc.).
+
+### Setup Guide
+
+See [docs/DEPLOY-DIGITALOCEAN.md](docs/DEPLOY-DIGITALOCEAN.md) for step-by-step production deployment:
+
+1. **Provision** — Create a VM (Ubuntu 24.04 recommended) and install Docker
+2. **DNS** — Point your domain to the server's IP
+3. **Clone & Configure** — Clone the repo, create `.env` with production secrets
+4. **Docker Compose** — Create a `docker-compose.prod.yml` override (removes hot-reload, adds nginx + SSL)
+5. **SSL** — Obtain Let's Encrypt certificate via certbot
+6. **Data Migration** — Dump local database + project files, restore on production
+7. **Google OAuth** — Configure OAuth consent screen and credentials in Google Cloud Console
+8. **SSL Auto-Renewal** — Weekly cron job for certificate renewal
+
+### Key Production Differences from Development
+
+| Setting | Development | Production |
+|---------|------------|------------|
+| uvicorn | `--reload` (hot reload) | `--workers 6` (multi-process) |
+| Ports | 8000 exposed directly | nginx on 80/443, proxies to 8000 |
+| SSL | None (HTTP) | Let's Encrypt via certbot |
+| Auth | Bypassed (no OAuth config) | Google OAuth enforced |
+| Database | Password: `cerulean` | Strong password required |
+| SECRET_KEY | `dev-secret-change-me` | 64-char random token |
+| Debug | `true` | `false` |
+| nginx | Not used | Reverse proxy + SSL termination + 3GB upload limit |
 
 ## Docker Services
 
