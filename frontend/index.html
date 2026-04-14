@@ -603,6 +603,18 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Spinner with loading message */
+    .loading-msg {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .loading-msg .spinner { flex-shrink: 0; }
+
     /* ── Progress bar ── */
     .progress-bar-wrap {
       width: 100%;
@@ -1406,7 +1418,7 @@ async function renderDashboard(el) {
         <button class="btn btn-primary" onclick="navigate('new-project')">+ New Project</button>
       </div>
     </div>
-    <div id="project-list-wrap"><div class="spinner"></div></div>`;
+    <div id="project-list-wrap"><div class="loading-msg"><div class="spinner"></div>Loading projects...</div></div>`;
 
   try {
     const projects = await api('GET', `/projects?include_archived=${_showArchived}`);
@@ -1628,7 +1640,7 @@ async function renderStage1(el) {
         <span class="card-title">Files</span>
         <button class="btn btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
       </div>
-      <div id="file-table-wrap"><div class="spinner"></div></div>
+      <div id="file-table-wrap"><div class="loading-msg"><div class="spinner"></div>Loading files...</div></div>
     </div>
     <div class="card" id="items-csv-detail-card" style="display:none">
       <div class="card-header">
@@ -2075,7 +2087,7 @@ async function previewCsvToMarc() {
   const fileInput = document.getElementById('csv-to-marc-file');
   if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
   const el = document.getElementById('csv-to-marc-preview');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
 
   const fd = new FormData();
   fd.append('file', fileInput.files[0]);
@@ -2122,7 +2134,7 @@ async function previewCsvToMarc() {
 async function convertCsvToMarc() {
   const p = state.currentProject;
   const el = document.getElementById('csv-marc-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
 
   // Collect mappings from the table
   const mappings = [];
@@ -2770,7 +2782,7 @@ async function updateItemMatchConfig() {
 async function s2RenderItemsMappingPanel() {
   const right = document.getElementById('s2-right');
   if (!right) return;
-  right.innerHTML = '<div class="spinner"></div>';
+  right.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading mappings...</div>';
 
   const p = state.currentProject;
   try {
@@ -4182,7 +4194,7 @@ async function renderTemplates(el) {
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div id="templates-page-wrap"><div class="spinner"></div></div>
+      <div id="templates-page-wrap"><div class="loading-msg"><div class="spinner"></div>Loading templates...</div></div>
       <div id="template-preview">
         <div class="card"><div class="empty-state" style="padding:40px"><div class="text-dim" style="font-size:12px">Click a template to preview its mappings</div></div></div>
       </div>
@@ -4376,7 +4388,7 @@ async function renderSuggestions(el) {
       </select>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div id="suggestions-list"><div class="spinner"></div></div>
+      <div id="suggestions-list"><div class="loading-msg"><div class="spinner"></div>Loading suggestions...</div></div>
       <div id="suggestion-detail">
         <div class="card"><div class="empty-state" style="padding:40px"><div class="text-dim" style="font-size:12px">Select a suggestion to view details and comments</div></div></div>
       </div>
@@ -5197,7 +5209,7 @@ async function buildClusters() {
   if (!field) { toast('Enter a field (e.g. 852$a)', 'warn'); return; }
   const el = document.getElementById('cluster-results');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
 
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/quality/cluster?field=' + encodeURIComponent(field));
@@ -5312,7 +5324,7 @@ function renderQ3Rda() {
 async function runRdaScan() {
   const p = state.currentProject;
   const el = document.getElementById('rda-scan-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/rda/scan');
     el.innerHTML = `
@@ -5332,7 +5344,7 @@ async function runRdaScan() {
 async function runRdaApply() {
   const p = state.currentProject;
   const el = document.getElementById('rda-apply-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/rda/apply', {
       generate_336: document.getElementById('rda-gen-336')?.checked ?? true,
@@ -5350,7 +5362,7 @@ async function runRdaApply() {
 async function runBatchCallNumbers() {
   const p = state.currentProject;
   const el = document.getElementById('be-cn-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   const [srcTag, srcSub] = (document.getElementById('be-cn-source')?.value || '082$a').split('$');
   const [tgtTag, tgtSub] = (document.getElementById('be-cn-target')?.value || '952$o').split('$');
   try {
@@ -5415,7 +5427,7 @@ async function loadMarcSchema() {
   const bodyEl = document.getElementById('sql-schema-body');
   if (!schemaEl || !bodyEl) return;
   schemaEl.style.display = '';
-  bodyEl.innerHTML = '<div class="spinner"></div>';
+  bodyEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading schema...</div>';
   try {
     const r = await window.api('GET', '/projects/' + p.id + '/marc-sql/schema');
     bodyEl.innerHTML = '<div style="max-height:300px;overflow:auto;display:flex;flex-wrap:wrap;gap:4px">'
@@ -5621,7 +5633,7 @@ async function runExtractRecords() {
   const tag = document.getElementById('ext-tag')?.value?.trim();
   if (!tag) { toast('Enter a tag', 'warn'); return; }
   const el = document.getElementById('ext-status');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/marc-export/extract-records', {
       criteria: [{
@@ -5699,7 +5711,7 @@ window.renderMarcFileMgr = async function(el) {
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><span class="card-title">Project MARC Files</span></div>
-      <div id="fm-file-list"><div class="spinner"></div></div>
+      <div id="fm-file-list"><div class="loading-msg"><div class="spinner"></div>Loading project files...</div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -5765,7 +5777,7 @@ async function loadFileList() {
 async function runFileSplit() {
   const p = state.currentProject;
   const el = document.getElementById('fm-split-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/marc-files/split', {
       mode: document.getElementById('fm-split-mode')?.value || 'count',
@@ -5793,7 +5805,7 @@ async function runFileJoin() {
   const files = filesStr.split(',').map(f => f.trim()).filter(Boolean);
   if (files.length < 2) { toast('Need at least 2 files', 'warn'); return; }
   const el = document.getElementById('fm-join-result');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/marc-files/join', {
       files: files,
@@ -5812,7 +5824,7 @@ async function renderQ3Summary() {
   const p = state.currentProject;
   const wrap = document.getElementById('q3-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let marcFiles = [];
   try {
@@ -5905,7 +5917,7 @@ async function renderQ3Issues() {
   const p = state.currentProject;
   const wrap = document.getElementById('q3-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let url = `/projects/${p.id}/quality/issues?scan_type=bib&limit=100`;
   if (q3FilterCategory) url += `&category=${encodeURIComponent(q3FilterCategory)}`;
@@ -6305,7 +6317,7 @@ async function renderS10History() {
   const p = state.currentProject;
   const wrap = document.getElementById('s10-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let versions = [];
   try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=patron`) || []; } catch(e) {}
@@ -6345,7 +6357,7 @@ async function renderS10Compare() {
   const p = state.currentProject;
   const wrap = document.getElementById('s10-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let versions = [];
   try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=patron`) || []; } catch(e) {}
@@ -6449,7 +6461,7 @@ function switchS3Tab(tab, btn) {
 async function renderS3Build() {
   const p = state.currentProject;
   const el = document.getElementById('s3-tab');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
 
   let marcFiles = [];
   let itemsFile = null;
@@ -6797,7 +6809,7 @@ async function renderS4History() {
   const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let versions = [];
   try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=bib`) || []; } catch(e) {}
@@ -6878,7 +6890,7 @@ async function renderS4Compare() {
   const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   let versions = [];
   try { versions = await window.api('GET', `/projects/${p.id}/versions?data_type=bib`) || []; } catch(e) {}
@@ -6977,7 +6989,7 @@ async function renderS4FileDiff() {
   const p = state.currentProject;
   const wrap = document.getElementById('s4-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   // Load file list
   let files = [];
@@ -7027,7 +7039,7 @@ async function runFileDiff() {
   const fileB = document.getElementById('s4-diff-file-b')?.value;
   if (!fileA || !fileB || fileA === fileB) { toast('Select two different files', 'warn'); return; }
   const el = document.getElementById('s4-file-diff-result');
-  el.innerHTML = '<div class="spinner"></div> Comparing files...';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Comparing files...';
 
   try {
     // Use the export endpoint to get field data from both files, then compare client-side by 001
@@ -7125,7 +7137,7 @@ async function recConfirmSource() {
   const p = state.currentProject;
   const statusEl = document.getElementById('rec-source-status');
   const override = document.getElementById('rec-source-override')?.value?.trim() || null;
-  statusEl.innerHTML = '<div class="spinner"></div> Confirming…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Confirming…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/reconcile/confirm-source`, override ? { source_file: override } : {});
     if (!r) { statusEl.innerHTML = '<span class="text-red">No response</span>'; return; }
@@ -7178,7 +7190,7 @@ async function renderRecScan() {
 async function recStartScan() {
   const p = state.currentProject;
   const statusEl = document.getElementById('rec-scan-status');
-  statusEl.innerHTML = '<div class="spinner"></div> Starting scan…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting scan…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/reconcile/scan`);
     if (!r) { statusEl.innerHTML = '<span class="text-red">No response</span>'; return; }
@@ -7194,7 +7206,7 @@ async function recLoadValues() {
   const vocab = document.getElementById('rec-vocab-select')?.value || 'itype';
   const el = document.getElementById('rec-values-list');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const values = await window.api('GET', `/projects/${p.id}/reconcile/values?vocab=${vocab}`);
     if (!values || !values.length) {
@@ -7221,7 +7233,7 @@ async function recLoadValues() {
 async function renderRecRules() {
   const p = state.currentProject;
   const el = document.getElementById('rec-tab');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const rules = await window.api('GET', `/projects/${p.id}/reconcile/rules`);
     el.innerHTML = `
@@ -7431,7 +7443,7 @@ async function recLoadKohaList() {
   const vocab = document.getElementById('rec-koha-vocab')?.value || 'itype';
   const el = document.getElementById('rec-koha-list');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/reconcile/koha-list?vocab=${vocab}`);
     if (!r || !r.values || !r.values.length) {
@@ -7466,7 +7478,7 @@ async function recRunValidate() {
   const p = state.currentProject;
   const el = document.getElementById('rec-validate-result');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/reconcile/validate`);
     if (!r) return;
@@ -7536,7 +7548,7 @@ async function recClear() {
 async function renderRecReport() {
   const p = state.currentProject;
   const el = document.getElementById('rec-tab');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/reconcile/report`);
     if (!r || r.state === 'IDLE') {
@@ -7624,7 +7636,7 @@ async function _recShowCategoryFile(filename, category) {
   const p = state.currentProject;
   const el = document.getElementById('rec-file-preview');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/reconcile/files/${filename}`);
     if (!r || !r.rows) { el.innerHTML = ''; return; }
@@ -7737,7 +7749,7 @@ async function renderPatronUpload() {
   const p = state.currentProject;
   const wrap = document.getElementById('patron-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   // Fetch patron files list and available Stage 1 files in parallel
   let patronFiles = [];
@@ -8049,7 +8061,7 @@ async function renderPatronMapping() {
   const p = state.currentProject;
   const wrap = document.getElementById('patron-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   try {
     _patronMaps = await window.api('GET', `/projects/${p.id}/patrons/maps`) || [];
@@ -8561,7 +8573,7 @@ async function renderPatronValues() {
   const p = state.currentProject;
   const wrap = document.getElementById('patron-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   const categories = ['categorycode', 'branchcode', 'title', 'lost'];
 
@@ -8686,7 +8698,7 @@ async function renderPatronApply() {
   const p = state.currentProject;
   const wrap = document.getElementById('patron-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="spinner"></div>';
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
 
   // Check for validation issues
   let validation = null;
@@ -8788,7 +8800,7 @@ async function previewPatronFile(filename) {
   const p = state.currentProject;
   const el = document.getElementById('patron-file-preview');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/patrons/output-files/${encodeURIComponent(filename)}`);
     if (!r || !r.rows || !r.rows.length) { el.innerHTML = '<span class="text-dim">No data.</span>'; return; }
@@ -8925,7 +8937,7 @@ async function s7TruncateKoha() {
   const p = state.currentProject;
   const statusEl = document.getElementById('s7-setup-status');
   if (!confirm('DELETE ALL biblios + items from Koha?\n\nThis cannot be undone. Only use this for re-migration.\n\nType YES_DELETE_ALL_DATA to confirm.')) return;
-  statusEl.innerHTML = '<div class="spinner"></div> Truncating Koha data…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Truncating Koha data…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/push/cerulean/truncate`, {
       tables: ['biblio', 'items', 'import_batches'],
@@ -8976,7 +8988,7 @@ async function s7VerifyKoha() {
 async function s7ScanMarcFile() {
   const p = state.currentProject;
   const statusEl = document.getElementById('s7-setup-status');
-  statusEl.innerHTML = '<div class="spinner"></div> Scanning MARC file for controlled values…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Scanning MARC file for controlled values…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/push/scan-marc`, {});
     statusEl.innerHTML = `<span class="text-green" style="font-size:12px">Scanned ${r.records_scanned.toLocaleString()} records from ${r.filename} — found ${r.total_unique_values} unique values.</span>`;
@@ -9698,7 +9710,7 @@ async function s7LoadPreview(idx) {
   const el = document.getElementById('s7-preview');
   const idxEl = document.getElementById('s7-preview-index');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/push/files/preview?filename=${encodeURIComponent(window._s7PreviewFile)}&record_index=${idx}`);
     if (!r || !r.record) { el.innerHTML = '<span class="text-dim">Could not load record.</span>'; return; }
@@ -9735,7 +9747,7 @@ async function s7PreviewCSV(filename, category) {
   if (card) card.style.display = '';
   if (idxEl) idxEl.textContent = category;
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', `/projects/${p.id}/reconcile/files/${filename}`);
     if (!r || !r.rows || !r.rows.length) {
@@ -9778,7 +9790,7 @@ async function checkMigrationMode() {
   const p = state.currentProject;
   const statusEl = document.getElementById('migration-mode-status');
   const badgeEl = document.getElementById('migration-mode-badge');
-  statusEl.innerHTML = '<div class="spinner"></div> Checking daemon status…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Checking daemon status…';
   try {
     const r = await window.api('GET', `/projects/${p.id}/push/migration-mode`);
     if (!r) return;
@@ -9850,7 +9862,7 @@ async function enableMigrationMode() {
 async function disableMigrationMode() {
   const p = state.currentProject;
   const statusEl = document.getElementById('migration-mode-status');
-  statusEl.innerHTML = '<div class="spinner"></div> Restarting daemons + restoring DB…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Restarting daemons + restoring DB…';
   try {
     const r = await window.api('POST', `/projects/${p.id}/push/migration-mode/disable`, {});
     let html = '<div class="text-green" style="font-size:12px;margin-bottom:8px">Normal operations restored.</div>';
@@ -9877,7 +9889,7 @@ async function runUtf8Scan() {
   const p = state.currentProject;
   const statusEl = document.getElementById('utf8-status');
   const repairBtn = document.getElementById('utf8-repair-btn');
-  statusEl.innerHTML = '<div class="spinner"></div> Scanning MARC file for UTF-8 issues…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Scanning MARC file for UTF-8 issues…';
   repairBtn.disabled = true;
   try {
     const r = await window.api('GET', `/projects/${p.id}/push/utf8-scan`);
@@ -11078,7 +11090,7 @@ window.saveAspenUrl = async function() {
 window.stopAspenIndexers = async function() {
   const p = state.currentProject;
   const el = document.getElementById('aspen-indexer-status');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/aspen/stop-indexers', {});
     el.innerHTML = '<span class="text-green" style="font-size:11px">Indexers stopped</span>';
@@ -11091,7 +11103,7 @@ window.stopAspenIndexers = async function() {
 window.startAspenIndexers = async function() {
   const p = state.currentProject;
   const el = document.getElementById('aspen-indexer-status');
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/aspen/start-indexers', {});
     el.innerHTML = '<span class="text-green" style="font-size:11px">Indexers restarted</span>';
@@ -11106,7 +11118,7 @@ window.checkAspenCounts = async function() {
   const card = document.getElementById('aspen-counts-card');
   const el = document.getElementById('aspen-counts');
   card.style.display = '';
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', '/projects/' + p.id + '/aspen/counts');
     const koha = r.koha || {};
@@ -11167,7 +11179,7 @@ window.startAspenReindex = async function() {
   const statusEl = document.getElementById('aspen-reindex-status');
   const workers = parseInt(document.getElementById('aspen-reindex-workers').value) || 8;
   const clear = document.getElementById('aspen-reindex-clear').checked;
-  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Reindex…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting Turbo Reindex…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-reindex', {
       worker_threads: workers, clear_index: clear,
@@ -11186,7 +11198,7 @@ window.startAspenMigration = async function() {
   const statusEl = document.getElementById('aspen-migrate-status');
   const workers = parseInt(document.getElementById('aspen-migrate-workers').value) || 4;
   const batch = parseInt(document.getElementById('aspen-migrate-batch').value) || 500;
-  statusEl.innerHTML = '<div class="spinner"></div> Starting Turbo Migration…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting Turbo Migration…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/aspen/turbo-migration', {
       worker_threads: workers, batch_size: batch,
@@ -11405,7 +11417,7 @@ window.saveEvergreenConfig = async function() {
 window.testEvergreenConn = async function() {
   const p = state.currentProject;
   const el = document.getElementById('eg-config-status');
-  el.innerHTML = '<div class="spinner"></div> Testing…';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Testing…';
   try {
     const r = await window.api('GET', '/projects/' + p.id + '/evergreen/test');
     if (r.success) {
@@ -11423,7 +11435,7 @@ window.checkEvergreenCounts = async function() {
   const card = document.getElementById('eg-counts-card');
   const el = document.getElementById('eg-counts');
   card.style.display = '';
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const r = await window.api('GET', '/projects/' + p.id + '/evergreen/counts');
     if (!r.success) { el.innerHTML = '<span class="text-red">' + esc(r.error) + '</span>'; return; }
@@ -11442,7 +11454,7 @@ window.pushBibsToEvergreen = async function() {
   const batch = parseInt(document.getElementById('eg-batch-size').value) || 500;
   const triggerMode = document.getElementById('eg-trigger-mode').value;
   const remap = document.getElementById('eg-remap-after-push').checked;
-  el.innerHTML = '<div class="spinner"></div> Starting push…';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting push…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/evergreen/push-bibs', {
       batch_size: batch, trigger_mode: triggerMode, remap_metarecords: remap,
@@ -11459,7 +11471,7 @@ window.runEvergreenPingest = async function() {
   const el = document.getElementById('eg-pingest-status');
   const procs = parseInt(document.getElementById('eg-pingest-procs').value) || 2;
   const batch = parseInt(document.getElementById('eg-pingest-batch').value) || 25;
-  el.innerHTML = '<div class="spinner"></div> Starting pingest…';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting pingest…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/evergreen/pingest', {
       processes: procs, batch_size: batch,
@@ -11475,7 +11487,7 @@ window.runEvergreenRemap = async function() {
   const p = state.currentProject;
   const el = document.getElementById('eg-remap-status');
   const startId = parseInt(document.getElementById('eg-remap-start').value) || 0;
-  el.innerHTML = '<div class="spinner"></div> Starting metarecord remap…';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Starting metarecord remap…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/evergreen/remap', {
       start_id: startId,
@@ -11492,7 +11504,7 @@ window.restartEvergreenServices = async function() {
   const el = document.getElementById('eg-restart-status');
   const container = document.getElementById('eg-restart-container').value.trim() || 'evergreen-test';
   if (!confirm('Restart memcached, OpenSRF, and apache2 in ' + container + '? The OPAC will be briefly unavailable.')) return;
-  el.innerHTML = '<div class="spinner"></div> Restarting services…';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Restarting services…';
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/evergreen/restart-services', {
       container: container,
@@ -11599,7 +11611,7 @@ async function runMacro(macroId, macroName) {
   if (el === document.getElementById('macro-detail')) {
     el.innerHTML = '<div class="card"><div class="spinner" style="padding:20px"></div></div>';
   } else {
-    el.innerHTML = '<div class="spinner"></div>';
+    el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   }
   try {
     const r = await window.api('POST', '/projects/' + p.id + '/macros/' + macroId + '/run');
@@ -12304,7 +12316,7 @@ window.renderPlugins = async function(el) {
 
     <div class="card" id="plugin-list-card">
       <div class="card-header"><span class="card-title">Available Plugins</span></div>
-      <div id="plugin-list"><div class="spinner"></div></div>
+      <div id="plugin-list"><div class="loading-msg"><div class="spinner"></div>Loading plugins...</div></div>
     </div>`;
 
   loadPluginList();
@@ -12427,7 +12439,7 @@ window.renderSystemLogs = async function(el) {
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-header"><span class="card-title">Registered Users</span></div>
-      <div id="sys-users-list"><div class="spinner"></div></div>
+      <div id="sys-users-list"><div class="loading-msg"><div class="spinner"></div>Loading registered users...</div></div>
     </div>
 
     <div class="card">
@@ -12442,7 +12454,7 @@ window.renderSystemLogs = async function(el) {
           <input type="number" id="syslog-lines" value="100" min="10" max="500" style="font-size:11px;width:60px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)" onchange="loadSystemLogs()">
         </div>
       </div>
-      <div id="sys-log-viewer" class="log-terminal" style="height:400px"><div class="spinner"></div></div>
+      <div id="sys-log-viewer" class="log-terminal" style="height:400px"><div class="loading-msg"><div class="spinner"></div>Loading server logs...</div></div>
     </div>`;
 
   loadSystemUsers();
@@ -12482,7 +12494,7 @@ async function loadSystemUsers() {
 async function loadSystemLogs() {
   const el = document.getElementById('sys-log-viewer');
   if (!el) return;
-  el.innerHTML = '<div class="spinner"></div>';
+  el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
 
   const filter = document.getElementById('syslog-filter')?.value || '';
   const lines = parseInt(document.getElementById('syslog-lines')?.value) || 100;
@@ -12518,7 +12530,7 @@ window.renderSystemSettings = async function(el) {
       </div>
     </div>
     <div class="card" style="max-width:640px" id="sys-settings-card">
-      <div class="spinner"></div> Loading settings…
+      <div class="loading-msg"><div class="spinner"></div>Loading system settings...</div>…
     </div>`;
 
   try {
@@ -12563,7 +12575,7 @@ window.renderSystemSettings = async function(el) {
 
 window.saveSystemSettings = async function() {
   const statusEl = document.getElementById('sys-settings-status');
-  statusEl.innerHTML = '<div class="spinner"></div> Saving…';
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Saving…';
 
   const inputs = document.querySelectorAll('.sys-setting');
   const settings = {};

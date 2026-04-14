@@ -169,61 +169,24 @@ async def get_server_logs(
     filter: str = "",
     lines: int = 100,
 ):
-    """Read recent server logs from multiple sources."""
+    """Read recent server logs from /tmp/cerulean.log."""
     all_lines = []
 
-    # Source 1: Read from /proc/1/fd/2 (stderr of PID 1 = uvicorn)
-    # This captures uvicorn access logs and app stderr
-    for fd_path in ["/proc/1/fd/1", "/proc/1/fd/2"]:
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["tail", "-n", str(min(lines * 2, 1000)), fd_path],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.stdout:
-                all_lines.extend(result.stdout.strip().split("\n"))
-        except Exception:
-            pass
-
-    # Source 2: Read from /tmp/cerulean.log if it exists
+    # Primary source: /tmp/cerulean.log (all app logs + auth events written here)
     try:
         from pathlib import Path
         log_file = Path("/tmp/cerulean.log")
         if log_file.is_file():
-            log_lines = log_file.read_text().strip().split("\n")
-            all_lines.extend(log_lines[-500:])
+            # Read last N*3 lines to have enough after filtering
+            import subprocess
+            result = subprocess.run(
+                ["tail", "-n", str(min(lines * 3, 3000)), str(log_file)],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.stdout:
+                all_lines = result.stdout.strip().split("\n")
     except Exception:
         pass
-
-    # Source 3: Docker logs via socket (no Docker CLI needed)
-    if not all_lines:
-        try:
-            import httpx
-            transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
-            with httpx.Client(transport=transport, timeout=5.0) as client:
-                # Find the web container
-                containers = client.get("http://localhost/containers/json").json()
-                web_container = None
-                for c in containers:
-                    names = c.get("Names", [])
-                    if any("web" in n for n in names):
-                        web_container = c["Id"]
-                        break
-                if web_container:
-                    resp = client.get(
-                        f"http://localhost/containers/{web_container}/logs",
-                        params={"stdout": "true", "stderr": "true", "tail": str(min(lines * 2, 1000))},
-                    )
-                    raw = resp.text
-                    # Strip Docker log frame headers (8-byte prefix per line)
-                    for line in raw.split("\n"):
-                        if len(line) > 8:
-                            all_lines.append(line[8:] if ord(line[0]) in (0, 1, 2) else line)
-                        elif line.strip():
-                            all_lines.append(line)
-        except Exception:
-            pass
 
     if not all_lines:
         all_lines = ["No log sources available. Check container configuration."]
