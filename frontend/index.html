@@ -1086,6 +1086,17 @@
       <div class="nav-item" data-view="suggestions" onclick="navigate('suggestions')">
         <span class="nav-icon">✦</span> Suggestions
       </div>
+      <div class="nav-section-label" id="tools-nav-label" style="display:none">MARC Tools</div>
+      <div id="tools-nav" style="display:none">
+        <div class="nav-item" data-view="marc-export" onclick="navigate('marc-export')">
+          <span class="nav-icon">⇥</span> Export & Extract
+        </div>
+        <div class="nav-item" data-view="marc-file-mgr" onclick="navigate('marc-file-mgr')">
+          <span class="nav-icon">⊟</span> File Manager
+        </div>
+      </div>
+
+      <div class="nav-section-label">Platform</div>
       <div class="nav-item" data-view="help" onclick="navigate('help')">
         <span class="nav-icon">?</span> Help
       </div>
@@ -1186,6 +1197,10 @@ function navigate(view, params = {}) {
   const hasProject = !!state.currentProject;
   document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
   document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
+  const toolsLabel = document.getElementById('tools-nav-label');
+  const toolsNav = document.getElementById('tools-nav');
+  if (toolsLabel) toolsLabel.style.display = hasProject ? '' : 'none';
+  if (toolsNav) toolsNav.style.display = hasProject ? '' : 'none';
 
   // Render view
   const viewEl = document.getElementById('view');
@@ -1209,6 +1224,8 @@ function navigate(view, params = {}) {
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
     suggestions:  renderSuggestions,
+    'marc-export':  window.renderMarcExport,
+    'marc-file-mgr': window.renderMarcFileMgr,
     help:         window.renderHelp,
     plugins:      window.renderPlugins,
     'system-settings': window.renderSystemSettings,
@@ -1239,6 +1256,8 @@ function updateBreadcrumb(view) {
     'project-settings': 'Settings',
     templates: 'Templates',
     suggestions: 'Suggestions',
+    'marc-export': 'Export & Extract',
+    'marc-file-mgr': 'File Manager',
     help: 'Help',
     plugins: 'Plugins',
     'system-logs': 'System Logs',
@@ -4787,6 +4806,7 @@ window.renderStage3_Quality = async function(el) {
       <button class="tab-btn active" onclick="switchQ3Tab('summary', this)">Summary</button>
       <button class="tab-btn" onclick="switchQ3Tab('issues', this)">Issues</button>
       <button class="tab-btn" onclick="switchQ3Tab('batch', this)">Batch Edit</button>
+      <button class="tab-btn" onclick="switchQ3Tab('clusters', this)">Clusters</button>
     </div>
     <div id="q3-tab"></div>`;
   renderQ3Summary();
@@ -4795,7 +4815,7 @@ window.renderStage3_Quality = async function(el) {
 function switchQ3Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  ({ summary: renderQ3Summary, issues: renderQ3Issues, batch: renderQ3BatchEdit })[tab]();
+  ({ summary: renderQ3Summary, issues: renderQ3Issues, batch: renderQ3BatchEdit, clusters: renderQ3Clusters })[tab]();
 }
 
 function renderQ3BatchEdit() {
@@ -5009,6 +5029,416 @@ async function runBatchDeleteField() {
     _renderBatchResult('be-del-result', r);
     toast(r.modifications + ' deletions applied', 'success');
   } catch (e) { document.getElementById('be-del-result').innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+function renderQ3Clusters() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('q3-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div class="alert alert-info" style="margin-bottom:16px">
+      Cluster records by any MARC field to see value distribution. Useful for reviewing data before reconciliation — find all unique values for a field and how many records have each.
+    </div>
+    <div class="card" style="max-width:800px">
+      <div class="card-header"><span class="card-title">Build Clusters</span></div>
+      <div style="display:flex;gap:8px;align-items:end;margin-bottom:12px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Field (tag or tag$subfield)</label>
+          <input class="form-input mono" id="cluster-field" placeholder="e.g. 852$a or 942$c" style="width:160px">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="buildClusters()">Build Clusters</button>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">
+        ${['245$a','100$a','852$a','852$b','942$c','952$y','952$c','952$a','650$a','260$b'].map(f =>
+          '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="document.getElementById(\'cluster-field\').value=\'' + f + '\';buildClusters()">' + f + '</button>'
+        ).join('')}
+      </div>
+      <div id="cluster-results"></div>
+    </div>`;
+}
+
+async function buildClusters() {
+  const p = state.currentProject;
+  const field = document.getElementById('cluster-field')?.value?.trim();
+  if (!field) { toast('Enter a field (e.g. 852$a)', 'warn'); return; }
+  const el = document.getElementById('cluster-results');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/quality/cluster?field=' + encodeURIComponent(field));
+
+    let html = '<div style="display:flex;gap:16px;margin-bottom:12px;font-size:12px">'
+      + '<span><strong>' + r.unique_values + '</strong> unique values</span>'
+      + '<span><strong>' + r.total_records.toLocaleString() + '</strong> total records</span>'
+      + '</div>';
+
+    html += '<div style="max-height:500px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">'
+      + '<table class="data-table" style="font-size:12px;width:100%">'
+      + '<thead><tr><th>Value</th><th style="text-align:right">Records</th><th style="text-align:right">%</th><th style="width:200px">Distribution</th></tr></thead><tbody>';
+
+    const maxCount = r.clusters.length ? r.clusters[0].count : 1;
+
+    for (const c of r.clusters.slice(0, 500)) {
+      const barWidth = Math.max(2, Math.round(c.count / maxCount * 100));
+      html += '<tr>'
+        + '<td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(c.value) + '">' + esc(c.value) + '</td>'
+        + '<td style="text-align:right" class="mono">' + c.count.toLocaleString() + '</td>'
+        + '<td style="text-align:right;color:var(--text-dim)">' + c.percent + '%</td>'
+        + '<td><div style="height:14px;background:var(--cerulean-dim);border-radius:2px;width:' + barWidth + '%"><div style="height:100%;background:var(--cerulean);border-radius:2px;width:100%;opacity:0.6"></div></div></td>'
+        + '</tr>';
+    }
+
+    html += '</tbody></table></div>';
+    if (r.clusters.length > 500) {
+      html += '<div class="text-dim" style="font-size:11px;margin-top:4px">Showing first 500 of ' + r.unique_values + ' values</div>';
+    }
+
+    // Export button
+    html += '<div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="exportClusters()">↓ Export as CSV</button></div>';
+
+    el.innerHTML = html;
+    window._lastClusters = r;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+}
+
+function exportClusters() {
+  const r = window._lastClusters;
+  if (!r) return;
+  let csv = 'value,count,percent\n';
+  for (const c of r.clusters) {
+    csv += '"' + c.value.replace(/"/g, '""') + '",' + c.count + ',' + c.percent + '\n';
+  }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'clusters_' + r.field.replace('$', '_') + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── MARC Tools: Export & Extract ─────────────────────────────────────
+
+window.renderMarcExport = async function(el) {
+  const p = state.currentProject;
+  if (!p) { el.innerHTML = '<div class="empty-state"><div class="empty-title">Select a project first</div></div>'; return; }
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Export & Extract</div>
+        <div class="page-subtitle">Export MARC fields to spreadsheet, extract records by criteria, convert to/from JSON</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Export to Spreadsheet</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Select MARC fields to export as columns in a CSV/TSV file. Perfect for migration verification — "show me 001, 245$a, 852$a for all records."</p>
+        <div class="form-group">
+          <label class="form-label">Fields (comma-separated)</label>
+          <input class="form-input mono" id="exp-fields" placeholder="001, 245$a, 100$a, 852$a, 952$p" value="001, 245$a, 100$a, 852$a">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Format</label>
+            <select class="form-select" id="exp-format"><option value="csv">CSV</option><option value="tsv">TSV</option></select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Max records (blank = all)</label>
+            <input class="form-input" id="exp-max" type="number" placeholder="all">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Filter field (optional)</label>
+            <input class="form-input mono" id="exp-filter-tag" placeholder="e.g. 942$c">
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Filter contains</label>
+            <input class="form-input" id="exp-filter-val" placeholder="e.g. DVD">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="runSpreadsheetExport()">Export</button>
+        <div id="exp-ss-status" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Extract Records</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Pull out records matching criteria into a new .mrc file. "Give me all DVDs" or "all records from branch MAIN."</p>
+        <div id="extract-criteria">
+          <div class="form-group">
+            <label class="form-label">Criteria</label>
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <input class="form-input mono" id="ext-tag" placeholder="Tag" style="width:60px">
+              <input class="form-input mono" id="ext-sub" placeholder="Sub" style="width:50px">
+              <select class="form-select" id="ext-op" style="width:120px;font-size:12px">
+                <option value="equals">equals</option>
+                <option value="contains">contains</option>
+                <option value="not_contains">not contains</option>
+                <option value="starts_with">starts with</option>
+                <option value="exists">exists</option>
+                <option value="missing">missing</option>
+                <option value="regex">regex</option>
+              </select>
+              <input class="form-input" id="ext-val" placeholder="Value" style="flex:1">
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Output filename</label>
+          <input class="form-input mono" id="ext-output" placeholder="extracted.mrc" value="extracted.mrc">
+        </div>
+        <button class="btn btn-primary" onclick="runExtractRecords()">Extract</button>
+        <div id="ext-status" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Export as JSON</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Export all records as JSON (pymarc dict format). Useful for API integrations and data exchange.</p>
+        <button class="btn btn-primary" onclick="runJsonExport()">Export JSON</button>
+        <div id="exp-json-status" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Import from JSON</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Import MARC records from a JSON file (pymarc dict format). Creates a new .mrc file in the project.</p>
+        <div class="form-group">
+          <input type="file" id="json-import-file" accept=".json" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="runJsonImport()">Import</button>
+        <div id="imp-json-status" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+};
+
+async function runSpreadsheetExport() {
+  const p = state.currentProject;
+  const fieldsStr = document.getElementById('exp-fields')?.value?.trim();
+  if (!fieldsStr) { toast('Enter at least one field', 'warn'); return; }
+  const fields = fieldsStr.split(',').map(f => f.trim()).filter(Boolean);
+  const el = document.getElementById('exp-ss-status');
+  el.innerHTML = '<div class="spinner"></div> Exporting...';
+
+  try {
+    const body = {
+      fields,
+      format: document.getElementById('exp-format')?.value || 'csv',
+      max_records: parseInt(document.getElementById('exp-max')?.value) || null,
+      filter_tag: document.getElementById('exp-filter-tag')?.value?.trim() || null,
+      filter_value: document.getElementById('exp-filter-val')?.value?.trim() || null,
+    };
+    const res = await fetch(`${API_BASE}/projects/${p.id}/marc-export/to-spreadsheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authToken ? { 'Authorization': 'Bearer ' + _authToken } : {} },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'marc_export.' + (body.format || 'csv');
+    a.click();
+    URL.revokeObjectURL(url);
+    el.innerHTML = '<span class="text-green" style="font-size:12px">Export downloaded!</span>';
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runExtractRecords() {
+  const p = state.currentProject;
+  const tag = document.getElementById('ext-tag')?.value?.trim();
+  if (!tag) { toast('Enter a tag', 'warn'); return; }
+  const el = document.getElementById('ext-status');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/marc-export/extract-records', {
+      criteria: [{
+        tag: tag,
+        subfield: document.getElementById('ext-sub')?.value?.trim() || null,
+        operator: document.getElementById('ext-op')?.value || 'equals',
+        value: document.getElementById('ext-val')?.value?.trim() || '',
+      }],
+      logic: 'and',
+      output_filename: document.getElementById('ext-output')?.value?.trim() || null,
+    });
+    el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.matched_records.toLocaleString() + ' records extracted</span>'
+      + ' out of ' + r.total_records.toLocaleString() + ' total'
+      + '<div class="mono text-dim" style="margin-top:4px">Output: ' + esc(r.output_file) + '</div></div>';
+    toast(r.matched_records + ' records extracted', 'success');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runJsonExport() {
+  const p = state.currentProject;
+  const el = document.getElementById('exp-json-status');
+  el.innerHTML = '<div class="spinner"></div> Exporting...';
+  try {
+    const res = await fetch(`${API_BASE}/projects/${p.id}/marc-export/to-json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authToken ? { 'Authorization': 'Bearer ' + _authToken } : {} },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'marc_records.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    el.innerHTML = '<span class="text-green" style="font-size:12px">JSON exported!</span>';
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runJsonImport() {
+  const p = state.currentProject;
+  const fileInput = document.getElementById('json-import-file');
+  if (!fileInput?.files?.length) { toast('Select a JSON file', 'warn'); return; }
+  const el = document.getElementById('imp-json-status');
+  el.innerHTML = '<div class="spinner"></div> Importing...';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try {
+    const res = await fetch(`${API_BASE}/projects/${p.id}/marc-export/from-json`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+      body: fd,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = await res.json();
+    el.innerHTML = '<span class="text-green" style="font-size:12px">' + r.records_imported + ' records imported. Indexing started.</span>';
+    toast(r.message, 'success');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+// ── MARC Tools: File Manager ─────────────────────────────────────────
+
+window.renderMarcFileMgr = async function(el) {
+  const p = state.currentProject;
+  if (!p) { el.innerHTML = '<div class="empty-state"><div class="empty-title">Select a project first</div></div>'; return; }
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">File Manager</div>
+        <div class="page-subtitle">Split and join MARC files</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Project MARC Files</span></div>
+      <div id="fm-file-list"><div class="spinner"></div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Split File</span></div>
+        <div class="form-group">
+          <label class="form-label">Split mode</label>
+          <select class="form-select" id="fm-split-mode" onchange="document.getElementById('fm-split-field-group').style.display=this.value==='field'?'':'none'">
+            <option value="count">By record count</option>
+            <option value="field">By field value</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Records per file (for count mode)</label>
+          <input class="form-input" id="fm-split-count" type="number" value="10000" min="100">
+        </div>
+        <div class="form-group" id="fm-split-field-group" style="display:none">
+          <label class="form-label">Split field (for field mode)</label>
+          <input class="form-input mono" id="fm-split-field" placeholder="e.g. 852$a">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Output prefix</label>
+          <input class="form-input" id="fm-split-prefix" value="split">
+        </div>
+        <button class="btn btn-primary" onclick="runFileSplit()">Split</button>
+        <div id="fm-split-result" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Join Files</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:12px">Select files from the list above to merge into one.</p>
+        <div class="form-group">
+          <label class="form-label">Files to join (comma-separated filenames)</label>
+          <textarea class="form-textarea mono" id="fm-join-files" placeholder="split_0001.mrc, split_0002.mrc" style="min-height:60px;font-size:12px"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Output filename</label>
+          <input class="form-input" id="fm-join-output" value="joined.mrc">
+        </div>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-bottom:12px"><input type="checkbox" id="fm-join-dedup"> Deduplicate by 001</label>
+        <button class="btn btn-primary" onclick="runFileJoin()">Join</button>
+        <div id="fm-join-result" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+
+  loadFileList();
+};
+
+async function loadFileList() {
+  const p = state.currentProject;
+  const el = document.getElementById('fm-file-list');
+  if (!el) return;
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/marc-files/list');
+    if (!r.files?.length) { el.innerHTML = '<span class="text-dim" style="font-size:12px">No .mrc files found.</span>'; return; }
+    el.innerHTML = '<table class="data-table" style="font-size:12px;width:100%">'
+      + '<thead><tr><th>Filename</th><th>Path</th><th style="text-align:right">Size</th></tr></thead><tbody>'
+      + r.files.map(f => '<tr><td class="mono">' + esc(f.filename) + '</td><td class="text-dim" style="font-size:11px">' + esc(f.path) + '</td><td style="text-align:right">' + _formatBytes(f.size_bytes) + '</td></tr>').join('')
+      + '</tbody></table>';
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runFileSplit() {
+  const p = state.currentProject;
+  const el = document.getElementById('fm-split-result');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/marc-files/split', {
+      mode: document.getElementById('fm-split-mode')?.value || 'count',
+      records_per_file: parseInt(document.getElementById('fm-split-count')?.value) || 10000,
+      split_field: document.getElementById('fm-split-field')?.value?.trim() || null,
+      output_prefix: document.getElementById('fm-split-prefix')?.value?.trim() || 'split',
+    });
+    el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.files_created + ' files created</span>'
+      + ' from ' + r.total_records.toLocaleString() + ' records</div>'
+      + '<div style="max-height:200px;overflow:auto;margin-top:8px;border:1px solid var(--border);border-radius:4px">'
+      + '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>File</th><th style="text-align:right">Records</th>'
+      + (r.files[0]?.field_value ? '<th>Value</th>' : '') + '</tr></thead><tbody>'
+      + r.files.map(f => '<tr><td class="mono">' + esc(f.filename) + '</td><td style="text-align:right">' + f.records.toLocaleString() + '</td>'
+        + (f.field_value ? '<td class="mono">' + esc(f.field_value) + '</td>' : '') + '</tr>').join('')
+      + '</tbody></table></div>';
+    toast(r.files_created + ' files created', 'success');
+    loadFileList();
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runFileJoin() {
+  const p = state.currentProject;
+  const filesStr = document.getElementById('fm-join-files')?.value?.trim();
+  if (!filesStr) { toast('Enter filenames to join', 'warn'); return; }
+  const files = filesStr.split(',').map(f => f.trim()).filter(Boolean);
+  if (files.length < 2) { toast('Need at least 2 files', 'warn'); return; }
+  const el = document.getElementById('fm-join-result');
+  el.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/marc-files/join', {
+      files: files,
+      output_filename: document.getElementById('fm-join-output')?.value?.trim() || 'joined.mrc',
+      deduplicate_001: document.getElementById('fm-join-dedup')?.checked || false,
+    });
+    el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.total_records.toLocaleString() + ' records joined</span>'
+      + (r.duplicates_skipped ? ' <span class="text-dim">(' + r.duplicates_skipped + ' duplicates skipped)</span>' : '')
+      + '<div class="mono text-dim" style="margin-top:4px">Output: ' + esc(r.output_file) + '</div></div>';
+    toast(r.total_records + ' records joined', 'success');
+    loadFileList();
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
 
 async function renderQ3Summary() {
@@ -10098,6 +10528,10 @@ window.navigate = function(view, params = {}) {
   const hasProject = !!state.currentProject;
   document.getElementById('project-nav-label').style.display = hasProject ? '' : 'none';
   document.getElementById('project-nav').style.display = hasProject ? '' : 'none';
+  const toolsLabel = document.getElementById('tools-nav-label');
+  const toolsNav = document.getElementById('tools-nav');
+  if (toolsLabel) toolsLabel.style.display = hasProject ? '' : 'none';
+  if (toolsNav) toolsNav.style.display = hasProject ? '' : 'none';
 
 // ── Step 12 — Aspen Discovery (global scope) ──────────────────────
 

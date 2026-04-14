@@ -751,3 +751,83 @@ async def clear_quality_results(
                     message=f"Cleared {deleted} quality scan results")
 
     return {"deleted": deleted}
+
+
+# ── Clustering ─────────────────────────────────────────────────────
+
+@router.post("/{project_id}/quality/cluster")
+async def build_clusters(
+    project_id: str,
+    field: str,          # e.g. "245$a", "852$a", "942$c"
+    db: AsyncSession = Depends(get_db),
+):
+    """Build clusters by grouping records on a field/subfield value.
+
+    Returns a frequency distribution: {value: count} sorted by count desc.
+    Useful for reviewing data distributions before reconciliation.
+    """
+    from pathlib import Path
+    import pymarc
+    from cerulean.core.config import get_settings
+
+    settings = get_settings()
+    await require_project(project_id, db)
+
+    # Find the best MARC file
+    project_dir = Path(settings.data_root) / project_id
+    source = None
+    for name in ["output.mrc", "Biblios-mapped-items.mrc", "merged_deduped.mrc", "merged.mrc"]:
+        candidate = project_dir / name
+        if candidate.is_file():
+            source = candidate
+            break
+    if not source:
+        raw = project_dir / "raw"
+        if raw.is_dir():
+            files = sorted(raw.glob("*.mrc"))
+            if files:
+                source = files[0]
+    if not source:
+        raise HTTPException(404, detail="No MARC files found.")
+
+    # Parse field spec
+    if "$" in field:
+        tag, sub = field.split("$", 1)
+    else:
+        tag, sub = field, None
+
+    # Build frequency map
+    clusters = {}
+    total = 0
+    with open(str(source), "rb") as fh:
+        reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+        for record in reader:
+            if record is None:
+                continue
+            total += 1
+            values = []
+            for f in record.get_fields(tag):
+                if sub and hasattr(f, "subfields"):
+                    for sf in f.subfields:
+                        if sf.code == sub:
+                            values.append(sf.value.strip())
+                elif hasattr(f, "data"):
+                    values.append(f.data.strip())
+                elif not sub and hasattr(f, "subfields"):
+                    values.append(" ".join(sf.value for sf in f.subfields).strip())
+
+            if not values:
+                values = ["(empty)"]
+
+            for v in values:
+                clusters[v] = clusters.get(v, 0) + 1
+
+    # Sort by count descending
+    sorted_clusters = sorted(clusters.items(), key=lambda x: -x[1])
+
+    return {
+        "field": field,
+        "total_records": total,
+        "unique_values": len(sorted_clusters),
+        "clusters": [{"value": v, "count": c, "percent": round(c / total * 100, 1) if total else 0} for v, c in sorted_clusters],
+    }
