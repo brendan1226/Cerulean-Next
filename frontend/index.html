@@ -11908,10 +11908,13 @@ const _HELP_SECTIONS = [
 <p>The left sidebar provides access to all areas:</p>
 <ul>
 <li><strong>Workspace</strong> — Dashboard and New Project</li>
-<li><strong>Project</strong> — Stages 1–13, Project Log, Settings (visible when a project is selected)</li>
-<li><strong>Platform</strong> — Help, Templates, Suggestions, Plugins, System Settings</li>
+<li><strong>Project</strong> — Steps 1–13, Project Log, Settings (visible when a project is selected)</li>
+<li><strong>MARC Tools</strong> — SQL Explorer, Export &amp; Extract, File Manager, Macros</li>
+<li><strong>Platform</strong> — Help, Templates, Suggestions, Plugins, System Logs, System Settings</li>
 </ul>
-<p>The <strong>pipeline bar</strong> at the top of each stage page shows your progress through all stages. Completed stages show a checkmark.</p>
+<p>The <strong>pipeline bar</strong> at the top of each step page shows your progress. Completed steps show a checkmark. <strong>Click any step in the pipeline bar to navigate directly to it.</strong></p>
+<h4>MARC Browser (Pinned Panel)</h4>
+<p>Click the <strong>MARC Browser</strong> button in the top-right toolbar to open a slide-out panel that shows MARC records from any file. This panel stays open as you navigate between steps — perfect for referencing source data while mapping fields, reviewing quality issues, or configuring reconciliation rules. The main content and the drawer scroll independently.</p>
 <h4>Creating a Project</h4>
 <ol>
 <li>Click <strong>New Project</strong> in the sidebar</li>
@@ -12357,6 +12360,32 @@ const _HELP_SECTIONS = [
 <p>View registered users (name, email, avatar, last login, join date) and server activity logs. Every POST/PATCH/PUT/DELETE request is logged with the user's email. Filter by Authentication events or Errors.</p>
 <h4>Suggestions</h4>
 <p>Team communication hub with threaded comments, voting, and status tracking (Open, Confirmed, In Progress, Fixed, Shipped, Future Dev, Won't Fix, System Action, Closed).</p>
+` },
+  { id: 'marc-browser', title: 'Pinned MARC Browser', content: `
+<p>The <strong>MARC Browser</strong> is a slide-out panel that lets you view MARC records from any file while working in any step of the pipeline. It's designed for power users who need to reference source data while performing mapping, quality review, reconciliation, or other tasks.</p>
+<h4>How to Use</h4>
+<ol>
+<li>Click the <strong>MARC Browser</strong> button in the top-right toolbar (visible when a project is selected)</li>
+<li>Select a MARC file from the dropdown</li>
+<li>Navigate records with the <strong>◀ ▶</strong> buttons or jump to a specific record number</li>
+<li>The panel stays open as you navigate between steps</li>
+<li>Click the button again or the <strong>✕</strong> to close</li>
+</ol>
+<h4>What You See</h4>
+<ul>
+<li><strong>Record title</strong> from 245$a</li>
+<li><strong>Leader bytes</strong> in monospace</li>
+<li><strong>All fields</strong> with tags (cerulean), indicators, and subfields ($code in amber)</li>
+<li><strong>Item fields</strong> (952, 949, 999, 852) highlighted with a cyan background and a detection banner showing counts</li>
+</ul>
+<h4>Use Cases</h4>
+<ul>
+<li><strong>While mapping (Step 5)</strong> — Browse records to see what fields exist before creating mappings</li>
+<li><strong>While reviewing quality (Step 3)</strong> — Check specific records referenced by quality issues</li>
+<li><strong>While reconciling (Step 7)</strong> — See actual 952 field values to understand what codes need mapping</li>
+<li><strong>While configuring load (Step 10)</strong> — Verify record structure before pushing to Koha</li>
+</ul>
+<p>The drawer also includes a <strong>↓ MRK</strong> button to export the current file in MarcEdit's mnemonic text format.</p>
 ` },
   { id: 'troubleshooting', title: 'Troubleshooting', content: `
 <h4>"Internal Server Error" on a page</h4>
