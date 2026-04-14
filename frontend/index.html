@@ -12074,6 +12074,83 @@ const _HELP_SECTIONS = [
 </ul>
 <p><a href="${API_BASE.replace('/api/v1','')}/help/connect-local-koha" target="_blank" style="color:var(--cerulean)">Download full guide with troubleshooting</a></p>
 ` },
+  { id: 'batch-edit', title: 'Batch Edit, Clustering & RDA (Step 3)', content: `
+<p>Step 3 (Data Quality) includes powerful data manipulation tools in addition to the quality scanner.</p>
+<h4>Batch Edit Tab</h4>
+<p>MarcEdit-style operations that apply changes across all records. All operations create a new <code>_edited.mrc</code> file — your original is preserved.</p>
+<ul>
+<li><strong>Find &amp; Replace</strong> &mdash; text substitution, filter by tag/subfield, case-sensitive option, whole-field replacement</li>
+<li><strong>Regex Substitution</strong> &mdash; pattern-based changes with capture groups (e.g., extract year from date field)</li>
+<li><strong>Add Field</strong> &mdash; add a new MARC field to all records with configurable indicators, subfields, and conditions</li>
+<li><strong>Delete Field</strong> &mdash; remove fields by tag, optionally filtered by content or limited to specific subfields</li>
+<li><strong>Generate Call Numbers</strong> &mdash; copy classification (082/050/090) into call number field (952$o), auto-appends author cutter</li>
+</ul>
+<h4>Clusters Tab</h4>
+<p>Group records by any MARC field to see value distribution. Enter a field (e.g., <code>852$a</code> for branches, <code>942$c</code> for item types) and click Build Clusters. Shows unique values, counts, percentages, and visual bars. Export as CSV. Invaluable for data review before reconciliation.</p>
+<h4>RDA Helper Tab</h4>
+<p>Auto-generate RDA-compliant 336 (Content Type), 337 (Media Type), and 338 (Carrier Type) fields based on MARC leader bytes.</p>
+<ol>
+<li><strong>Scan</strong> &mdash; check how many records are missing each RDA field</li>
+<li><strong>Apply</strong> &mdash; generate fields from leader position 6 (type of record) and position 7 (bib level). Maps to proper RDA terms, codes, and source vocabularies.</li>
+</ol>
+<p>Example: leader pos 6 = "a" (language material) &rarr; 336 $a text $b txt $2 rdacontent, 337 $a unmediated $b n $2 rdamedia, 338 $a volume $b nc $2 rdacarrier</p>
+` },
+  { id: 'marc-tools', title: 'MARC Tools (SQL Explorer, Export, File Manager, Macros)', content: `
+<p>The MARC Tools section appears in the sidebar when a project is selected. These tools work across all pipeline steps.</p>
+<h4>SQL Explorer</h4>
+<p>Query your MARC data with SQL-like syntax:</p>
+<ul>
+<li><code>SELECT 001, 245$a, 852$a WHERE 942$c = 'DVD' LIMIT 100</code></li>
+<li><code>SELECT 001, 245$a WHERE 020$a EXISTS</code></li>
+<li><code>SELECT * WHERE 245$a LIKE '%journal%' LIMIT 10</code></li>
+</ul>
+<p>Supports: =, !=, CONTAINS, LIKE, EXISTS, MISSING, AND/OR, ORDER BY, LIMIT. Click "Show Schema" to browse available fields. Export results as CSV.</p>
+<h4>Export &amp; Extract</h4>
+<ul>
+<li><strong>Export to Spreadsheet</strong> &mdash; select MARC fields as columns, get CSV/TSV (e.g., "show me 001, 245$a, 852$a for all records")</li>
+<li><strong>Extract Records</strong> &mdash; pull records matching criteria into a new .mrc file</li>
+<li><strong>JSON Export/Import</strong> &mdash; convert to/from JSON (pymarc format)</li>
+</ul>
+<h4>File Manager</h4>
+<ul>
+<li><strong>Split by count</strong> &mdash; break a large file into chunks (e.g., 10,000 records per file)</li>
+<li><strong>Split by field</strong> &mdash; separate file per unique value (e.g., one file per branch code)</li>
+<li><strong>Join</strong> &mdash; merge multiple files with optional 001 deduplication</li>
+</ul>
+<h4>Macros</h4>
+<p>Save sequences of batch edit operations for reuse. Create a macro with a JSON array of operations (find_replace, regex, add_field, delete_field), then run it on any project with one click. Tracks use count per macro.</p>
+` },
+  { id: 'oai-pmh', title: 'OAI-PMH Harvesting & MarcEdit Integration', content: `
+<h4>OAI-PMH Endpoint</h4>
+<p>Cerulean provides an OAI-PMH 2.0 endpoint for harvesting MARC records. MarcEdit can pull records directly.</p>
+<p>Base URL: <code>https://cerulean-next.gallagher-family-hub.com/api/v1/oai/{project_id}</code></p>
+<p>Supports: Identify, ListMetadataFormats, ListRecords, GetRecord. Metadata format: marcxml. Only shared projects are harvestable (no auth required).</p>
+<h4>MarcEdit Integration</h4>
+<ul>
+<li><strong>MRK Export</strong> &mdash; download any MARC file as .mrk (MarcEdit's native text format) from Step 1</li>
+<li><strong>OAI Harvest</strong> &mdash; MarcEdit &rarr; Tools &rarr; OAI Harvester &rarr; paste the base URL</li>
+<li><strong>Round-trip editing</strong> &mdash; download MRK &rarr; edit in MarcEdit &rarr; save &rarr; re-upload to Cerulean</li>
+</ul>
+` },
+  { id: 'templates-detail', title: 'Templates & Google Sheets', content: `
+<p>Field mapping templates can be saved, shared, and imported from spreadsheets.</p>
+<h4>Import from Google Sheets</h4>
+<p>Click <strong>Import</strong> &rarr; <strong>Google Sheets URL</strong> tab. Paste a Google Sheets link (sheet must be shared as "Anyone with the link can view"). Cerulean fetches the CSV directly.</p>
+<p>Required columns: <code>source_tag</code>, <code>target_tag</code>. Optional: <code>source_sub</code>, <code>target_sub</code>, <code>transform_type</code>, <code>transform_fn</code>, <code>preset_key</code>, <code>delete_source</code>, <code>notes</code>.</p>
+<h4>Template Preview</h4>
+<p>Click any template in the Templates page to see its full mapping table with source &rarr; target, transform badges, MOVE indicators, and notes.</p>
+<h4>CSV Round-Trip</h4>
+<p>Download a template as CSV &rarr; edit in Google Sheets/Excel &rarr; re-import. Perfect for collaborative template development.</p>
+` },
+  { id: 'system-admin', title: 'System Administration', content: `
+<h4>System Settings</h4>
+<p>Configure Google OAuth (Client ID/Secret, allowed domains), JWT expiry, and Anthropic API key. Changes take effect immediately.</p>
+<p><strong>Multi-domain OAuth:</strong> Set allowed domains as comma-separated values (e.g., <code>bywatersolutions.com,openfifth.co.uk</code>). The consent screen app type must be <strong>External</strong> in Google Cloud Console for multi-org access.</p>
+<h4>System Logs</h4>
+<p>View registered users (name, email, avatar, last login, join date) and server activity logs. Every POST/PATCH/PUT/DELETE request is logged with the user's email. Filter by Authentication events or Errors.</p>
+<h4>Suggestions</h4>
+<p>Team communication hub with threaded comments, voting, and status tracking (Open, Confirmed, In Progress, Fixed, Shipped, Future Dev, Won't Fix, System Action, Closed).</p>
+` },
   { id: 'troubleshooting', title: 'Troubleshooting', content: `
 <h4>"Internal Server Error" on a page</h4>
 <ul>
