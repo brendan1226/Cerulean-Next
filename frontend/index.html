@@ -1088,6 +1088,9 @@
       </div>
       <div class="nav-section-label" id="tools-nav-label" style="display:none">MARC Tools</div>
       <div id="tools-nav" style="display:none">
+        <div class="nav-item" data-view="marc-sql" onclick="navigate('marc-sql')">
+          <span class="nav-icon">⊳</span> SQL Explorer
+        </div>
         <div class="nav-item" data-view="marc-export" onclick="navigate('marc-export')">
           <span class="nav-icon">⇥</span> Export & Extract
         </div>
@@ -1224,6 +1227,7 @@ function navigate(view, params = {}) {
     'project-settings': renderProjectSettings,
     templates:    renderTemplates,
     suggestions:  renderSuggestions,
+    'marc-sql':     window.renderMarcSql,
     'marc-export':  window.renderMarcExport,
     'marc-file-mgr': window.renderMarcFileMgr,
     help:         window.renderHelp,
@@ -1256,6 +1260,7 @@ function updateBreadcrumb(view) {
     'project-settings': 'Settings',
     templates: 'Templates',
     suggestions: 'Suggestions',
+    'marc-sql': 'SQL Explorer',
     'marc-export': 'Export & Extract',
     'marc-file-mgr': 'File Manager',
     help: 'Help',
@@ -1585,6 +1590,15 @@ async function renderStage1(el) {
         <input type="file" id="items-file-input" style="display:none" accept=".csv,.tsv,.txt,.json,.mrc,.marc"
           onchange="uploadItemsFiles(this.files)">
       </div>
+    </div>
+    <div class="card" style="margin-bottom:20px;border:2px solid var(--cerulean-dim);background:rgba(0,188,212,0.02)">
+      <div class="card-header"><span class="card-title">Convert CSV to MARC</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:8px">Create MARC bib records from a spreadsheet. Upload a CSV, map columns to MARC tags, and generate a .mrc file.</p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="file" id="csv-to-marc-file" accept=".csv,.tsv,.txt,.xlsx" style="font-size:12px">
+        <button class="btn btn-primary btn-sm" onclick="previewCsvToMarc()">Preview & Map</button>
+      </div>
+      <div id="csv-to-marc-preview" style="margin-top:12px"></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
       <div class="card">
@@ -2048,6 +2062,88 @@ async function doDeleteFile(fileId) {
   } catch (e) {
     console.error(e);
     toast('Failed to delete file: ' + (e.message || e), 'error');
+  }
+}
+
+async function previewCsvToMarc() {
+  const p = state.currentProject;
+  const fileInput = document.getElementById('csv-to-marc-file');
+  if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
+  const el = document.getElementById('csv-to-marc-preview');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+
+  try {
+    const res = await fetch(`${API_BASE}/projects/${p.id}/csv-to-marc/preview`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+      body: fd,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = await res.json();
+
+    let html = '<div style="font-size:12px;margin-bottom:8px"><strong>' + r.total_rows + '</strong> rows, <strong>' + r.columns.length + '</strong> columns</div>';
+
+    // Column mapping form
+    html += '<div style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:6px;margin-bottom:12px">'
+      + '<table class="data-table" style="font-size:11px;width:100%">'
+      + '<thead><tr><th>CSV Column</th><th>Sample</th><th>MARC Tag</th><th>Subfield</th></tr></thead><tbody>';
+
+    for (const col of r.columns) {
+      const sample = r.samples.length ? (r.samples[0][col] || '').substring(0, 40) : '';
+      html += '<tr>'
+        + '<td class="mono">' + esc(col) + '</td>'
+        + '<td class="text-dim" style="font-size:10px">' + esc(sample) + '</td>'
+        + '<td><input class="form-input mono csv-marc-tag" data-col="' + esc(col) + '" placeholder="e.g. 245" style="width:60px;font-size:11px;padding:2px 4px"></td>'
+        + '<td><input class="form-input mono csv-marc-sub" data-col="' + esc(col) + '" placeholder="a" style="width:40px;font-size:11px;padding:2px 4px" value="a"></td>'
+        + '</tr>';
+    }
+    html += '</tbody></table></div>';
+
+    html += '<div style="display:flex;gap:8px;align-items:center">'
+      + '<button class="btn btn-primary" onclick="convertCsvToMarc()">Convert to MARC</button>'
+      + '<input class="form-input" id="csv-marc-output" value="converted.mrc" placeholder="output filename" style="width:160px;font-size:12px">'
+      + '</div>';
+    html += '<div id="csv-marc-result" style="margin-top:12px"></div>';
+
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+}
+
+async function convertCsvToMarc() {
+  const p = state.currentProject;
+  const el = document.getElementById('csv-marc-result');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  // Collect mappings from the table
+  const mappings = [];
+  document.querySelectorAll('.csv-marc-tag').forEach(input => {
+    const tag = input.value.trim();
+    if (!tag) return;
+    const col = input.dataset.col;
+    const subInput = document.querySelector('.csv-marc-sub[data-col="' + col + '"]');
+    const sub = subInput ? subInput.value.trim() || 'a' : 'a';
+    mappings.push({ column: col, tag: tag, subfield: sub });
+  });
+
+  if (!mappings.length) { toast('Map at least one column to a MARC tag', 'warn'); el.innerHTML = ''; return; }
+
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/csv-to-marc/convert', {
+      mappings: mappings,
+      output_filename: document.getElementById('csv-marc-output')?.value?.trim() || 'converted.mrc',
+    });
+    el.innerHTML = '<span class="text-green" style="font-size:12px">' + r.records_created + ' MARC records created'
+      + (r.errors ? ' (' + r.errors + ' errors)' : '') + '. Indexing started.</span>';
+    toast(r.message, 'success');
+    // Refresh file list
+    setTimeout(loadFiles, 2000);
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
   }
 }
 
@@ -5121,6 +5217,130 @@ function exportClusters() {
   URL.revokeObjectURL(url);
 }
 
+// ── MARC Tools: SQL Explorer ─────────────────────────────────────────
+
+window.renderMarcSql = async function(el) {
+  const p = state.currentProject;
+  if (!p) { el.innerHTML = '<div class="empty-state"><div class="empty-title">Select a project first</div></div>'; return; }
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">SQL Explorer</div>
+        <div class="page-subtitle">Query your MARC data with SQL-like syntax</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">
+        <span class="card-title">Query</span>
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="loadMarcSchema()">Show Schema</button>
+      </div>
+      <textarea class="form-textarea mono" id="sql-query" style="min-height:80px;font-size:13px;background:var(--bg-deep)"
+        placeholder="SELECT 001, 245$a, 852$a, 942$c WHERE 942$c = 'DVD' LIMIT 100"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <button class="btn btn-primary" onclick="runMarcSqlQuery()">Run Query</button>
+        <span class="text-dim" style="font-size:11px">Supports: SELECT, WHERE (=, !=, CONTAINS, LIKE, EXISTS, MISSING), AND/OR, ORDER BY, LIMIT</span>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap">
+        <span class="text-dim" style="font-size:10px;margin-right:4px">Examples:</span>
+        ${[
+          "SELECT 001, 245\\$a, 100\\$a LIMIT 20",
+          "SELECT 001, 245\\$a, 852\\$a WHERE 852\\$a CONTAINS 'MAIN'",
+          "SELECT 001, 245\\$a WHERE 942\\$c = 'DVD' LIMIT 50",
+          "SELECT 001, 020\\$a WHERE 020\\$a EXISTS",
+          "SELECT * WHERE 245\\$a LIKE '%journal%' LIMIT 10",
+        ].map(q => '<button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 6px" onclick="document.getElementById(\'sql-query\').value=\'' + q.replace(/'/g, "\\'") + '\'">' + esc(q.substring(0, 45)) + (q.length > 45 ? '...' : '') + '</button>').join('')}
+      </div>
+    </div>
+
+    <div id="sql-schema" style="display:none" class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Schema (available fields)</span></div>
+      <div id="sql-schema-body"></div>
+    </div>
+
+    <div id="sql-results"></div>`;
+};
+
+async function loadMarcSchema() {
+  const p = state.currentProject;
+  const schemaEl = document.getElementById('sql-schema');
+  const bodyEl = document.getElementById('sql-schema-body');
+  if (!schemaEl || !bodyEl) return;
+  schemaEl.style.display = '';
+  bodyEl.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/marc-sql/schema');
+    bodyEl.innerHTML = '<div style="max-height:300px;overflow:auto;display:flex;flex-wrap:wrap;gap:4px">'
+      + r.schema.map(s =>
+        '<div style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;cursor:pointer" onclick="document.getElementById(\'sql-query\').value+=\'' + s.tag + '\'">'
+        + '<span class="mono" style="font-weight:600;color:var(--cerulean)">' + esc(s.tag) + '</span>'
+        + '<span class="text-dim" style="margin-left:4px">' + s.columns.slice(1).map(c => '<span class="mono" style="cursor:pointer;color:var(--amber)" onclick="event.stopPropagation();document.getElementById(\'sql-query\').value+=\', ' + c + '\'">' + esc(c) + '</span>').join(' ') + '</span>'
+        + '</div>'
+      ).join('')
+      + '</div>';
+  } catch (e) { bodyEl.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function runMarcSqlQuery() {
+  const p = state.currentProject;
+  const query = document.getElementById('sql-query')?.value?.trim();
+  if (!query) { toast('Enter a query', 'warn'); return; }
+  const el = document.getElementById('sql-results');
+  if (!el) return;
+  el.innerHTML = '<div class="spinner" style="padding:20px"></div>';
+
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/marc-sql/query', { query });
+
+    let html = '<div class="card">';
+    html += '<div class="card-header"><span class="card-title">Results</span>'
+      + '<div style="display:flex;gap:8px;align-items:center">'
+      + '<span class="text-dim" style="font-size:11px">' + r.total_matched.toLocaleString() + ' matched / ' + r.total_scanned.toLocaleString() + ' scanned — showing ' + r.rows_returned + '</span>'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="exportSqlResults()">↓ CSV</button>'
+      + '</div></div>';
+
+    if (!r.rows.length) {
+      html += '<div class="empty-state" style="padding:30px"><div class="empty-title">No records matched</div></div>';
+    } else {
+      html += '<div style="max-height:500px;overflow:auto;border:1px solid var(--border);border-radius:6px">'
+        + '<table class="data-table" style="font-size:11px;width:100%;white-space:nowrap">'
+        + '<thead><tr><th>#</th>' + r.fields.map(f => '<th class="mono">' + esc(f) + '</th>').join('') + '</tr></thead><tbody>';
+
+      for (const row of r.rows) {
+        html += '<tr><td class="text-dim">' + row._index + '</td>';
+        for (const f of r.fields) {
+          const val = row[f] || '';
+          html += '<td class="mono" title="' + esc(val) + '" style="max-width:250px;overflow:hidden;text-overflow:ellipsis">' + esc(val.length > 60 ? val.substring(0, 57) + '...' : val) + '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+    window._lastSqlResult = r;
+  } catch (e) {
+    el.innerHTML = '<div class="card"><span class="text-red" style="font-size:12px">' + esc(e.message) + '</span></div>';
+  }
+}
+
+function exportSqlResults() {
+  const r = window._lastSqlResult;
+  if (!r || !r.rows.length) return;
+  let csv = r.fields.join(',') + '\n';
+  for (const row of r.rows) {
+    csv += r.fields.map(f => '"' + (row[f] || '').replace(/"/g, '""') + '"').join(',') + '\n';
+  }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sql_query_results.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── MARC Tools: Export & Extract ─────────────────────────────────────
 
 window.renderMarcExport = async function(el) {
@@ -6413,7 +6633,8 @@ window.renderStage4_Versions = async function(el) {
     ${pipelineBar(p)}
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchS4Tab('history', this)">Version History</button>
-      <button class="tab-btn" onclick="switchS4Tab('compare', this)">Compare</button>
+      <button class="tab-btn" onclick="switchS4Tab('compare', this)">Compare Versions</button>
+      <button class="tab-btn" onclick="switchS4Tab('filediff', this)">Compare Files</button>
     </div>
     <div id="s4-tab"></div>`;
   renderS4History();
@@ -6422,7 +6643,7 @@ window.renderStage4_Versions = async function(el) {
 function switchS4Tab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  ({ history: renderS4History, compare: renderS4Compare })[tab]();
+  ({ history: renderS4History, compare: renderS4Compare, filediff: renderS4FileDiff })[tab]();
 }
 
 async function renderS4History() {
@@ -6603,6 +6824,93 @@ function renderDiffResult(diff) {
         </table>
       </div>
     </div>` : ''}`;
+}
+
+async function renderS4FileDiff() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s4-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="spinner"></div>';
+
+  // Load file list
+  let files = [];
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/marc-files/list');
+    files = r.files || [];
+  } catch(e) {}
+
+  if (files.length < 2) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:40px"><div class="empty-title">Need at least 2 MARC files to compare</div><div class="text-secondary" style="font-size:12px;margin-top:8px">Upload files in Step 1 or create versions.</div></div>';
+    return;
+  }
+
+  const opts = files.map(f => '<option value="' + esc(f.path) + '">' + esc(f.filename) + ' (' + _formatBytes(f.size_bytes) + ')</option>').join('');
+
+  wrap.innerHTML = `
+    <div class="card" style="max-width:700px">
+      <div class="card-header"><span class="card-title">Compare Two MARC Files</span></div>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">
+        Compare any two .mrc files in the project. Shows record counts, added/removed records, and field-level differences.
+      </p>
+      <div style="display:flex;gap:12px;margin-bottom:12px">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">File A (older)</label>
+          <select class="form-select" id="s4-diff-file-a">${opts}</select>
+        </div>
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label class="form-label">File B (newer)</label>
+          <select class="form-select" id="s4-diff-file-b">${opts}</select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" onclick="runFileDiff()">Compare Files</button>
+        <span class="text-dim" style="font-size:11px">Compares by 001 control number</span>
+      </div>
+      <div id="s4-file-diff-result" style="margin-top:16px"></div>
+    </div>`;
+
+  if (files.length >= 2) {
+    document.getElementById('s4-diff-file-b').selectedIndex = files.length > 1 ? 1 : 0;
+  }
+}
+
+async function runFileDiff() {
+  const p = state.currentProject;
+  const fileA = document.getElementById('s4-diff-file-a')?.value;
+  const fileB = document.getElementById('s4-diff-file-b')?.value;
+  if (!fileA || !fileB || fileA === fileB) { toast('Select two different files', 'warn'); return; }
+  const el = document.getElementById('s4-file-diff-result');
+  el.innerHTML = '<div class="spinner"></div> Comparing files...';
+
+  try {
+    // Use the export endpoint to get field data from both files, then compare client-side by 001
+    const [dataA, dataB] = await Promise.all([
+      window.api('POST', '/projects/' + p.id + '/marc-export/to-spreadsheet', { file_path: fileA, fields: ['001', '245$a'], format: 'csv', max_records: 50000 }),
+      window.api('POST', '/projects/' + p.id + '/marc-export/to-spreadsheet', { file_path: fileB, fields: ['001', '245$a'], format: 'csv', max_records: 50000 }),
+    ].map(async (prom) => {
+      const res = await fetch(`${API_BASE}/projects/${p.id}/marc-export/to-spreadsheet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ..._authToken ? { 'Authorization': 'Bearer ' + _authToken } : {} },
+        body: JSON.stringify({ file_path: fileA === dataA ? fileA : fileB, fields: ['001', '245$a'], format: 'csv' }),
+      });
+      return res.text();
+    }));
+
+    // Simple comparison: count records in each
+    // For a proper diff we'd need a backend endpoint, but for now show record counts
+    const countA = (dataA.match(/\n/g) || []).length - 1;
+    const countB = (dataB.match(/\n/g) || []).length - 1;
+
+    el.innerHTML = `
+      <div class="stat-grid" style="margin-bottom:16px">
+        <div class="stat-card"><div class="stat-label">File A Records</div><div class="stat-value">${countA.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">File B Records</div><div class="stat-value">${countB.toLocaleString()}</div></div>
+        <div class="stat-card"><div class="stat-label">Difference</div><div class="stat-value ${countB > countA ? 'text-green' : countB < countA ? 'text-red' : ''}">${countB >= countA ? '+' : ''}${(countB - countA).toLocaleString()}</div></div>
+      </div>
+      <p class="text-dim" style="font-size:12px">For detailed field-level comparison, use the Version History tab to create snapshots and compare them.</p>`;
+  } catch (e) {
+    el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
