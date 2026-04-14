@@ -125,8 +125,10 @@ async def google_callback(
         f"{' [NEW USER]' if is_new else ''}"
     )
     logger.info(log_msg, email=email, user_id=user.id)
-    # Also write to file for the System Logs viewer
     _append_log(log_msg)
+    # Cache email for action logging
+    from cerulean.main import _cache_user_email
+    _cache_user_email(user.id, email)
 
     access_token = create_access_token(user.id)
 
@@ -151,6 +153,9 @@ async def google_callback(
 @router.get("/me")
 async def auth_me(user: User = Depends(get_current_user)):
     """Return the current authenticated user. Used on page load to validate the stored token."""
+    # Cache email for action logging
+    from cerulean.main import _cache_user_email
+    _cache_user_email(user.id, user.email)
     return {
         "id": user.id,
         "email": user.email,

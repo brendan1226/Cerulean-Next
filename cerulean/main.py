@@ -108,10 +108,42 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         request.state.user_id = user_id
+
+        # Log significant user actions (POST/PATCH/DELETE, not GETs)
+        if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+            _log_user_action(user_id, request.method, path)
+
         return await call_next(request)
 
 
 app.add_middleware(AuthMiddleware)
+
+# User email cache for logging (avoids DB lookup on every request)
+_user_email_cache: dict[str, str] = {}
+
+def _log_user_action(user_id: str, method: str, path: str):
+    """Log significant user actions to /tmp/cerulean.log."""
+    try:
+        # Skip noisy endpoints
+        if "/health" in path or "/tasks/active" in path or "/status" in path:
+            return
+
+        email = _user_email_cache.get(user_id, user_id[:8] + "...")
+        from datetime import datetime
+        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Make path readable
+        action = f"{method} {path}"
+
+        with open("/tmp/cerulean.log", "a") as f:
+            f.write(f"[{ts}] {email}: {action}\n")
+    except Exception:
+        pass
+
+
+def _cache_user_email(user_id: str, email: str):
+    """Cache user email for action logging."""
+    _user_email_cache[user_id] = email
 
 
 # ── Routers ───────────────────────────────────────
