@@ -29,6 +29,7 @@ Models:
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -73,6 +74,57 @@ class Plugin(Base):
     uploaded_by: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ID MAPPING (legacy ILS ID → Koha ID for holds/circ)
+# ══════════════════════════════════════════════════════════════════════════
+
+class IdMapping(Base):
+    """Maps legacy ILS identifiers to Koha internal IDs.
+
+    Built during bib/patron push (by capturing API response IDs) and
+    used during holds/circ import to resolve legacy barcodes and control
+    numbers to Koha borrowernumber/biblionumber/itemnumber.
+    """
+
+    __tablename__ = "id_mappings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "bib" | "patron" | "item"
+    legacy_id: Mapped[str] = mapped_column(String(200), nullable=False)   # legacy 001, cardnumber, barcode
+    koha_id: Mapped[int] = mapped_column(Integer, nullable=False)         # Koha biblionumber, borrowernumber, itemnumber
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    # Unique constraint: one mapping per (project, entity_type, legacy_id)
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "entity_type", "legacy_id", name="uq_id_mapping"),
+        sa.Index("ix_id_mapping_lookup", "project_id", "entity_type", "legacy_id"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HOLDS FILE (uploaded holds/circ CSV)
+# ══════════════════════════════════════════════════════════════════════════
+
+class HoldsFile(Base):
+    """Uploaded holds or circulation history CSV file."""
+
+    __tablename__ = "holds_files"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    file_category: Mapped[str] = mapped_column(String(20), nullable=False)  # "holds" | "circ_history"
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    column_headers: Mapped[list | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="uploaded")  # uploaded|validating|validated|error
+    validation_result: Mapped[dict | None] = mapped_column(JSONB)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -221,6 +273,7 @@ class Project(Base):
     bib_count_pushed: Mapped[int | None] = mapped_column(Integer)
     patron_count: Mapped[int | None] = mapped_column(Integer)
     hold_count: Mapped[int | None] = mapped_column(Integer)
+    circ_count: Mapped[int | None] = mapped_column(Integer)
 
     # Archive
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)

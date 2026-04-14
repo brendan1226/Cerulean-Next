@@ -131,6 +131,34 @@ def _update_push_manifest(db: Session, manifest_id: str, **kwargs) -> None:
     db.commit()
 
 
+def _write_id_mappings(project_id: str, entity_type: str, mappings: list[tuple[str, int]]):
+    """Batch-write legacy→Koha ID mappings.
+
+    Args:
+        project_id: UUID of the project.
+        entity_type: "bib", "patron", or "item".
+        mappings: list of (legacy_id, koha_id) tuples.
+    """
+    if not mappings:
+        return
+    from cerulean.models import IdMapping
+    try:
+        with Session(_engine) as db:
+            for legacy_id, koha_id in mappings:
+                try:
+                    db.merge(IdMapping(
+                        id=str(__import__("uuid").uuid4()),
+                        project_id=project_id,
+                        entity_type=entity_type,
+                        legacy_id=str(legacy_id).strip(),
+                        koha_id=int(koha_id),
+                    ))
+                except Exception:
+                    pass  # skip duplicates or bad data
+            db.commit()
+    except Exception:
+        pass  # don't fail the push if mapping write fails
+
 
 # _iter_marc imported from cerulean.utils.marc
 
@@ -279,6 +307,8 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
             _consecutive_same_error = 0
             _aborted = False
 
+            _id_mapping_batch = []  # collect (legacy_id, koha_id) for batch write
+
             with httpx.Client(timeout=60.0, verify=False) as client:
                 for marc_path in marc_paths:
                     if _aborted:
@@ -295,6 +325,18 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                                 success += 1
                                 _consecutive_same_error = 0
                                 _first_error_status = None
+                                # Capture legacy→Koha ID mapping
+                                try:
+                                    koha_id = resp.json().get("id") or resp.json().get("biblio_id")
+                                    ctrl = record.get_fields("001")
+                                    legacy_id = ctrl[0].data if ctrl else None
+                                    if koha_id and legacy_id:
+                                        _id_mapping_batch.append((legacy_id.strip(), int(koha_id)))
+                                        if len(_id_mapping_batch) >= 500:
+                                            _write_id_mappings(project_id, "bib", _id_mapping_batch)
+                                            _id_mapping_batch = []
+                                except Exception:
+                                    pass
                             else:
                                 failed += 1
                                 resp_body = resp.text[:500]
@@ -355,6 +397,11 @@ def push_bulkmarc_task(self, project_id: str, manifest_id: str, dry_run: bool = 
                 if project:
                     project.bib_count_pushed = success
                     db.commit()
+
+        # Flush remaining ID mappings
+        if _id_mapping_batch:
+            _write_id_mappings(project_id, "bib", _id_mapping_batch)
+            log.info(f"Captured {success} bib ID mappings (legacy 001 → Koha biblionumber)")
 
         if _aborted:
             log.error(
@@ -2014,6 +2061,7 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                 # Skip Koha's duplicate patron detection during migration
                 headers["x-confirm-not-duplicate"] = "1"
                 skipped = 0
+                _patron_id_batch = []  # collect (cardnumber, koha_patron_id)
                 with httpx.Client(timeout=30.0, verify=False) as client:
                     for row in reader:
                         total += 1
@@ -2038,6 +2086,17 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                             )
                             if resp.status_code < 300:
                                 success += 1
+                                # Capture patron ID mapping
+                                try:
+                                    koha_patron_id = resp.json().get("patron_id") or resp.json().get("borrowernumber")
+                                    cardnumber = patron_data.get("cardnumber") or row.get("cardnumber", "")
+                                    if koha_patron_id and cardnumber:
+                                        _patron_id_batch.append((cardnumber.strip(), int(koha_patron_id)))
+                                        if len(_patron_id_batch) >= 500:
+                                            _write_id_mappings(project_id, "patron", _patron_id_batch)
+                                            _patron_id_batch = []
+                                except Exception:
+                                    pass
                                 if success <= 3:
                                     log.info(f"Patron {total} created: HTTP {resp.status_code} — {resp.text[:300]}")
                                     if success == 1:
@@ -2075,6 +2134,14 @@ def push_patrons_task(self, project_id: str, manifest_id: str, dry_run: bool = T
                 if project:
                     project.patron_count = success
                     db.commit()
+
+        # Flush remaining patron ID mappings
+        try:
+            if not dry_run and '_patron_id_batch' in dir() and _patron_id_batch:
+                _write_id_mappings(project_id, "patron", _patron_id_batch)
+                log.info(f"Captured patron ID mappings (cardnumber → Koha borrowernumber)")
+        except Exception:
+            pass
 
         if skipped:
             log.warn(f"Skipped {skipped} rows missing required fields")
