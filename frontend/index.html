@@ -11073,31 +11073,264 @@ window.renderStage11_Holds = async function(el) {
   el.innerHTML = `
     <div class="page-header">
       <div>
-        <div class="page-title">Step 11 — Holds &amp; Remaining Data</div>
+        <div class="page-title">Step 11 — Holds &amp; Circulation History</div>
         <div class="page-subtitle">${esc(p.library_name)}</div>
       </div>
     </div>
     ${pipelineBar(p)}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+    <div class="alert alert-info" style="margin-bottom:16px">
+      <strong>Prerequisites:</strong> Bibs, items, and patrons must be pushed to Koha (Step 10) before importing holds or circ history.
+      The system maps legacy IDs (patron barcodes, bib control numbers) to Koha internal IDs automatically.
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchS11Tab('holds', this)">Holds</button>
+      <button class="tab-btn" onclick="switchS11Tab('circ', this)">Circ History</button>
+      <button class="tab-btn" onclick="switchS11Tab('mappings', this)">ID Mappings</button>
+    </div>
+    <div id="s11-tab"></div>`;
+  renderS11Holds();
+};
+
+window.switchS11Tab = function(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  ({ holds: renderS11Holds, circ: renderS11Circ, mappings: renderS11Mappings })[tab]();
+};
+
+async function renderS11Holds() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s11-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
-        <div class="card-header"><span class="card-title">Holds</span></div>
-        <div class="empty-state" style="padding:30px">
-          <div class="empty-title">Coming Soon</div>
-          <div class="text-secondary" style="font-size:12px;margin-top:8px">
-            Upload holds/reserves data, validate bib+patron linkage, and push to Koha.
-          </div>
+        <div class="card-header"><span class="card-title">Upload Holds CSV</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
+          Upload a CSV with columns like: <code>patron_barcode, legacy_bib_id, pickup_library_id, hold_date</code>
+          or pre-resolved Koha IDs: <code>patron_id, biblio_id, pickup_library_id</code>.
+          Item-level holds: include <code>item_barcode</code> or <code>item_id</code>.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="file" id="holds-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+          <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('holds')">Upload & Validate</button>
         </div>
+        <div id="holds-upload-status" style="margin-top:8px"></div>
       </div>
+
       <div class="card">
-        <div class="card-header"><span class="card-title">Checkouts &amp; Fines</span></div>
-        <div class="empty-state" style="padding:30px">
-          <div class="empty-title">Coming Soon</div>
-          <div class="text-secondary" style="font-size:12px;margin-top:8px">
-            Current checkouts, fine/fee records, and reading history migration.
-          </div>
-        </div>
+        <div class="card-header"><span class="card-title">Holds Files</span></div>
+        <div id="s11-holds-files"><div class="loading-msg"><div class="spinner"></div>Loading files...</div></div>
       </div>
-    </div>`;
+    </div>
+
+    <div id="s11-holds-validation" style="margin-top:16px"></div>
+    <div id="s11-holds-push" style="margin-top:16px"></div>`;
+
+  loadS11HoldsFiles();
+}
+
+async function renderS11Circ() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s11-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Upload Circ History CSV</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
+          Upload completed checkouts. Columns: <code>patron_barcode, item_barcode, issuedate, returndate, branchcode</code>
+          or pre-resolved: <code>borrowernumber, itemnumber, issuedate, returndate</code>.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="file" id="circ-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+          <button class="btn btn-primary btn-sm" onclick="uploadHoldsFile('circ_history')">Upload & Validate</button>
+        </div>
+        <div id="circ-upload-status" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Circ History Files</span></div>
+        <div id="s11-circ-files"><div class="loading-msg"><div class="spinner"></div>Loading files...</div></div>
+      </div>
+    </div>
+
+    <div id="s11-circ-actions" style="margin-top:16px"></div>`;
+
+  loadS11CircFiles();
+}
+
+async function renderS11Mappings() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s11-tab');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading ID mappings...</div>';
+
+  try {
+    const r = await window.api('GET', '/projects/' + p.id + '/holds/id-mappings');
+    wrap.innerHTML = `
+      <div class="alert alert-info" style="margin-bottom:16px">
+        ID mappings are captured automatically when bibs/patrons are pushed to Koha via REST API (Step 10).
+        For bibs pushed via toolkit/bulkmarcimport, use "Build from Koha" to retroactively create mappings.
+      </div>
+      <div class="stat-grid" style="margin-bottom:16px">
+        <div class="stat-card"><div class="stat-label">Bib Mappings</div><div class="stat-value">${(r.bib_mappings || 0).toLocaleString()}</div><div class="stat-sub">legacy 001 → biblionumber</div></div>
+        <div class="stat-card"><div class="stat-label">Patron Mappings</div><div class="stat-value">${(r.patron_mappings || 0).toLocaleString()}</div><div class="stat-sub">cardnumber → borrowernumber</div></div>
+        <div class="stat-card"><div class="stat-label">Item Mappings</div><div class="stat-value">${(r.item_mappings || 0).toLocaleString()}</div><div class="stat-sub">barcode → itemnumber</div></div>
+        <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value">${(r.total || 0).toLocaleString()}</div></div>
+      </div>
+      <div class="card" style="max-width:500px">
+        <div class="card-header"><span class="card-title">Build Mappings from Koha</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:8px">Scan Koha to build mappings retroactively. Useful when bibs/patrons were pushed via toolkit or bulkmarcimport.</p>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="buildIdMappings('patron')">Build Patron Mappings</button>
+          <button class="btn btn-ghost" onclick="buildIdMappings('bib')">Build Bib Mappings</button>
+        </div>
+        <div id="s11-mapping-status" style="margin-top:8px"></div>
+      </div>`;
+  } catch (e) {
+    wrap.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>';
+  }
+}
+
+window.uploadHoldsFile = async function(category) {
+  const p = state.currentProject;
+  const inputId = category === 'holds' ? 'holds-file-input' : 'circ-file-input';
+  const statusId = category === 'holds' ? 'holds-upload-status' : 'circ-upload-status';
+  const fileInput = document.getElementById(inputId);
+  const statusEl = document.getElementById(statusId);
+  if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
+
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Uploading & validating...</div>';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try {
+    const res = await fetch(`${API_BASE}/projects/${p.id}/holds/upload?category=${category}`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+      body: fd,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = await res.json();
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">' + esc(r.message) + '</span>';
+    toast(r.message, 'success');
+    fileInput.value = '';
+    // Refresh file list after a delay (validation runs async)
+    setTimeout(() => { if (category === 'holds') loadS11HoldsFiles(); else loadS11CircFiles(); }, 3000);
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+async function loadS11HoldsFiles() {
+  const p = state.currentProject;
+  const el = document.getElementById('s11-holds-files');
+  if (!el) return;
+  try {
+    const files = await window.api('GET', '/projects/' + p.id + '/holds/files');
+    const holds = (files || []).filter(f => f.category === 'holds');
+    if (!holds.length) { el.innerHTML = '<span class="text-dim" style="font-size:12px">No holds files uploaded yet.</span>'; return; }
+    el.innerHTML = holds.map(f => _renderHoldsFileCard(f, 'holds')).join('');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+async function loadS11CircFiles() {
+  const p = state.currentProject;
+  const el = document.getElementById('s11-circ-files');
+  if (!el) return;
+  try {
+    const files = await window.api('GET', '/projects/' + p.id + '/holds/files');
+    const circ = (files || []).filter(f => f.category === 'circ_history');
+    if (!circ.length) { el.innerHTML = '<span class="text-dim" style="font-size:12px">No circ history files uploaded yet.</span>'; return; }
+    el.innerHTML = circ.map(f => _renderHoldsFileCard(f, 'circ')).join('');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+function _renderHoldsFileCard(f, type) {
+  const statusBadge = f.status === 'validated' ? '<span class="badge badge-green">Validated</span>'
+    : f.status === 'validating' ? '<span class="badge badge-amber">Validating...</span>'
+    : f.status === 'error' ? '<span class="badge badge-red">Error</span>'
+    : '<span class="badge badge-dim">Uploaded</span>';
+
+  const vr = f.validation_result || {};
+  let vrHtml = '';
+  if (vr.total) {
+    vrHtml = '<div style="font-size:11px;margin-top:6px;display:flex;gap:12px">'
+      + '<span>Total: <strong>' + vr.total + '</strong></span>'
+      + '<span class="text-green">Valid: ' + (vr.valid || 0) + '</span>'
+      + '<span class="text-red">Invalid: ' + (vr.invalid || 0) + '</span>'
+      + '</div>';
+    if (vr.id_resolution) {
+      const ir = vr.id_resolution;
+      vrHtml += '<div style="font-size:10px;margin-top:4px;color:var(--text-dim)">'
+        + 'Patrons resolved: ' + (ir.patrons_resolved || 0) + (ir.patrons_unresolved ? ' <span class="text-red">(' + ir.patrons_unresolved + ' unresolved)</span>' : '')
+        + ' | Bibs resolved: ' + (ir.bibs_resolved || 0) + (ir.bibs_unresolved ? ' <span class="text-red">(' + ir.bibs_unresolved + ' unresolved)</span>' : '')
+        + '</div>';
+    }
+    if (vr.format) {
+      vrHtml += '<div style="font-size:10px;color:var(--text-dim)">Format: ' + esc(vr.format === 'format_a' ? 'Pre-resolved Koha IDs' : 'Legacy IDs (auto-resolved)') + '</div>';
+    }
+  }
+
+  let actionsHtml = '';
+  if (f.status === 'validated' && type === 'holds') {
+    actionsHtml = '<button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="pushHoldsFile(\'' + esc(f.id) + '\')">Push Holds to Koha</button>';
+  } else if (f.status === 'validated' && type === 'circ') {
+    actionsHtml = '<div style="display:flex;gap:6px;margin-top:8px">'
+      + '<button class="btn btn-ghost btn-sm" onclick="generateCircSql(\'' + esc(f.id) + '\')">Generate SQL</button>'
+      + '<button class="btn btn-primary btn-sm" onclick="pushCircFile(\'' + esc(f.id) + '\')">Push via Plugin</button>'
+      + '<button class="btn btn-ghost btn-sm" onclick="authDownload(\'/projects/' + esc(state.currentProject.id) + '/circ/download-sql\',\'circ_history.sql\')">↓ SQL</button>'
+      + '</div>';
+  }
+
+  return '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center">'
+    + '<span class="mono">' + esc(f.filename) + '</span>'
+    + statusBadge
+    + '</div>'
+    + (f.row_count ? '<span class="text-dim" style="font-size:11px">' + f.row_count.toLocaleString() + ' rows</span>' : '')
+    + vrHtml
+    + actionsHtml
+    + '</div>';
+}
+
+window.pushHoldsFile = async function(fileId) {
+  const p = state.currentProject;
+  if (!confirm('Push holds to Koha? Ensure bibs and patrons are already loaded.')) return;
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/holds/push/' + fileId);
+    toast(r.message, 'success');
+  } catch (e) { toast('Push failed: ' + e.message, 'error'); }
+};
+
+window.generateCircSql = async function(fileId) {
+  const p = state.currentProject;
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/circ/generate-sql/' + fileId);
+    toast(r.message, 'success');
+  } catch (e) { toast('SQL generation failed: ' + e.message, 'error'); }
+};
+
+window.pushCircFile = async function(fileId) {
+  const p = state.currentProject;
+  if (!confirm('Push circ history via Cerulean Endpoints plugin?')) return;
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/circ/push/' + fileId);
+    toast(r.message, 'success');
+  } catch (e) { toast('Push failed: ' + e.message, 'error'); }
+};
+
+window.buildIdMappings = async function(entityType) {
+  const p = state.currentProject;
+  const el = document.getElementById('s11-mapping-status');
+  if (el) el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Building ' + entityType + ' mappings from Koha...</div>';
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/holds/id-mappings/build?entity_type=' + entityType);
+    toast(r.message, 'success');
+    if (el) el.innerHTML = '<span class="text-green" style="font-size:12px">' + esc(r.message) + '</span>';
+    setTimeout(renderS11Mappings, 3000);
+  } catch (e) { if (el) el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 };
 
 async function loadSandboxStatus() {

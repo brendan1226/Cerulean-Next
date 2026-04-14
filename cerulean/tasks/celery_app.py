@@ -37,6 +37,7 @@ celery_app = Celery(
         "cerulean.tasks.reconcile",
         "cerulean.tasks.patrons",
         "cerulean.tasks.push",
+        "cerulean.tasks.holds",
         "cerulean.tasks.aspen",
         "cerulean.tasks.evergreen",
         "cerulean.tasks.sandbox",
@@ -56,6 +57,7 @@ celery_app.conf.update(
         "cerulean.tasks.reconcile.*": {"queue": "reconcile"},
         "cerulean.tasks.patrons.*": {"queue": "patrons"},
         "cerulean.tasks.push.*": {"queue": "push"},
+        "cerulean.tasks.holds.*": {"queue": "push"},
         "cerulean.tasks.sandbox.*": {"queue": "sandbox"},
     },
     # Serialisation
