@@ -534,13 +534,16 @@ def _resolve_hold_row(row, cols, fmt, patron_map, bib_map, item_map) -> dict | N
     return hold
 
 
-def _push_holds_batch(base_url, headers, holds) -> tuple[int, int]:
-    """Push a batch of holds via the CeruleanEndpoints plugin."""
+def _push_holds_batch(base_url, headers, holds, resolve_ids=False) -> tuple[int, int]:
+    """Push a batch of holds via the Holds Migration plugin."""
     try:
         with httpx.Client(timeout=60.0, verify=False) as client:
+            body = {"holds": holds}
+            if resolve_ids:
+                body["resolve_ids"] = True
             resp = client.post(
                 f"{base_url}/api/v1/contrib/cerulean/holds/bulk",
-                json={"holds": holds},
+                json=body,
                 headers=headers,
             )
             if resp.status_code < 300:
@@ -881,13 +884,16 @@ def push_circ_plugin_task(self, project_id: str, file_id: str, manifest_id: str)
         raise
 
 
-def _push_circ_batch(base_url, headers, checkouts) -> tuple[int, int]:
+def _push_circ_batch(base_url, headers, checkouts, resolve_ids=False) -> tuple[int, int]:
     """Push a batch of circ history via plugin."""
     try:
         with httpx.Client(timeout=60.0, verify=False) as client:
+            body = {"checkouts": checkouts}
+            if resolve_ids:
+                body["resolve_ids"] = True
             resp = client.post(
                 f"{base_url}/api/v1/contrib/cerulean/circulation/bulk-history",
-                json={"checkouts": checkouts},
+                json=body,
                 headers=headers,
             )
             if resp.status_code < 300:
@@ -896,6 +902,115 @@ def _push_circ_batch(base_url, headers, checkouts) -> tuple[int, int]:
             return 0, len(checkouts)
     except Exception:
         return 0, len(checkouts)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FINES / FEES PUSH
+# ══════════════════════════════════════════════════════════════════════════
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.holds.push_fines_task",
+    max_retries=0,
+    queue="push",
+)
+def push_fines_task(self, project_id: str, file_id: str, manifest_id: str) -> dict:
+    """Push fines/fees via the Holds Migration plugin's /fines/bulk endpoint."""
+    from cerulean.models import HoldsFile, Project
+    from cerulean.tasks.push import _koha_client, _update_push_manifest
+
+    log = AuditLogger(project_id=project_id, stage=11, tag="[fines-push]")
+    log.info("Fines push starting")
+
+    try:
+        with Session(_engine) as db:
+            cf = db.get(HoldsFile, file_id)
+            if not cf:
+                return {"error": "File not found"}
+
+        file_path = Path(cf.storage_path)
+        base_url, headers = _koha_client(project_id)
+
+        total = 0
+        success = 0
+        failed = 0
+        skipped = 0
+
+        with open(str(file_path), "r", encoding="utf-8-sig", errors="replace") as fh:
+            reader = csv.DictReader(fh)
+            hdr = reader.fieldnames or []
+
+            batch = []
+            for row in reader:
+                total += 1
+
+                # Build fine record — accept various column name formats
+                fine = {}
+                for k, v in row.items():
+                    v = (v or "").strip()
+                    if v:
+                        fine[k.strip().lower()] = v
+
+                if not fine:
+                    skipped += 1
+                    continue
+
+                batch.append(fine)
+
+                if len(batch) >= 500:
+                    s, f = _push_fines_batch(base_url, headers, batch)
+                    success += s
+                    failed += f
+                    batch = []
+                    self.update_state(state="PROGRESS", meta={
+                        "step": "pushing", "records_done": success + failed + skipped,
+                        "records_total": total,
+                    })
+
+            if batch:
+                s, f = _push_fines_batch(base_url, headers, batch)
+                success += s
+                failed += f
+
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="complete",
+                                  records_total=total,
+                                  records_success=success,
+                                  records_failed=failed,
+                                  completed_at=datetime.utcnow())
+
+        log.complete(f"Fines push: {total} total, {success} success, {failed} failed, {skipped} skipped")
+        return {
+            "records_total": total, "records_success": success,
+            "records_failed": failed, "records_skipped": skipped,
+        }
+
+    except Exception as exc:
+        log.error(f"Fines push failed: {exc}")
+        from cerulean.tasks.push import _update_push_manifest
+        with Session(_engine) as db:
+            _update_push_manifest(db, manifest_id,
+                                  status="error", error_message=str(exc)[:1000],
+                                  completed_at=datetime.utcnow())
+        raise
+
+
+def _push_fines_batch(base_url, headers, fines) -> tuple[int, int]:
+    """Push a batch of fines via plugin."""
+    try:
+        with httpx.Client(timeout=60.0, verify=False) as client:
+            resp = client.post(
+                f"{base_url}/api/v1/contrib/cerulean/fines/bulk",
+                json={"fines": fines, "resolve_ids": True},
+                headers=headers,
+            )
+            if resp.status_code < 300:
+                data = resp.json()
+                return data.get("inserted", len(fines)), data.get("errors", 0) if isinstance(data.get("errors"), int) else 0
+            return 0, len(fines)
+    except Exception:
+        return 0, len(fines)
 
 
 # ══════════════════════════════════════════════════════════════════════════

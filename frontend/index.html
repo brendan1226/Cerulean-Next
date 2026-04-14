@@ -11085,6 +11085,7 @@ window.renderStage11_Holds = async function(el) {
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchS11Tab('holds', this)">Holds</button>
       <button class="tab-btn" onclick="switchS11Tab('circ', this)">Circ History</button>
+      <button class="tab-btn" onclick="switchS11Tab('fines', this)">Fines & Fees</button>
       <button class="tab-btn" onclick="switchS11Tab('mappings', this)">ID Mappings</button>
     </div>
     <div id="s11-tab"></div>`;
@@ -11094,7 +11095,7 @@ window.renderStage11_Holds = async function(el) {
 window.switchS11Tab = function(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  ({ holds: renderS11Holds, circ: renderS11Circ, mappings: renderS11Mappings })[tab]();
+  ({ holds: renderS11Holds, circ: renderS11Circ, fines: renderS11Fines, mappings: renderS11Mappings })[tab]();
 };
 
 async function renderS11Holds() {
@@ -11160,6 +11161,90 @@ async function renderS11Circ() {
 
   loadS11CircFiles();
 }
+
+async function renderS11Fines() {
+  const p = state.currentProject;
+  const wrap = document.getElementById('s11-tab');
+  if (!wrap) return;
+
+  wrap.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Upload Fines & Fees CSV</span></div>
+        <p class="text-secondary" style="font-size:12px;margin-bottom:8px">
+          Upload outstanding fines, fees, lost item charges, etc.
+          Columns: <code>patron_barcode, amount, description, date, accounttype</code>.
+          The plugin uses <code>resolve_ids: true</code> — send patron barcodes, not borrowernumbers.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="file" id="fines-file-input" accept=".csv,.tsv,.txt" style="font-size:12px">
+          <button class="btn btn-primary btn-sm" onclick="uploadFinesFile()">Upload</button>
+        </div>
+        <div id="fines-upload-status" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Fines Files</span></div>
+        <div id="s11-fines-files"><div class="loading-msg"><div class="spinner"></div>Loading files...</div></div>
+      </div>
+    </div>`;
+
+  loadS11FinesFiles();
+}
+
+window.uploadFinesFile = async function() {
+  const p = state.currentProject;
+  const fileInput = document.getElementById('fines-file-input');
+  const statusEl = document.getElementById('fines-upload-status');
+  if (!fileInput?.files?.length) { toast('Select a CSV file', 'warn'); return; }
+
+  statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Uploading...</div>';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try {
+    const res = await fetch(`${API_BASE}/projects/${p.id}/holds/upload?category=fines`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {},
+      body: fd,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = await res.json();
+    statusEl.innerHTML = '<span class="text-green" style="font-size:12px">Uploaded</span>';
+    toast('Fines file uploaded', 'success');
+    fileInput.value = '';
+    setTimeout(loadS11FinesFiles, 1000);
+  } catch (e) {
+    statusEl.innerHTML = '<span class="text-red" style="font-size:12px">' + esc(e.message) + '</span>';
+  }
+};
+
+async function loadS11FinesFiles() {
+  const p = state.currentProject;
+  const el = document.getElementById('s11-fines-files');
+  if (!el) return;
+  try {
+    const files = await window.api('GET', '/projects/' + p.id + '/holds/files');
+    const fines = (files || []).filter(f => f.category === 'fines');
+    if (!fines.length) { el.innerHTML = '<span class="text-dim" style="font-size:12px">No fines files uploaded yet.</span>'; return; }
+    el.innerHTML = fines.map(f => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="mono">${esc(f.filename)}</span>
+          <span class="badge badge-dim">${f.row_count ? f.row_count.toLocaleString() + ' rows' : 'uploaded'}</span>
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:6px" onclick="pushFinesFile('${esc(f.id)}')">Push Fines to Koha</button>
+      </div>`).join('');
+  } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
+}
+
+window.pushFinesFile = async function(fileId) {
+  const p = state.currentProject;
+  if (!confirm('Push fines/fees to Koha via the Holds Migration plugin?')) return;
+  try {
+    const r = await window.api('POST', '/projects/' + p.id + '/fines/push/' + fileId);
+    toast(r.message, 'success');
+  } catch (e) { toast('Push failed: ' + e.message, 'error'); }
+};
 
 async function renderS11Mappings() {
   const p = state.currentProject;

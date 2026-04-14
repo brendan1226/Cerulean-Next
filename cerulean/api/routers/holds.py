@@ -45,8 +45,8 @@ async def upload_holds_file(
     """Upload a holds or circ history CSV file."""
     await require_project(project_id, db)
 
-    if category not in ("holds", "circ_history"):
-        raise HTTPException(400, detail="category must be 'holds' or 'circ_history'")
+    if category not in ("holds", "circ_history", "fines"):
+        raise HTTPException(400, detail="category must be 'holds', 'circ_history', or 'fines'")
 
     project_dir = Path(settings.data_root) / project_id / "holds"
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -69,21 +69,23 @@ async def upload_holds_file(
     # Register task for Job Watcher
     from cerulean.api.routers.tasks import register_task
 
+    task = None
     if category == "holds":
         from cerulean.tasks.holds import validate_holds_task
         task = validate_holds_task.apply_async(args=[project_id, file_id], queue="push")
         register_task(project_id, task.id, "holds_validate")
-    else:
+    elif category == "circ_history":
         from cerulean.tasks.holds import validate_circ_task
         task = validate_circ_task.apply_async(args=[project_id, file_id], queue="push")
         register_task(project_id, task.id, "circ_validate")
+    # fines: no auto-validation, just upload
 
     return {
         "file_id": file_id,
         "filename": file.filename,
         "category": category,
-        "task_id": task.id,
-        "message": f"{category} file uploaded. Validation started.",
+        "task_id": task.id if task else None,
+        "message": f"{category} file uploaded." + (" Validation started." if task else ""),
     }
 
 
@@ -316,6 +318,43 @@ async def build_id_mappings(
     register_task(project_id, task.id, f"build_{entity_type}_mappings")
 
     return {"task_id": task.id, "message": f"Building {entity_type} ID mappings from Koha."}
+
+
+# ── Fines Push ───────────────────────────────────────────────────────
+
+@router.post("/{project_id}/fines/push/{file_id}", status_code=202)
+async def push_fines(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Push fines/fees via the Holds Migration plugin."""
+    project = await require_project(project_id, db)
+    hf = await db.get(HoldsFile, file_id)
+    if not hf or hf.project_id != project_id:
+        raise HTTPException(404, detail="File not found.")
+    if not project.koha_url:
+        raise HTTPException(409, detail="Configure Koha URL first.")
+
+    manifest = PushManifest(
+        project_id=project_id,
+        task_type="fines_push",
+        status="running",
+        dry_run=False,
+        started_at=datetime.utcnow(),
+    )
+    db.add(manifest)
+    await db.flush()
+    await db.refresh(manifest)
+
+    from cerulean.tasks.holds import push_fines_task
+    from cerulean.api.routers.tasks import register_task
+    task = push_fines_task.apply_async(args=[project_id, file_id, manifest.id], queue="push")
+    manifest.celery_task_id = task.id
+    await db.flush()
+    register_task(project_id, task.id, "fines_push")
+
+    return {"task_id": task.id, "manifest_id": manifest.id, "message": "Fines push started."}
 
 
 # ── Delete File ──────────────────────────────────────────────────────
