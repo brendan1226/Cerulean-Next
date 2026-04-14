@@ -153,6 +153,8 @@ async def start_scan(
         args=[project_id],
         queue="reconcile",
     )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "reconcile_scan")
     project.reconcile_scan_task_id = task.id
     await db.flush()
 

@@ -185,6 +185,8 @@ async def ai_suggest_maps(
         args=[project_id, [f.id for f in files]],
         queue="analyze",
     )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "ai_field_map")
 
     return AIMapSuggestResponse(
         task_id=task.id,

@@ -74,6 +74,9 @@ async def start_quality_scan(
         queue="analyze",
     )
 
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "quality_scan")
+
     return QualityScanResponse(task_id=task.id, message="Quality scan started.")
 
 

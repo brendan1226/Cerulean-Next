@@ -532,6 +532,8 @@ async def ai_suggest_maps(
         args=[project_id],
         queue="patrons",
     )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "patron_ai_map")
     project.patron_ai_task_id = task.id
     await db.flush()
 
@@ -727,6 +729,8 @@ async def start_patron_scan(
         args=[project_id],
         queue="patrons",
     )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "patron_scan")
     project.patron_scan_task_id = task.id
     await db.flush()
 
@@ -1001,6 +1005,8 @@ async def start_patron_apply(
         args=[project_id],
         queue="patrons",
     )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "patron_apply")
     project.patron_apply_task_id = task.id
     await db.flush()
 

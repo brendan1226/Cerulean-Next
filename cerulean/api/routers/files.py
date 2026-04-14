@@ -149,6 +149,10 @@ async def upload_file(
             queue="ingest",
         )
 
+    # Register task for Job Watcher
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "ingest")
+
     replaced = len(existing) if existing and mode == "replace" else 0
     msg = f"File uploaded (replaced {replaced} existing). Indexing started." if replaced else "File uploaded. Indexing started."
 

@@ -28,6 +28,26 @@ _redis = redis.from_url(settings.redis_url)
 
 router = APIRouter(prefix="/projects", tags=["tasks"])
 
+# ── Task registry (Redis) — tracks tasks that don't have manifest rows ──
+
+def register_task(project_id: str, task_id: str, task_type: str):
+    """Register a dispatched Celery task for Job Watcher tracking.
+
+    Call this from any endpoint that dispatches a task without creating
+    a manifest row (e.g., ingest, quality scan, AI suggest, etc.).
+    Stored in Redis with a 24h TTL.
+    """
+    import json
+    key = f"cerulean:tasks:{project_id}"
+    entry = json.dumps({
+        "task_id": task_id,
+        "task_type": task_type,
+        "dispatched_at": datetime.utcnow().isoformat(),
+    })
+    _redis.lpush(key, entry)
+    _redis.ltrim(key, 0, 99)  # keep last 100
+    _redis.expire(key, 86400)  # 24h TTL
+
 
 @router.get("/{project_id}/tasks/active")
 async def list_active_tasks(
@@ -199,6 +219,84 @@ async def list_all_tasks(
         entry["manifest_id"] = m.id
         entry["manifest_type"] = "push"
         tasks.append(entry)
+
+    # Also include Redis-tracked tasks (ingest, quality scan, AI, etc.)
+    import json as _json
+    redis_key = f"cerulean:tasks:{project_id}"
+    redis_entries = _redis.lrange(redis_key, 0, 99)
+    seen_task_ids = {t.get("task_id") for t in tasks if t.get("task_id")}
+
+    for raw in redis_entries:
+        try:
+            entry = _json.loads(raw)
+            tid = entry.get("task_id")
+            if not tid or tid in seen_task_ids:
+                continue
+            seen_task_ids.add(tid)
+
+            result = AsyncResult(tid, app=celery_app)
+            celery_state = result.state or "PENDING"
+            dispatched = entry.get("dispatched_at", "")
+
+            # Skip if older than 7 days
+            try:
+                dt = datetime.fromisoformat(dispatched)
+                if (datetime.utcnow() - dt).days > 7:
+                    continue
+            except Exception:
+                pass
+
+            info = {
+                "task_id": tid,
+                "manifest_id": None,
+                "manifest_type": None,
+                "task_type": entry.get("task_type", "unknown"),
+                "status": "complete" if celery_state == "SUCCESS" else "error" if celery_state == "FAILURE" else "running" if celery_state in ("STARTED", "PROGRESS") else celery_state.lower(),
+                "started_at": dispatched,
+                "completed_at": None,
+                "duration_seconds": None,
+                "records_total": 0,
+                "records_success": 0,
+                "records_failed": 0,
+                "records_per_second": 0,
+                "error_message": str(result.info)[:200] if celery_state == "FAILURE" and result.info else None,
+                "progress": {},
+                "eta_seconds": None,
+                "is_paused": False,
+                "can_cancel": celery_state in ("STARTED", "PROGRESS", "PENDING"),
+                "can_pause": celery_state in ("STARTED", "PROGRESS"),
+                "can_resume": False,
+            }
+
+            # Enrich with progress if running
+            if celery_state in ("PROGRESS", "PAUSED") and isinstance(result.info, dict):
+                prog = result.info
+                info["progress"] = prog
+                info["records_total"] = prog.get("records_total", 0) or prog.get("records_done", 0) or 0
+                done = prog.get("records_done", 0)
+                if dispatched and done > 0:
+                    try:
+                        dt = datetime.fromisoformat(dispatched)
+                        elapsed = (datetime.utcnow() - dt).total_seconds()
+                        if elapsed > 0:
+                            info["records_per_second"] = round(done / elapsed, 1)
+                            total = info["records_total"]
+                            if total > done and info["records_per_second"] > 0:
+                                info["eta_seconds"] = int((total - done) / info["records_per_second"])
+                    except Exception:
+                        pass
+                info["is_paused"] = celery_state == "PAUSED"
+                info["can_pause"] = celery_state == "PROGRESS"
+                info["can_resume"] = celery_state == "PAUSED"
+
+            # If complete, calculate duration
+            if celery_state == "SUCCESS" and isinstance(result.info, dict):
+                info["records_total"] = result.info.get("records_total", 0) or result.info.get("record_count", 0) or 0
+                info["records_success"] = info["records_total"]
+
+            tasks.append(info)
+        except Exception:
+            continue
 
     # Sort by started_at descending
     tasks.sort(key=lambda t: t.get("started_at") or "", reverse=True)
