@@ -141,6 +141,115 @@ async def cancel_task(
     return {"status": "cancelled"}
 
 
+@router.get("/{project_id}/tasks/all")
+async def list_all_tasks(
+    project_id: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all tasks (running + recent completed) for the Job Watcher.
+
+    Merges TransformManifest and PushManifest, sorted by started_at desc.
+    Enriches running tasks with live Celery progress metadata.
+    """
+    await require_project(project_id, db)
+    from sqlalchemy import or_, desc
+
+    tasks: list[dict] = []
+
+    # Transform manifests
+    tm_rows = (
+        await db.execute(
+            select(TransformManifest)
+            .where(TransformManifest.project_id == project_id)
+            .order_by(desc(TransformManifest.started_at))
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    for m in tm_rows:
+        entry = _manifest_to_task_detail(m.celery_task_id, m.task_type, m)
+        tasks.append(entry)
+
+    # Push manifests
+    pm_rows = (
+        await db.execute(
+            select(PushManifest)
+            .where(PushManifest.project_id == project_id)
+            .order_by(desc(PushManifest.started_at))
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    for m in pm_rows:
+        entry = _manifest_to_task_detail(m.celery_task_id, m.task_type, m)
+        tasks.append(entry)
+
+    # Sort by started_at descending
+    tasks.sort(key=lambda t: t.get("started_at") or "", reverse=True)
+
+    return tasks[:limit]
+
+
+def _manifest_to_task_detail(celery_task_id, task_type, manifest) -> dict:
+    """Build a detailed task info dict with metrics."""
+    started = manifest.started_at
+    completed = manifest.completed_at if hasattr(manifest, "completed_at") else None
+    duration = None
+    if started and completed:
+        duration = int((completed - started).total_seconds())
+
+    records_total = getattr(manifest, "records_total", None) or 0
+    records_success = getattr(manifest, "records_success", None) or 0
+    records_failed = getattr(manifest, "records_failed", None) or 0
+    status = getattr(manifest, "status", "unknown")
+    error_message = getattr(manifest, "error_message", None)
+    result_data = getattr(manifest, "result_data", None)
+
+    # Calculate rate
+    rate = 0
+    if duration and duration > 0 and records_total > 0:
+        rate = round(records_total / duration, 1)
+
+    info = {
+        "task_id": celery_task_id,
+        "task_type": task_type,
+        "status": status,
+        "started_at": started.isoformat() if started else None,
+        "completed_at": completed.isoformat() if completed else None,
+        "duration_seconds": duration,
+        "records_total": records_total,
+        "records_success": records_success,
+        "records_failed": records_failed,
+        "records_per_second": rate,
+        "error_message": error_message[:200] if error_message else None,
+        "progress": {},
+        "eta_seconds": None,
+    }
+
+    # Enrich running tasks with live Celery state
+    if status == "running" and celery_task_id:
+        result = AsyncResult(celery_task_id, app=celery_app)
+        info["celery_state"] = result.state or "PENDING"
+        if result.state in ("PROGRESS", "PAUSED") and isinstance(result.info, dict):
+            prog = result.info
+            info["progress"] = prog
+            done = prog.get("records_done", 0)
+            total = prog.get("records_total", 0)
+            info["records_total"] = total or info["records_total"]
+
+            # Calculate live rate and ETA
+            if started and done > 0:
+                elapsed = (datetime.utcnow() - started).total_seconds()
+                if elapsed > 0:
+                    live_rate = round(done / elapsed, 1)
+                    info["records_per_second"] = live_rate
+                    if total > done and live_rate > 0:
+                        info["eta_seconds"] = int((total - done) / live_rate)
+
+    return info
+
+
 def _manifest_to_task_info(
     celery_task_id: str | None,
     task_type: str,
