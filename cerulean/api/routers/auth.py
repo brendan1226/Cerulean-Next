@@ -68,6 +68,8 @@ async def google_callback(
 
     email = user_info["email"]
     if not validate_email_domain(email):
+        from cerulean.core.logging import get_logger
+        get_logger(__name__).warn(f"Login rejected: {email} (domain not allowed)", email=email)
         return HTMLResponse(
             f"<h2>Access denied</h2>"
             f"<p>Only @{settings.google_allowed_domain} accounts are allowed.</p>"
@@ -99,6 +101,17 @@ async def google_callback(
 
     await db.flush()
     await db.refresh(user)
+
+    # Log the authentication event
+    from cerulean.core.logging import get_logger
+    logger = get_logger(__name__)
+    is_new = user.last_login is None or (datetime.utcnow() - user.created_at).total_seconds() < 5
+    logger.info(
+        f"User authenticated: {email} ({user.name})"
+        f"{' [NEW USER]' if is_new else ''}",
+        email=email,
+        user_id=user.id,
+    )
 
     access_token = create_access_token(user.id)
 
