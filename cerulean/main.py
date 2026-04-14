@@ -198,7 +198,14 @@ if _VENDOR_DIR.is_dir():
 @app.get("/help/manual")
 async def serve_user_manual():
     _docs = Path(__file__).resolve().parent.parent / "docs"
-    # Prefer the formatted Word document, fall back to markdown
+    # Prefer PDF, then Word document, then markdown
+    pdf = _docs / "Cerulean-Next-User-Manual.pdf"
+    if pdf.is_file():
+        return FileResponse(
+            path=str(pdf),
+            filename="Cerulean-Next-User-Manual.pdf",
+            media_type="application/pdf",
+        )
     docx = _docs / "Cerulean-Next-User-Manual.docx"
     if docx.is_file():
         return FileResponse(
