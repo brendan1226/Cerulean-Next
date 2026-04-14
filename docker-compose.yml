@@ -41,7 +41,7 @@ services:
       - kohanet
 
 
-  # ── Celery worker ────────────────────────────────
+  # ── Celery worker (general — ingest, analyze, transform, etc.) ───────
   worker:
     build:
       context: .
@@ -49,8 +49,33 @@ services:
     command: >
       celery -A cerulean.tasks.celery_app worker
       --loglevel=info
-      --queues=ingest,analyze,transform,dedup,reconcile,patrons,push,sandbox,default
+      --queues=ingest,analyze,transform,dedup,reconcile,patrons,sandbox,default
+      --concurrency=8
+    volumes:
+      - .:/app
+      - cerulean-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cerulean:cerulean@postgres:5432/cerulean
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_ROOT=/data/projects
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-}
+      - TZ=America/Los_Angeles
+    depends_on:
+      - postgres
+
+  # ── Celery worker (push — long-running Koha/Aspen/Evergreen tasks) ──
+  worker-push:
+    build:
+      context: .
+      target: dev
+    command: >
+      celery -A cerulean.tasks.celery_app worker
+      --loglevel=info
+      --queues=push
       --concurrency=4
+      --hostname=push-worker@%h
     volumes:
       - .:/app
       - cerulean-data:/data

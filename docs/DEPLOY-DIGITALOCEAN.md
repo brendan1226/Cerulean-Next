@@ -98,7 +98,7 @@ Create `docker-compose.prod.yml`:
 services:
   web:
     restart: always
-    command: uvicorn cerulean.main:app --host 0.0.0.0 --port 8000 --workers 4
+    command: uvicorn cerulean.main:app --host 0.0.0.0 --port 8000 --workers 6
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
