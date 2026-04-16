@@ -8770,7 +8770,13 @@ async function renderPatronUpload() {
   const p = state.currentProject;
   const wrap = document.getElementById('patron-tab');
   if (!wrap) return;
-  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
+  // Only show the full-page spinner on the FIRST render — subsequent
+  // polling passes (while a file is parsing) update the file table
+  // in place via _patronFilesInPlaceRefresh() instead of wiping the
+  // whole view every 2s.
+  if (!wrap.dataset.patronUploadInited) {
+    wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading...</div>';
+  }
 
   // Fetch patron files list and available Stage 1 files in parallel
   let patronFiles = [];
@@ -8788,12 +8794,12 @@ async function renderPatronUpload() {
     : '<span class="badge badge-dim">Uploaded</span>';
 
   const patronFileRows = patronFiles.length ? patronFiles.map(f => `
-    <tr>
+    <tr data-patron-file-row="${esc(f.id)}">
       <td class="mono" style="white-space:nowrap">${esc(f.filename)}</td>
       <td class="mono">${esc(f.detected_format || f.file_format || '—')}</td>
-      <td class="mono">${f.row_count != null ? f.row_count.toLocaleString() : '—'}</td>
-      <td>${(f.column_headers || []).length ? `<span class="text-dim" style="font-size:10px">${f.column_headers.length} cols</span>` : '—'}</td>
-      <td>${_statusBadge(f.status)}</td>
+      <td class="mono" data-patron-rows-cell>${f.row_count != null ? f.row_count.toLocaleString() : '—'}</td>
+      <td data-patron-cols-cell>${(f.column_headers || []).length ? `<span class="text-dim" style="font-size:10px">${f.column_headers.length} cols</span>` : '—'}</td>
+      <td data-patron-status-cell>${_statusBadge(f.status)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-danger btn-sm" style="font-size:10px" onclick="deleteSinglePatronFile('${f.id}')">Delete</button>
       </td>
@@ -8825,10 +8831,12 @@ async function renderPatronUpload() {
           <tbody>${patronFileRows}</tbody>
         </table>
       </div>
-      <div class="text-dim" style="font-size:11px;margin-bottom:4px">Combined rows: <strong>${totalRows.toLocaleString()}</strong></div>
-      <div style="display:flex;gap:8px;margin-top:8px">
+      <div class="text-dim" style="font-size:11px;margin-bottom:4px">Combined rows: <strong id="patron-total-rows">${totalRows.toLocaleString()}</strong></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="reparsePatronFiles()">Re-parse All</button>
-      </div>` : `
+        <button class="btn btn-primary btn-sm" onclick="autoMapKohaHeaders()" title="Auto-create and auto-approve column maps for any source column whose name already matches a Koha borrower header. Skips straight to Value Reconciliation.">✦ Auto-approve Koha header matches</button>
+      </div>
+      <div id="patron-auto-map-status" style="margin-top:8px"></div>` : `
       <p class="text-dim" style="font-size:12px;margin-bottom:0">No patron files added yet. Select from Stage 1 uploads or upload a new file below.</p>`}
     </div>
 
@@ -8906,9 +8914,15 @@ async function renderPatronUpload() {
     }
   });
 
-  // Auto-refresh if any file is still parsing
+  // Mark the tab as rendered so subsequent polls can refresh in place.
+  wrap.dataset.patronUploadInited = '1';
+
+  // Auto-refresh if any file is still parsing — but only update the
+  // file-table cells, not the entire view, so the user sees a stable
+  // page with live status cells rather than a flashing spinner loop.
   if (anyParsing) {
-    setTimeout(renderPatronUpload, 2000);
+    clearTimeout(window._patronParsePollTimer);
+    window._patronParsePollTimer = setTimeout(_patronFilesInPlaceRefresh, 2000);
   }
 
   // Load data preview for parsed files
@@ -8999,8 +9013,96 @@ async function reparsePatronFiles() {
   try {
     await window.api('POST', `/projects/${p.id}/patrons/reparse`);
     toast('Re-parse started', 'info');
-    setTimeout(renderPatronUpload, 2000);
+    // Mark every file as parsing immediately so the status badge
+    // flips without waiting for the first poll.
+    document.querySelectorAll('[data-patron-status-cell]').forEach(td => {
+      td.innerHTML = '<span class="badge badge-amber">Parsing...</span>';
+    });
+    clearTimeout(window._patronParsePollTimer);
+    window._patronParsePollTimer = setTimeout(_patronFilesInPlaceRefresh, 1500);
   } catch(e) { console.error(e); }
+}
+
+// Poll-friendly in-place refresh — updates only the patron-files table
+// (row counts, status badges) and re-arms itself while any file is
+// parsing. Avoids the old flicker where the whole tab got wiped + re-
+// rendered every 2 seconds.
+async function _patronFilesInPlaceRefresh() {
+  const p = state.currentProject;
+  if (!p) return;
+  const wrap = document.getElementById('patron-tab');
+  if (!wrap || !wrap.dataset.patronUploadInited) return;
+
+  let patronFiles = [];
+  try { patronFiles = await window.api('GET', `/projects/${p.id}/patrons/files`); } catch(e) { return; }
+
+  // Update per-row cells
+  let anyParsing = false;
+  for (const f of (patronFiles || [])) {
+    if (f.status === 'parsing') anyParsing = true;
+    const row = document.querySelector(`[data-patron-file-row="${f.id}"]`);
+    if (!row) continue;
+    const rowsCell    = row.querySelector('[data-patron-rows-cell]');
+    const colsCell    = row.querySelector('[data-patron-cols-cell]');
+    const statusCell  = row.querySelector('[data-patron-status-cell]');
+    if (rowsCell)   rowsCell.textContent   = f.row_count != null ? f.row_count.toLocaleString() : '—';
+    if (colsCell)   colsCell.innerHTML     = (f.column_headers || []).length
+                                           ? `<span class="text-dim" style="font-size:10px">${f.column_headers.length} cols</span>`
+                                           : '—';
+    if (statusCell) {
+      const badge = f.status === 'parsed'
+        ? '<span class="badge badge-green">Parsed</span>'
+        : f.status === 'parsing' ? '<span class="badge badge-amber">Parsing...</span>'
+        : f.status === 'error' ? '<span class="badge badge-red">Error</span>'
+        : '<span class="badge badge-dim">Uploaded</span>';
+      statusCell.innerHTML = badge;
+    }
+  }
+
+  // Update the combined-rows footer
+  const totalRows = (patronFiles || []).reduce((s, f) => s + (f.row_count || 0), 0);
+  const totalEl = document.getElementById('patron-total-rows');
+  if (totalEl) totalEl.textContent = totalRows.toLocaleString();
+
+  if (anyParsing) {
+    clearTimeout(window._patronParsePollTimer);
+    window._patronParsePollTimer = setTimeout(_patronFilesInPlaceRefresh, 2000);
+  } else {
+    // All files finished — do a single full render so the Data Preview
+    // block + Column Mapping hints reflect the now-parsed state.
+    renderPatronUpload();
+  }
+}
+
+// Retroactive auto-map for files that were uploaded before the checkbox
+// was available (or without it ticked). Hits the new
+// /patrons/auto-map-headers endpoint, reports what was matched, and
+// refreshes the page so the Column Mapping tab reflects the new maps.
+async function autoMapKohaHeaders() {
+  const p = state.currentProject;
+  if (!p) return;
+  const statusEl = document.getElementById('patron-auto-map-status');
+  if (statusEl) statusEl.innerHTML = renderProgressBar({ label: 'Auto-mapping Koha headers…' });
+  try {
+    const r = await window.api('POST', `/projects/${p.id}/patrons/auto-map-headers`);
+    if (!r) return;
+    if (r.created_count === 0) {
+      if (statusEl) statusEl.innerHTML = `
+        <div class="alert alert-info" style="font-size:12px">
+          No new matches — every auto-mappable column already has a column map.
+          ${r.unmatched_columns?.length ? ` ${r.unmatched_columns.length} column(s) don't match any Koha borrower header; map them manually on the Column Mapping tab if needed.` : ''}
+        </div>`;
+    } else {
+      if (statusEl) statusEl.innerHTML = `
+        <div class="alert alert-success" style="font-size:12px">
+          Approved <strong>${r.created_count}</strong> column map(s): ${(r.created_headers || []).map(h => `<code>${esc(h)}</code>`).join(', ')}.
+          Switch to <strong>Value Reconciliation</strong> and click <strong>Scan Controlled Values</strong>.
+        </div>`;
+      toast(`Approved ${r.created_count} column map(s)`, 'success');
+    }
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<div class="alert alert-error" style="font-size:12px">${esc(e.message || 'Auto-map failed')}</div>`;
+  }
 }
 
 async function selectPatronFile(marcFileId) {

@@ -696,6 +696,117 @@ async def approve_column_map(
     return cm
 
 
+@router.post("/{project_id}/patrons/auto-map-headers")
+async def auto_map_koha_headers(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retroactively auto-approve column maps for an already-parsed file.
+
+    Same logic as the ``auto_map_headers`` upload checkbox, applied after
+    the fact. For every source column whose name is a case-insensitive
+    exact match for a standard Koha borrower header (see
+    ``KOHA_BORROWER_HEADERS``), creates a ``PatronColumnMap`` row with
+    ``approved=True`` and ``source_label="auto"``. Controlled-list
+    headers also get ``is_controlled_list=True``.
+
+    Idempotent — skips any source column that already has a map. Returns
+    the count created and the list of matched headers so the UI can
+    report exactly what landed.
+    """
+    from cerulean.models import PatronFile
+    from cerulean.tasks.patrons import (
+        KOHA_BORROWER_HEADERS,
+        match_koha_patron_header,
+    )
+
+    await require_project(project_id, db)
+
+    # Collect the union of column_headers across every parsed patron file
+    # in this project — the upload page presents them as one combined
+    # dataset, so the auto-map acts over that same union.
+    files_result = await db.execute(
+        select(PatronFile).where(PatronFile.project_id == project_id)
+    )
+    files = files_result.scalars().all()
+    if not files:
+        raise HTTPException(409, detail={
+            "error": "NO_PATRON_FILES",
+            "message": "No patron files uploaded yet — nothing to map.",
+        })
+
+    all_columns: list[str] = []
+    seen: set[str] = set()
+    for pf in files:
+        for col in (pf.column_headers or []):
+            if col not in seen:
+                all_columns.append(col)
+                seen.add(col)
+
+    if not all_columns:
+        raise HTTPException(409, detail={
+            "error": "NO_COLUMNS",
+            "message": "No columns found. Wait for parsing to finish before auto-mapping.",
+        })
+
+    # Existing maps (keyed by source_column) — skip these
+    existing_rows = (await db.execute(
+        select(PatronColumnMap.source_column).where(
+            PatronColumnMap.project_id == project_id,
+        )
+    )).all()
+    existing_sources = {s for (s,) in existing_rows}
+
+    created_headers: list[str] = []
+    for col in all_columns:
+        if col in existing_sources:
+            continue
+        canonical = match_koha_patron_header(col)
+        if canonical is None:
+            continue
+        db.add(PatronColumnMap(
+            project_id=project_id,
+            source_column=col,
+            target_header=canonical,
+            transform_type="copy",
+            is_controlled_list=canonical in PATRON_CONTROLLED_HEADERS,
+            approved=True,
+            source_label="auto",
+        ))
+        existing_sources.add(col)
+        created_headers.append(canonical)
+
+    if created_headers:
+        await audit_log(
+            db, project_id, stage=9, level="info", tag="[patron-upload]",
+            message=(
+                f"Auto-approved {len(created_headers)} Koha-header column map(s): "
+                + ", ".join(sorted(set(created_headers)))
+            ),
+        )
+
+    await db.flush()
+
+    # Scan over the full Koha reference so the UI can explain which
+    # source columns were skipped because they don't match any header.
+    unmatched = [
+        c for c in all_columns
+        if c not in existing_sources - set(all_columns)
+        and match_koha_patron_header(c) is None
+    ]
+
+    return {
+        "created_count": len(created_headers),
+        "created_headers": sorted(set(created_headers)),
+        "unmatched_columns": unmatched,
+        "total_columns": len(all_columns),
+        "message": (
+            f"Auto-approved {len(created_headers)} column map(s) matching Koha borrower headers. "
+            f"{len(unmatched)} unmatched column(s) can be mapped manually on the Column Mapping tab if needed."
+        ),
+    }
+
+
 @router.post("/{project_id}/patrons/maps/approve-all", response_model=ApproveAllResponse)
 async def approve_all_maps(
     project_id: str,
