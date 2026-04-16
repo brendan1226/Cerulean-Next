@@ -1085,6 +1085,53 @@
     }
     .s2-map-item.approved { border-left: 3px solid var(--green); }
     .s2-map-item.pending { border-left: 3px solid var(--amber); }
+    /* Low-confidence AI suggestions — amber tint + outlined pending border
+       (per cerulean_ai_spec.md §4.3: "visually distinct ... require
+       deliberate approval rather than being included in Approve All"). */
+    .s2-map-item.ai-low {
+      background: rgba(245, 166, 35, 0.05);
+      border-color: rgba(245, 166, 35, 0.28);
+    }
+    .s2-map-item.ai-low.pending {
+      border-left-color: var(--amber);
+    }
+    /* Reasoning tooltip — plain CSS hover card, positioned to the left so
+       it doesn't clip on the narrow Step 5 right rail. */
+    .s2-ai-info {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--cerulean);
+      background: rgba(0, 188, 212, 0.1);
+      border: 1px solid rgba(0, 188, 212, 0.35);
+      cursor: help;
+    }
+    .s2-ai-info:hover::after {
+      content: attr(data-reasoning);
+      position: absolute;
+      right: 18px;
+      top: -4px;
+      width: 280px;
+      padding: 8px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--text);
+      line-height: 1.45;
+      z-index: 50;
+      white-space: normal;
+      text-align: left;
+      pointer-events: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
     .s2-map-dup-src {
       background: var(--amber-dim); border-radius: 3px; padding: 0 4px;
       outline: 1px dashed var(--amber);
@@ -3736,7 +3783,7 @@ function s2RenderMaps() {
 
   right.innerHTML = `
     <div style="margin-bottom:8px;display:flex;gap:6px">
-      <button class="btn btn-ghost btn-sm" onclick="approveAll()" style="font-size:10px">✓ Approve All</button>
+      <button class="btn btn-ghost btn-sm" onclick="approveAll()" style="font-size:10px" title="Approve all pending suggestions with medium confidence or higher. Low-confidence rows stay pending for review.">✓ Approve All</button>
     </div>
     ${s2.maps.map(m => {
       const sk = m.source_tag + (m.source_sub || '');
@@ -3748,12 +3795,22 @@ function s2RenderMaps() {
         : m.ai_suggested
         ? '<span class="badge badge-purple" style="font-size:9px">AI</span>'
         : '<span class="badge badge-dim" style="font-size:9px">man</span>';
-      return `<div class="s2-map-item ${m.approved ? 'approved' : 'pending'}" style="cursor:pointer" data-map-id="${esc(m.id)}" onclick="openEditMapModal('${esc(m.id)}')">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      const tier = s2ConfidenceTier(m);
+      const confBadge = tier
+        ? `<span class="badge ${tier.cls}" style="font-size:9px" title="${esc(tier.title)}">${esc(tier.label)}</span>`
+        : '';
+      const reasoningBtn = m.ai_reasoning
+        ? `<span class="s2-ai-info" data-reasoning="${esc(m.ai_reasoning)}">i</span>`
+        : '';
+      const lowClass = (tier && tier.low && !m.approved) ? ' ai-low' : '';
+      return `<div class="s2-map-item ${m.approved ? 'approved' : 'pending'}${lowClass}" style="cursor:pointer" data-map-id="${esc(m.id)}" onclick="openEditMapModal('${esc(m.id)}')">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px">
           <span class="mono text-cerulean ${dupSrc ? 's2-map-dup-src' : ''}" ${dupSrc ? 'title="Multiple maps read from this source field"' : ''}>${esc(m.source_tag)}${esc(m.source_sub||'')}</span>
           <span class="text-dim" style="font-size:10px">→</span>
           <span class="mono ${dupTgt ? 's2-map-dup-tgt' : ''}" ${dupTgt ? 'title="Multiple maps write to this target field"' : ''}>${esc(m.target_tag)}${esc(m.target_sub||'')}</span>
           ${origin}
+          ${confBadge}
+          ${reasoningBtn}
           <span class="badge ${m.approved ? 'badge-green' : 'badge-amber'}" style="font-size:9px">${m.approved ? '✓' : '?'}</span>
         </div>
         <div style="display:flex;gap:4px;align-items:center;justify-content:space-between">
@@ -3765,6 +3822,17 @@ function s2RenderMaps() {
         </div>
       </div>`;
     }).join('')}`;
+}
+
+// AI suggestion confidence tier — single source of truth so the row badge
+// and the approve-all threshold stay in sync. Thresholds from the AI spec:
+// High ≥ 0.85, Medium ≥ 0.60, Low < 0.60. Non-AI rows return null.
+function s2ConfidenceTier(m) {
+  if (!m.ai_suggested || m.ai_confidence == null) return null;
+  const c = m.ai_confidence;
+  if (c >= 0.85) return { label: 'High', cls: 'badge-green', title: `High confidence (${Math.round(c*100)}%)`, low: false };
+  if (c >= 0.60) return { label: 'Med',  cls: 'badge-cerulean', title: `Medium confidence (${Math.round(c*100)}%)`, low: false };
+  return { label: 'Low', cls: 'badge-amber', title: `Low confidence (${Math.round(c*100)}%) — review individually before approving`, low: true };
 }
 
 async function s2LoadKohaFields() {
@@ -3817,9 +3885,19 @@ async function deleteMap(mapId, btn) {
 
 async function approveAll() {
   const p = state.currentProject;
+  // 0.60 matches the Low/Medium cutoff used by s2ConfidenceTier so low-
+  // confidence AI rows stay pending and must be reviewed individually
+  // (per cerulean_ai_spec.md §4.3).
+  const THRESHOLD = 0.60;
+  const lowPending = (s2.maps || []).filter(
+    m => !m.approved && m.ai_suggested && (m.ai_confidence ?? 1) < THRESHOLD
+  ).length;
   try {
-    const res = await api('POST', `/projects/${p.id}/maps/approve-all`, { min_confidence: 0.70 });
-    toast(`Approved ${res.approved_count} maps`, 'success');
+    const res = await api('POST', `/projects/${p.id}/maps/approve-all`, { min_confidence: THRESHOLD });
+    const msg = lowPending
+      ? `Approved ${res.approved_count}. ${lowPending} low-confidence suggestion${lowPending === 1 ? '' : 's'} still pending — review individually.`
+      : `Approved ${res.approved_count} maps`;
+    toast(msg, lowPending ? 'info' : 'success');
     s2LoadMaps();
   } catch (e) {
     console.error('approveAll failed:', e);

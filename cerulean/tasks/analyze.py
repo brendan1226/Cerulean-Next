@@ -11,7 +11,7 @@ Stage 2 Celery tasks:
 
 import json
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 
 import pymarc
 from celery import shared_task
@@ -19,12 +19,21 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from cerulean.core.config import get_settings
+from cerulean.core.preferences import pref_enabled_sync
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
 
 settings = get_settings()
 _sync_url = settings.database_url.replace("+asyncpg", "+psycopg2")
 _engine = create_engine(_sync_url, pool_pre_ping=True)
+
+# ── Value-aware sampling tunables ──────────────────────────────────────
+# Per spec: up to 50 most common distinct values per subfield.
+_VALUE_AWARE_TOP_N = 50
+# Cap records scanned per file so value indexing doesn't dominate runtime
+# on large ingests; 50k records is plenty to surface common branch codes,
+# item types, etc.
+_VALUE_AWARE_MAX_RECORDS_PER_FILE = 50_000
 
 # ── Claude system prompt ───────────────────────────────────────────────
 _SYSTEM_PROMPT = """You are an expert MARC21 cataloguing and library systems migration specialist.
@@ -64,6 +73,10 @@ RULES:
    that already carry across unchanged — only flag these if they need transformation.
 5. Focus on local/item fields and fields that need renaming or transformation for Koha.
 6. No PII is present in the sample. Do not mention patron data.
+7. If a VALUE SAMPLES section is provided, base your reasoning primarily on the actual
+   values and cite specific examples from them (e.g. "values match known branch codes
+   MAIN, BRANCH1, BOOKMOBILE"). When values are ambiguous or don't match any known Koha
+   vocabulary, lower your confidence below 0.6 and explain what's uncertain.
 
 Return ONLY a JSON array of suggestion objects. No preamble, no markdown fences."""
 
@@ -73,17 +86,28 @@ Return ONLY a JSON array of suggestion objects. No preamble, no markdown fences.
 # ══════════════════════════════════════════════════════════════════════════
 
 @celery_app.task(bind=True, name="cerulean.tasks.analyze.ai_field_map_task")
-def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
+def ai_field_map_task(
+    self,
+    project_id: str,
+    file_ids: list[str],
+    user_id: str | None = None,
+) -> dict:
     """
     Call Claude API for field map suggestions.
 
     Sends: combined tag frequency report + up to AI_MAX_SAMPLE_RECORDS records.
+    When the calling user has ``ai.value_aware_mapping`` enabled, also sends
+    an aggregated value index (top-N distinct values per subfield) so the AI
+    can reason from actual data rather than tag names alone.
+
     Writes: FieldMap rows with approved=False, ai_suggested=True.
     Does NOT set approved=True on any row.
 
     Args:
         project_id: Project UUID.
         file_ids: List of MARCFile UUIDs to analyse (combined frequency).
+        user_id: Optional calling user UUID used to check per-user AI
+            feature flags. Defaults fall through to the registry (all off).
     """
     from cerulean.models import FieldMap, MARCFile
 
@@ -91,11 +115,12 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
     log.info(f"Starting AI field map analysis across {len(file_ids)} file(s)")
 
     try:
-        # 1. Build combined tag frequency
+        # 1. Build combined tag frequency + check value-aware flag
         with Session(_engine) as db:
             files = db.execute(
                 select(MARCFile).where(MARCFile.id.in_(file_ids))
             ).scalars().all()
+            value_aware = pref_enabled_sync(db, user_id, "ai.value_aware_mapping")
 
         if not files:
             log.error("No files found for AI analysis")
@@ -119,7 +144,21 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
                 max_records=settings.ai_max_sample_records - len(sample_records),
             ))
 
-        log.info(f"Sending {len(combined_freq)} tags, {len(sample_records)} sample records to Claude")
+        # 2b. Value index (only when value-aware mapping is enabled for the caller)
+        value_index: dict[str, dict[str, list[tuple[str, int]]]] = {}
+        if value_aware:
+            log.info("Value-aware mapping enabled — building subfield value index")
+            value_index = _build_value_index(
+                storage_paths,
+                top_n=_VALUE_AWARE_TOP_N,
+                max_records_per_file=_VALUE_AWARE_MAX_RECORDS_PER_FILE,
+            )
+
+        log.info(
+            f"Sending {len(combined_freq)} tags, {len(sample_records)} sample records"
+            + (f", value index for {len(value_index)} tag(s)" if value_index else "")
+            + " to Claude"
+        )
 
         # 3. Build prompt
         freq_report = json.dumps(
@@ -128,10 +167,18 @@ def ai_field_map_task(self, project_id: str, file_ids: list[str]) -> dict:
         )
         sample_text = _records_to_text(sample_records[:settings.ai_max_sample_records])
 
-        user_message = (
-            f"TAG FREQUENCY REPORT (top 100 tags, count of occurrences):\n{freq_report}\n\n"
+        user_message_parts = [
+            f"TAG FREQUENCY REPORT (top 100 tags, count of occurrences):\n{freq_report}",
+        ]
+        if value_index:
+            user_message_parts.append(
+                "VALUE SAMPLES (top distinct values per subfield, with counts):\n"
+                + _format_value_index(value_index)
+            )
+        user_message_parts.append(
             f"SAMPLE MARC RECORDS ({len(sample_records)} records):\n{sample_text}"
         )
+        user_message = "\n\n".join(user_message_parts)
 
         # 4. Call Claude API
         import anthropic
@@ -505,3 +552,100 @@ def _is_valid_suggestion(s: dict) -> bool:
         return False
     # MARC tags must be 3-digit numeric (000–999)
     return bool(re.match(r"^\d{3}$", src) and re.match(r"^\d{3}$", tgt))
+
+
+# ── Value-aware helpers (AI Feature 2 — per cerulean_ai_spec.md §4) ───
+
+def _build_value_index(
+    paths: list[str],
+    top_n: int = _VALUE_AWARE_TOP_N,
+    max_records_per_file: int = _VALUE_AWARE_MAX_RECORDS_PER_FILE,
+) -> dict[str, dict[str, list[tuple[str, int]]]]:
+    """Scan MARC files and return the most common distinct values per subfield.
+
+    Shape::
+
+        {
+          "852": {
+            "b": [("MAIN", 12483), ("BRANCH1", 4021), ...up to top_n],
+            "c": [...],
+          },
+          ...
+        }
+
+    Control fields (tags < "010") collapse all values under a synthetic
+    subfield code "_" since they have no subfields.
+
+    Values longer than 120 characters are truncated to keep the prompt
+    compact. Scanning is capped per file — indexing the whole file would
+    dominate runtime on large ingests and the top-N for common codes
+    stabilises quickly.
+    """
+    counters: dict[str, dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
+    for path in paths:
+        try:
+            count = 0
+            with open(path, "rb") as fh:
+                reader = pymarc.MARCReader(
+                    fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
+                )
+                for record in reader:
+                    if record is None:
+                        continue
+                    for field in record.fields:
+                        if field.is_control_field():
+                            val = (field.data or "").strip()
+                            if val:
+                                counters[field.tag]["_"][_truncate_value(val)] += 1
+                        else:
+                            for sf in field.subfields:
+                                if not sf.value:
+                                    continue
+                                counters[field.tag][sf.code][_truncate_value(sf.value.strip())] += 1
+                    count += 1
+                    if count >= max_records_per_file:
+                        break
+        except Exception:
+            # Skip unreadable files — value-aware mode is advisory and must
+            # never block the AI suggest flow.
+            continue
+
+    return {
+        tag: {sub: counter.most_common(top_n) for sub, counter in by_sub.items()}
+        for tag, by_sub in counters.items()
+    }
+
+
+def _truncate_value(v: str, limit: int = 120) -> str:
+    """Clip long values so the prompt stays within token budgets."""
+    return v if len(v) <= limit else v[:limit] + "…"
+
+
+def _format_value_index(
+    index: dict[str, dict[str, list[tuple[str, int]]]],
+) -> str:
+    """Render the value index as a compact text block for the Claude prompt.
+
+    Tags with many subfields can balloon the prompt; we cap the emitted
+    width by only including subfields that have at least 2 distinct values
+    OR more than 10 occurrences of the top value — one-off values rarely
+    help the AI and waste tokens.
+    """
+    lines: list[str] = []
+    # Stable ordering: MARC tag ascending, then subfield alphabetical
+    for tag in sorted(index.keys()):
+        tag_block: list[str] = []
+        for sub in sorted(index[tag].keys()):
+            values = index[tag][sub]
+            if not values:
+                continue
+            total = sum(c for _, c in values)
+            if len(values) < 2 and total < 10:
+                continue
+            sub_label = f"${sub}" if sub != "_" else ""
+            head = f"  {tag}{sub_label}  ({len(values)} distinct shown, {total:,}+ occurrences):"
+            rows = [f"    {count:>7,}  {value}" for value, count in values]
+            tag_block.append(head + "\n" + "\n".join(rows))
+        if tag_block:
+            lines.append("\n".join(tag_block))
+    return "\n\n".join(lines) if lines else "(no value samples available)"

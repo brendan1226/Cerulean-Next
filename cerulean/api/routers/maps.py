@@ -13,7 +13,7 @@ POST   /projects/{id}/maps/approve-all  — batch approve by confidence threshol
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,6 +151,7 @@ async def delete_map(
 @router.post("/{project_id}/maps/ai-suggest", response_model=AIMapSuggestResponse)
 async def ai_suggest_maps(
     project_id: str,
+    request: Request,
     body: AISuggestRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -159,6 +160,11 @@ async def ai_suggest_maps(
     Creates FieldMap rows with approved=False, ai_suggested=True.
     Does NOT approve any map — engineer must review.
     Optionally accepts file_ids to analyze only selected files.
+
+    The calling user's id is forwarded to the task so it can check the
+    ``ai.value_aware_mapping`` feature flag — when enabled, the task
+    includes aggregated subfield value samples in the Claude prompt for
+    value-informed reasoning.
     """
     await require_project(project_id, db)
 
@@ -181,8 +187,11 @@ async def ai_suggest_maps(
     await audit_log(db, project_id, stage=2, level="info", tag="[ai-map]",
                     message=f"AI mapping analysis requested across {len(files)} file(s)")
 
+    user_id = getattr(request.state, "user_id", None)
+
     task = ai_field_map_task.apply_async(
         args=[project_id, [f.id for f in files]],
+        kwargs={"user_id": user_id},
         queue="analyze",
     )
     from cerulean.api.routers.tasks import register_task
