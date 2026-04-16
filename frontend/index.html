@@ -8862,6 +8862,15 @@ async function renderPatronUpload() {
         <p class="text-secondary" style="font-size:11px;margin:8px 0">CSV, TSV, Excel, XML, or Patron MARC.</p>
         <form id="patron-upload-form" style="display:flex;flex-direction:column;gap:10px">
           <input type="file" id="patron-file-input" accept=".csv,.tsv,.txt,.dat,.prn,.xlsx,.xls,.xml,.mrc,.marc" class="form-input">
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-secondary);cursor:pointer;padding:6px 0">
+            <input type="checkbox" id="patron-auto-map" style="margin-top:2px">
+            <span>
+              <strong>File uses Koha headers</strong> — auto-approve matching columns and skip the Column Mapping tab.
+              <span class="text-dim" style="display:block;margin-top:2px">
+                Columns whose names exactly match Koha borrower headers (<code>cardnumber</code>, <code>surname</code>, <code>categorycode</code>, <code>branchcode</code>, <code>email</code>…) are mapped and approved automatically. Controlled-list headers are flagged for reconciliation. Unmatched columns still appear on Column Mapping for review.
+              </span>
+            </span>
+          </label>
           <button type="submit" class="btn btn-primary" style="align-self:flex-start">Upload &amp; Parse</button>
         </form>
         <div id="patron-upload-status" style="margin-top:8px"></div>
@@ -8875,14 +8884,18 @@ async function renderPatronUpload() {
     e.preventDefault();
     const input = document.getElementById('patron-file-input');
     if (!input.files.length) { toast('Select a file first', 'warn'); return; }
+    const autoMap = !!document.getElementById('patron-auto-map')?.checked;
     const formData = new FormData();
     formData.append('file', input.files[0]);
-    document.getElementById('patron-upload-status').innerHTML = renderProgressBar({ label: 'Uploading...' });
+    formData.append('auto_map_headers', autoMap ? 'true' : 'false');
+    document.getElementById('patron-upload-status').innerHTML = renderProgressBar({
+      label: autoMap ? 'Uploading + auto-mapping headers…' : 'Uploading...',
+    });
     try {
       const resp = await fetch(`/api/v1/projects/${p.id}/patrons/upload`, { method: 'POST', body: formData });
       const r = await resp.json();
       if (resp.ok) {
-        toast('File uploaded, parsing...', 'info');
+        toast(autoMap ? 'File uploaded — auto-mapping headers' : 'File uploaded, parsing...', 'info');
         await refreshProject();
         setTimeout(renderPatronUpload, 2000);
       } else {
@@ -8993,10 +9006,19 @@ async function reparsePatronFiles() {
 async function selectPatronFile(marcFileId) {
   const p = state.currentProject;
   const statusEl = document.getElementById('patron-select-status');
-  if (statusEl) statusEl.innerHTML = renderProgressBar({ label: 'Adding file...' });
+  // The auto-map checkbox lives under the Upload fieldset but applies to
+  // whichever path the user took — reading it here keeps the two entry
+  // points aligned without duplicating UI.
+  const autoMap = !!document.getElementById('patron-auto-map')?.checked;
+  if (statusEl) statusEl.innerHTML = renderProgressBar({
+    label: autoMap ? 'Adding file + auto-mapping headers…' : 'Adding file...',
+  });
   try {
-    const r = await window.api('POST', `/projects/${p.id}/patrons/select-file`, { marc_file_id: marcFileId });
-    toast('File added, parsing...', 'info');
+    await window.api('POST', `/projects/${p.id}/patrons/select-file`, {
+      marc_file_id: marcFileId,
+      auto_map_headers: autoMap,
+    });
+    toast(autoMap ? 'File added — auto-mapping headers' : 'File added, parsing...', 'info');
     await refreshProject();
     setTimeout(renderPatronUpload, 2000);
   } catch(e) {
@@ -9632,8 +9654,9 @@ async function renderPatronValues() {
 
   wrap.innerHTML = `
     ${prereqHtml}
-    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="runPatronScan()" ${approvedControlled.length === 0 ? 'disabled title="No approved controlled maps"' : ''}>Scan Controlled Values</button>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="downloadPatronControlledSql()" title="Download INSERT IGNORE statements covering every scanned controlled value — load into your Koha database with: mysql koha_db &lt; file.sql">↓ Download SQL (all controlled values)</button>
       <div id="patron-scan-status" style="margin-left:8px"></div>
     </div>
     <div id="patron-values-panels"></div>
@@ -9653,7 +9676,11 @@ async function renderPatronValues() {
       const vals = await window.api('GET', `/projects/${p.id}/patrons/values?header=${cat}`);
       html += `
         <div class="card">
-          <div class="card-header"><span class="card-title">${esc(cat)}</span><span class="badge badge-dim">${vals?.length || 0} values</span></div>
+          <div class="card-header" style="align-items:center;flex-wrap:wrap;gap:6px">
+            <span class="card-title">${esc(cat)}</span>
+            <span class="badge badge-dim">${vals?.length || 0} values</span>
+            ${vals && vals.length ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;margin-left:auto" onclick="downloadPatronControlledSql('${esc(cat)}')" title="Download INSERT IGNORE statements for ${esc(cat)}">↓ SQL</button>` : ''}
+          </div>
           ${vals && vals.length ? `
           <div style="max-height:250px;overflow:auto;border:1px solid var(--border);border-radius:4px;margin-top:8px">
             <table class="data-table" style="font-size:11px;width:100%">
@@ -9704,6 +9731,24 @@ async function runPatronScan() {
     toast('Patron scan started', 'info');
     pollTaskStatus(p.id, r.task_id, 'patron-scan-status', 'Patron Scan', 'patron-scan', () => renderPatronValues());
   } catch(e) { console.error(e); }
+}
+
+// Download INSERT IGNORE statements for scanned controlled patron
+// values. If header is omitted, the endpoint returns a combined SQL
+// file covering every controlled category (categorycode, branchcode,
+// title, lost) — ready to pipe into Koha's DB.
+async function downloadPatronControlledSql(header) {
+  const p = state.currentProject;
+  if (!p) return;
+  const qs = header ? `?header=${encodeURIComponent(header)}` : '';
+  const filename = header
+    ? `${p.code || 'project'}-patron-${header}-values.sql`
+    : `${p.code || 'project'}-patron-controlled-values.sql`;
+  try {
+    await authDownload(`/projects/${p.id}/patrons/scan-sql${qs}`, filename);
+  } catch (e) {
+    toast('Could not download SQL — run a scan first', 'warn');
+  }
 }
 
 async function deletePatronRule(ruleId) {

@@ -78,6 +78,196 @@ KOHA_BORROWER_HEADERS: list[str] = [
 ]
 
 
+# ── Header-matching fast path ─────────────────────────────────────────
+
+def match_koha_patron_header(source_column: str) -> str | None:
+    """Return the canonical Koha borrower header if ``source_column`` is a
+    case-insensitive exact match for one. ``None`` otherwise.
+
+    Pure string function — safe to unit test without DB or task machinery.
+    The match is strictly on the column name as it appears in the CSV,
+    with whitespace stripped. Anything fuzzier belongs in the AI Suggest
+    flow, not here — the point of this helper is fast, deterministic
+    mapping only for files that are already Koha-shaped.
+    """
+    if not source_column:
+        return None
+    key = source_column.strip().lower()
+    if not key:
+        return None
+    for canonical in KOHA_BORROWER_HEADERS:
+        if canonical.lower() == key:
+            return canonical
+    return None
+
+
+# ── Controlled-value SQL generator ────────────────────────────────────
+
+# Minimal-viable Koha schema for each controlled header. Users can edit
+# the generated SQL before loading; we keep required columns small so
+# the output works against vanilla Koha installs (24.x verified).
+#
+# category_type 'A' (Adult) and enrolmentperiod 99 are sensible defaults
+# an operator can tighten in the SQL file before `mysql < ...`.
+#
+# title / lost go to authorised_values under the category codes Koha
+# uses for patron titles and lost-card status respectively.
+
+_CONTROLLED_SQL_SPEC: dict[str, dict] = {
+    "categorycode": {
+        "table": "categories",
+        "comment": "Borrower categories — review category_type before loading",
+        "columns": ["categorycode", "description", "category_type", "enrolmentperiod"],
+        "row": lambda code: (
+            _sql_str(code[:10]),
+            _sql_str(code[:100]),
+            _sql_str("A"),
+            "99",
+        ),
+    },
+    "branchcode": {
+        "table": "branches",
+        "comment": "Home libraries — branchname defaults to the code (edit before loading)",
+        "columns": ["branchcode", "branchname"],
+        "row": lambda code: (
+            _sql_str(code[:10]),
+            _sql_str(code[:100]),
+        ),
+    },
+    "title": {
+        "table": "authorised_values",
+        "comment": "Patron titles (BOR_TITLES) — salutation list",
+        "columns": ["category", "authorised_value", "lib"],
+        "row": lambda value: (
+            _sql_str("BOR_TITLES"),
+            _sql_str(value[:80]),
+            _sql_str(value[:200]),
+        ),
+    },
+    "lost": {
+        "table": "authorised_values",
+        "comment": "Lost-card status values (LOST)",
+        "columns": ["category", "authorised_value", "lib"],
+        "row": lambda value: (
+            _sql_str("LOST"),
+            _sql_str(value[:80]),
+            _sql_str(value[:200]),
+        ),
+    },
+}
+
+
+def _sql_str(s: str) -> str:
+    """MySQL/MariaDB string literal with minimal escaping. Handles
+    single quotes and backslashes — anything that would break the
+    statement or open an injection door if the operator pipes the
+    output straight into ``mysql`` on the Koha host."""
+    if s is None:
+        return "''"
+    escaped = str(s).replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+def generate_patron_controlled_sql(
+    scan_results_by_header: dict[str, list[tuple[str, int]]],
+    *,
+    project_code: str | None = None,
+) -> str:
+    """Render INSERT IGNORE statements for one or more controlled patron
+    headers based on scanned distinct source values.
+
+    ``scan_results_by_header`` maps each Koha header to a list of
+    ``(source_value, record_count)`` tuples. Only headers present in
+    ``_CONTROLLED_SQL_SPEC`` produce output — others are skipped with
+    a note in the file header. Empty / whitespace-only values are
+    skipped to keep the SQL tight.
+
+    Pure function — unit-testable without a DB or project.
+    """
+    from datetime import datetime
+
+    lines: list[str] = []
+    lines.append("-- Cerulean Next — patron controlled-value SQL export")
+    if project_code:
+        lines.append(f"-- project: {project_code}")
+    lines.append(f"-- generated: {datetime.utcnow().isoformat(timespec='seconds')}Z")
+    lines.append("--")
+    lines.append("-- Review each block before loading. INSERT IGNORE skips rows whose")
+    lines.append("-- primary key already exists in Koha — nothing is ever overwritten.")
+    lines.append("-- Load with:  mysql -u koha_admin -p koha_database < this_file.sql")
+    lines.append("")
+
+    total_statements = 0
+    for header, spec in _CONTROLLED_SQL_SPEC.items():
+        rows = scan_results_by_header.get(header, [])
+        clean_rows = [(v, c) for (v, c) in rows if v and str(v).strip()]
+        if not clean_rows:
+            continue
+
+        lines.append(f"-- ── {header} ── {spec['comment']}")
+        lines.append(
+            f"-- {len(clean_rows)} distinct value(s), "
+            f"{sum(c for _, c in clean_rows):,} patron record(s) total"
+        )
+        col_list = ", ".join(spec["columns"])
+        for value, count in clean_rows:
+            cells = spec["row"](value.strip())
+            lines.append(
+                f"INSERT IGNORE INTO {spec['table']} ({col_list}) "
+                f"VALUES ({', '.join(cells)});"
+                f"  -- {count:,} patron(s)"
+            )
+            total_statements += 1
+        lines.append("")
+
+    if total_statements == 0:
+        lines.append("-- No controlled values found. Run the Value Reconciliation scan")
+        lines.append("-- on Step 8 first, then re-download.")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _auto_create_koha_header_maps(db: Session, project_id: str, columns: list[str]) -> int:
+    """Create approved PatronColumnMap rows for every source column whose
+    name matches a Koha borrower header (case-insensitive). Skips
+    columns that already have a map so re-uploads are idempotent.
+
+    Returns the number of rows inserted.
+    """
+    from cerulean.models import PatronColumnMap
+
+    existing_sources = {
+        s for (s,) in db.execute(
+            select(PatronColumnMap.source_column).where(
+                PatronColumnMap.project_id == project_id,
+            )
+        ).all()
+    }
+
+    created = 0
+    for col in columns:
+        if col in existing_sources:
+            continue
+        canonical = match_koha_patron_header(col)
+        if canonical is None:
+            continue
+        db.add(PatronColumnMap(
+            project_id=project_id,
+            source_column=col,
+            target_header=canonical,
+            transform_type="copy",
+            is_controlled_list=canonical in PATRON_CONTROLLED_HEADERS,
+            approved=True,
+            source_label="auto",
+        ))
+        existing_sources.add(col)
+        created += 1
+    if created:
+        db.commit()
+    return created
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # PATRON PARSE TASK
 # ══════════════════════════════════════════════════════════════════════════
@@ -89,7 +279,12 @@ KOHA_BORROWER_HEADERS: list[str] = [
     max_retries=0,
     queue="patrons",
 )
-def patron_parse_task(self, project_id: str, patron_file_id: str) -> dict:
+def patron_parse_task(
+    self,
+    project_id: str,
+    patron_file_id: str,
+    auto_map_headers: bool = False,
+) -> dict:
     """Parse uploaded patron file and write normalised parsed.csv.
 
     Supports CSV, TSV, Excel (.xlsx/.xls), fixed-width, XML, and Patron MARC.
@@ -98,6 +293,13 @@ def patron_parse_task(self, project_id: str, patron_file_id: str) -> dict:
     Args:
         project_id: UUID of the project.
         patron_file_id: UUID of the PatronFile row.
+        auto_map_headers: When True, after parsing, every source column
+            whose name is a case-insensitive exact match for a standard
+            Koha borrower header gets an approved ``PatronColumnMap`` row
+            auto-created with ``source_label="auto"``. Controlled-list
+            headers (categorycode / branchcode / title / lost) also get
+            ``is_controlled_list=True`` so the Scan button unblocks
+            without the user visiting the Column Mapping tab.
 
     Returns:
         dict with row_count, columns, format.
@@ -197,6 +399,22 @@ def patron_parse_task(self, project_id: str, patron_file_id: str) -> dict:
 
         # Concatenate all per-file CSVs into parsed.csv
         _concat_patron_files(project_id)
+
+        # Optional fast-path: when the uploader said the file already uses
+        # Koha headers, auto-create + auto-approve column maps for every
+        # exact-match column. Skip quietly if the map already exists so
+        # re-uploads don't duplicate rows.
+        if auto_map_headers:
+            try:
+                with Session(_engine) as db:
+                    created = _auto_create_koha_header_maps(db, project_id, columns)
+                if created:
+                    log.info(
+                        f"Auto-approved {created} column map(s) matching Koha patron headers "
+                        f"(auto_map_headers=True)"
+                    )
+            except Exception as exc:
+                log.warn(f"Auto-map step failed (manual mapping still available): {exc}")
 
         log.complete(
             f"Patron file parsed — {len(rows):,} rows, "

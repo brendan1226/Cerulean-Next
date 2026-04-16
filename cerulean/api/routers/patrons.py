@@ -57,8 +57,8 @@ from pathlib import Path
 
 import httpx
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -205,13 +205,18 @@ async def select_existing_file(
     await db.flush()
     await db.refresh(pf)
 
+    upload_note = (
+        f"Patron file selected from Stage 1: {marc_file.filename}"
+        + (" (auto-mapping Koha headers)" if body.auto_map_headers else "")
+    )
     await audit_log(db, project_id, stage=9, level="info", tag="[patron-upload]",
-                    message=f"Patron file selected from Stage 1: {marc_file.filename}")
+                    message=upload_note)
     await db.flush()
 
     # Dispatch parse task
     task = patron_parse_task.apply_async(
         args=[project_id, pf.id],
+        kwargs={"auto_map_headers": body.auto_map_headers},
         queue="patrons",
     )
 
@@ -219,7 +224,11 @@ async def select_existing_file(
         file_id=pf.id,
         filename=marc_file.filename,
         task_id=task.id,
-        message="File selected from Stage 1 uploads. Parsing started.",
+        message=(
+            "File selected from Stage 1 uploads. Parsing and auto-mapping headers…"
+            if body.auto_map_headers
+            else "File selected from Stage 1 uploads. Parsing started."
+        ),
     )
 
 
@@ -227,9 +236,20 @@ async def select_existing_file(
 async def upload_patron_file(
     project_id: str,
     file: UploadFile = File(...),
+    auto_map_headers: bool = Form(False),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a patron data file. Adds to multi-file list. Dispatches parse task."""
+    """Upload a patron data file. Adds to multi-file list. Dispatches parse task.
+
+    ``auto_map_headers=true`` (the "File uses Koha headers" checkbox on the
+    upload dialog) tells the parser to auto-create and auto-approve
+    ``PatronColumnMap`` rows for every source column whose name exactly
+    matches a standard Koha borrower header. Controlled-list headers
+    (categorycode / branchcode / title / lost) also get
+    ``is_controlled_list=True`` so the Scan button on Value Reconciliation
+    unblocks immediately — no trip through the Column Mapping tab needed.
+    Unmatched columns still appear on Column Mapping for manual review.
+    """
     await require_project(project_id, db)
 
     filename = file.filename or "patrons_upload"
@@ -266,13 +286,18 @@ async def upload_patron_file(
     await db.flush()
     await db.refresh(pf)
 
+    upload_note = (
+        f"Patron file uploaded: {filename}"
+        + (" (auto-mapping Koha headers)" if auto_map_headers else "")
+    )
     await audit_log(db, project_id, stage=9, level="info", tag="[patron-upload]",
-                    message=f"Patron file uploaded: {filename}")
+                    message=upload_note)
     await db.flush()
 
     # Dispatch parse task
     task = patron_parse_task.apply_async(
         args=[project_id, pf.id],
+        kwargs={"auto_map_headers": auto_map_headers},
         queue="patrons",
     )
 
@@ -280,7 +305,11 @@ async def upload_patron_file(
         file_id=pf.id,
         filename=filename,
         task_id=task.id,
-        message="Patron file uploaded. Parsing started.",
+        message=(
+            "Patron file uploaded. Parsing and auto-mapping headers…"
+            if auto_map_headers
+            else "Patron file uploaded. Parsing started."
+        ),
     )
 
 
@@ -786,6 +815,78 @@ async def list_patron_scan_values(
         .order_by(PatronScanResult.record_count.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/{project_id}/patrons/scan-sql")
+async def patron_scan_sql(
+    project_id: str,
+    header: str | None = Query(
+        None,
+        description=(
+            "Optional. One of categorycode / branchcode / title / lost. "
+            "Omit to download a combined SQL file covering all four."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download INSERT IGNORE statements for distinct controlled-list
+    patron values found by the most recent scan.
+
+    Output is plain text suitable for piping into the Koha DB:
+
+        mysql -u koha_admin -p koha_database < patron-controlled-values.sql
+
+    Nothing is pushed — this is the "download the SQL and load it
+    yourself" path. Review the category_type / branchname defaults in
+    each block before loading on a live Koha instance.
+    """
+    from cerulean.tasks.patrons import (
+        generate_patron_controlled_sql,
+        _CONTROLLED_SQL_SPEC,
+    )
+
+    project = await require_project(project_id, db)
+
+    if header is not None and header not in _CONTROLLED_SQL_SPEC:
+        raise HTTPException(400, detail={
+            "error": "UNKNOWN_HEADER",
+            "message": (
+                f"Header {header!r} not recognised. Valid: "
+                + ", ".join(sorted(_CONTROLLED_SQL_SPEC.keys()))
+            ),
+        })
+
+    target_headers = [header] if header else list(_CONTROLLED_SQL_SPEC.keys())
+
+    scan_results_by_header: dict[str, list[tuple[str, int]]] = {}
+    for h in target_headers:
+        rows = (await db.execute(
+            select(PatronScanResult.source_value, PatronScanResult.record_count)
+            .where(
+                PatronScanResult.project_id == project_id,
+                PatronScanResult.koha_header == h,
+            )
+            .order_by(PatronScanResult.record_count.desc())
+        )).all()
+        scan_results_by_header[h] = [(r[0], r[1]) for r in rows]
+
+    sql_text = generate_patron_controlled_sql(
+        scan_results_by_header,
+        project_code=project.code,
+    )
+
+    # Keep filename ASCII so the Content-Disposition header is safe
+    import re as _re
+    code = _re.sub(r"[^A-Za-z0-9._-]", "-", (project.code or project_id)[:50])
+    filename = (
+        f"{code}-patron-{header}-values.sql" if header
+        else f"{code}-patron-controlled-values.sql"
+    )
+    return PlainTextResponse(
+        content=sql_text,
+        media_type="application/sql",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+    )
 
 
 @router.get("/{project_id}/patrons/koha-list")

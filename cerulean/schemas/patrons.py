@@ -48,6 +48,9 @@ class AvailablePatronFile(BaseModel):
 class SelectFileRequest(BaseModel):
     """Request body for selecting an existing Stage 1 file as patron data."""
     marc_file_id: str
+    # Same semantics as the upload endpoint: auto-approve column maps for
+    # columns whose names already match Koha borrower headers.
+    auto_map_headers: bool = False
 
 
 class PatronPreviewResponse(BaseModel):

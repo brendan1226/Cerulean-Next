@@ -2,6 +2,70 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.3.0] — 2026-04-16 — Patron fast path: skip Column Mapping + SQL export
+
+Two-part quality-of-life improvement for Step 8 (Patrons) aimed at
+migrations where the source file is already Koha-shaped or where the
+operator just wants the INSERT statements for their controlled values.
+
+### "File uses Koha headers" upload checkbox
+
+New checkbox on the patron upload dialog (and the "Select from Stage 1
+uploads" path). When ticked:
+
+- The parse task auto-creates **and auto-approves** `PatronColumnMap`
+  rows for every source column whose name is a case-insensitive exact
+  match for a standard Koha borrower header (`cardnumber`, `surname`,
+  `firstname`, `email`, `categorycode`, `branchcode`, `dateofbirth`, …
+  the full list in `KOHA_BORROWER_HEADERS`).
+- Controlled-list headers (`categorycode`, `branchcode`, `title`,
+  `lost`) also get `is_controlled_list=True` so the **Scan Controlled
+  Values** button on the Value Reconciliation tab unblocks immediately.
+- Unmatched columns still appear on Column Mapping for manual review.
+- Idempotent: re-uploading a file with the checkbox ticked never
+  duplicates existing column maps.
+
+### `GET /projects/{id}/patrons/scan-sql`
+
+New endpoint that renders `INSERT IGNORE` statements for the distinct
+controlled values found by the most recent scan. Output is plain text
+suitable for `mysql koha_db < file.sql` on the Koha host. Coverage:
+
+| Header | Target table | Columns written |
+|--------|-------------|-----------------|
+| `categorycode` | `categories` | categorycode, description, category_type, enrolmentperiod |
+| `branchcode` | `branches` | branchcode, branchname |
+| `title` | `authorised_values` (category `BOR_TITLES`) | category, authorised_value, lib |
+| `lost` | `authorised_values` (category `LOST`) | category, authorised_value, lib |
+
+Each row carries a `-- N patron(s)` inline comment so the operator can
+see volumes at a glance. Single quotes and backslashes in source values
+are escaped so the output is safe to pipe into `mysql` straight away.
+
+### Frontend
+
+- **Download SQL** button on each Value Reconciliation category panel —
+  single-header export (`...-patron-categorycode-values.sql`).
+- **Download SQL (all controlled values)** button at the top of the
+  panel — combined export (`...-patron-controlled-values.sql`).
+
+### Tests
+
+- 28 new unit tests (`tests/tasks/test_patron_fastpath.py`): the header
+  matcher (every known header self-matches, case-insensitivity,
+  whitespace handling, unknown headers rejected) plus the SQL generator
+  (shape per controlled header, single-quote escaping, backslash
+  escaping, empty-value skipping, unknown-header silent ignore). 251
+  total, up from 223.
+
+### Backward compatibility
+
+Untouched when the checkbox is unticked — existing Column Mapping +
+approval flow works exactly as before. Nothing removed, no schema
+changes.
+
+---
+
 ## [2.2.0] — 2026-04-16 — Cerulean Plugin System (Phase A)
 
 First-party plugin platform that lets any migration specialist extend
