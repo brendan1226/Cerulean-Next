@@ -177,6 +177,56 @@ def downgrade():
     op.drop_table("my_table")
 ```
 
+## AI-Assisted Features (Phases 1–4)
+
+Cerulean exposes six AI-assisted capabilities. Every one follows the same
+pattern — **AI analyzes → human reviews → pipeline executes**. Nothing an
+AI produces touches the data without explicit engineer sign-off.
+
+### Per-user feature flags
+
+Every AI feature is opt-in per user via the preference system:
+
+| File | Purpose |
+|------|---------|
+| `cerulean/core/features.py` | `FEATURES` registry — the single source of truth for every toggle. Add a new `Feature(...)` entry to expose a new flag. |
+| `cerulean/core/preferences.py` | Async + sync read/write helpers. `require_preference(key)` is a FastAPI dep that 403s when off. `pref_enabled_sync(session, user_id, key)` is the Celery-side check. |
+| `cerulean/api/routers/preferences.py` | `GET/PATCH /api/v1/users/me/preferences`, `POST /reset`. Dev-mode tolerant (synthetic dev user when OAuth not configured). |
+
+**Feature keys (all default OFF per spec §11.3):**
+
+| Key | Phase | Feature |
+|-----|-------|---------|
+| `ai.data_health_report` | 3 | Auto-analyzes ingested MARC files, produces plain-English briefing |
+| `ai.value_aware_mapping` | 2 | Adds a top-50 distinct-value index to the AI Suggest prompt |
+| `ai.transform_rule_gen` | 4 | Plain-English → sandboxed Python expression + mandatory before/after preview |
+| `ai.code_reconciliation` | 5 (TBD) | Koha authorized-value matching for branch / location / item-type codes |
+| `ai.fuzzy_patron_dedup` | 6 (TBD) | AI confidence scoring on probable patron duplicate clusters |
+| `ai.record_enrichment` | roadmap | Thin-record enrichment from ISBN / OCLC (not built) |
+
+### Adding a new AI feature
+
+1. **Register in `FEATURES`** — add a `Feature(key=..., default=False, category=CATEGORY_AI, shares_data_with_anthropic=True, ...)` entry. Keys are dot-namespaced (`ai.my_feature`). Defaults MUST be `False`.
+2. **Gate the endpoint** — either `dependencies=[Depends(require_preference("ai.my_feature"))]` on the route, or inline `get_user_pref(db, user.id, key)` for custom 403 payloads.
+3. **Gate the task** — call `pref_enabled_sync(session, user_id, key)` at the top of the Celery task; return a `{"skipped": True}` no-op when disabled. Tasks must be self-gating so routers can queue them without branching.
+4. **Pipe `user_id` through** — the triggering router pulls it from `request.state.user_id` and passes as a kwarg to `apply_async`. Tasks that chain into AI tasks forward `user_id` down.
+5. **Hide the UI when off** — frontend helper `window.hasFeature(key)` returns true only when the server-loaded `window.userPrefs.values[key]` is true. Wrap the UI block in `if (!window.hasFeature(...)) return;` or skip the DOM insertion entirely.
+
+### Transform Rule Generation sandbox (Phase 4)
+
+The `fn` transform type runs inside a locked-down `eval()`:
+
+- **Available builtins** (`_SAFE_BUILTINS` in `cerulean/tasks/transform.py`): `len str int float bool list dict tuple set min max abs round sorted reversed enumerate zip map filter isinstance range True False None` + a whitelisted `__import__`.
+- **Available modules** (`_SANDBOX_ALLOWED_IMPORTS`): `re _sre datetime _datetime time _strptime locale _locale encodings string calendar`.
+- **Available names in expression scope** (`_SAFE_GLOBALS`): `value` / `v` (the input string), `re`, `datetime`, `date`, `timedelta`.
+- **BLOCKED**: `open`, `exec`, `eval`, `compile`, `globals`, `os`, `subprocess`, `sys`, `socket`, `ctypes`, `importlib`, `pickle`, `builtins`, and anything else not on the whitelist.
+
+Two entry points:
+- `_apply_fn(value, expr)` — production path; swallows errors and returns the input unchanged on failure.
+- `apply_fn_safe(value, expr)` — returns `(result, error_or_none)`; used by the preview endpoint so per-row errors surface inline.
+
+Before expanding the whitelist, add a matching `TestSandboxBlocksDangerousEscapes` entry so new modules get audited.
+
 ## What NOT to Do
 
 - **Don't create new JS/CSS files** — everything goes in `frontend/index.html`

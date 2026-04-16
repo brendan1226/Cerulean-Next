@@ -45,6 +45,8 @@ cerulean/
 │   ├── config.py              # Settings (pydantic-settings, loaded from .env)
 │   ├── database.py            # Async SQLAlchemy engine + session factory
 │   ├── auth.py                # OAuth client, JWT creation/decode, domain validation
+│   ├── features.py            # AI feature flag registry (source of truth for toggles)
+│   ├── preferences.py         # Pref read/write + require_preference dep + pref_enabled_sync
 │   ├── logging.py             # structlog configuration
 │   └── transform_presets.py   # Built-in transform functions (date, case, clean, extract)
 ├── models/
@@ -56,9 +58,10 @@ cerulean/
 │   └── push.py                # BibPushOptions, PushStartRequest
 ├── api/routers/
 │   ├── auth.py                # Google OAuth + user management + server logs
+│   ├── preferences.py         # Per-user AI feature flag read/write
 │   ├── projects.py            # Project CRUD with ownership/visibility
-│   ├── files.py               # File upload, MRK export, record browsing
-│   ├── maps.py                # Field mapping CRUD + AI suggest
+│   ├── files.py               # File upload, MRK export, record browsing, health-report
+│   ├── maps.py                # Field mapping CRUD + AI suggest + AI transform gen/preview
 │   ├── templates.py           # Template CRUD + CSV/Google Sheets import
 │   ├── quality.py             # Quality scan + clustering
 │   ├── batch_edit.py          # Find/replace, regex, add/delete fields, call numbers
@@ -122,9 +125,10 @@ docs/
 | Model | Table | Purpose |
 |-------|-------|---------|
 | User | users | Google OAuth user accounts |
+| UserPreference | user_preferences | Per-user key/value store — AI feature flags today, future visibility toggles tomorrow |
 | Project | projects | Migration projects (owner_id, visibility) |
-| MARCFile | marc_files | Uploaded MARC/CSV files with analysis data |
-| FieldMap | field_maps | Source→target MARC field mappings |
+| MARCFile | marc_files | Uploaded MARC/CSV files with analysis data (incl. `health_report` JSONB + status) |
+| FieldMap | field_maps | Source→target MARC field mappings (incl. `ai_prompt` for AI-generated transforms) |
 | MapTemplate | map_templates | Reusable mapping sets (JSONB maps array) |
 | TransformManifest | transform_manifests | Transform pipeline run tracking |
 | DedupRule | dedup_rules | Dedup rule configuration |
@@ -226,3 +230,54 @@ with httpx.Client(transport=transport) as client:
 | DATA_ROOT | .env | Base directory for project files (default: /data/projects) |
 
 System Settings (stored in DB) override environment variables and take effect without restart.
+
+## Per-User Preferences & AI Feature Flags
+
+Every AI-assisted capability (cerulean_ai_spec.md) is **opt-in per user**
+and **off by default**. One registry drives the whole surface — schema,
+API, UI, and the Celery-side check all read from the same source of
+truth.
+
+```
+cerulean/core/features.py          FEATURES registry — one Feature() per toggle
+cerulean/core/preferences.py       get_user_pref / set_user_pref / pref_enabled_sync
+                                    + require_preference(key) FastAPI dep
+cerulean/api/routers/preferences   GET/PATCH /users/me/preferences
+user_preferences (table)            id, user_id, key, value (JSONB), updated_at
+```
+
+**Adding a new toggle:** append a `Feature(key="ai.my_thing", ...)`
+entry to `FEATURES`. No schema migration, no UI change — the
+Preferences page auto-renders it and `window.hasFeature("ai.my_thing")`
+works immediately.
+
+**Dual-layer enforcement (spec §11.5):**
+- API routes either declare `dependencies=[Depends(require_preference("..."))]`
+  (returns 403 with `feature_key`) or inline-check with `get_user_pref()`
+  for a custom error payload.
+- Celery tasks call `pref_enabled_sync(session, user_id, key)` at the top
+  and early-return `{"skipped": True}` when off. Tasks must be self-gating
+  because chain callers (e.g. `ingest_marc_task`) forward `user_id`
+  blindly; the flag check is the point where that lookup happens.
+
+**Dev mode:** when `GOOGLE_CLIENT_ID` isn't set, the preferences router
+creates a synthetic `dev@localhost` user on first use so the UI works
+locally without real OAuth.
+
+## Transform Rule Generation Sandbox
+
+`cerulean/tasks/transform.py` runs AI-generated expressions through
+`eval()` against a locked-down globals dict (`_SAFE_GLOBALS`):
+
+- Builtins restricted to pure-value helpers (`len`, `str`, `int`, `re`-
+  based idioms, etc.) plus a whitelisted `__import__` that only permits
+  the modules in `_SANDBOX_ALLOWED_IMPORTS` (`re`, `datetime`, `time`,
+  `_strptime`, `locale`, `encodings`, `string`, `calendar`).
+- Expression scope exposes `value` / `v` (the input string) plus `re`,
+  `datetime`, `date`, `timedelta`.
+- `os`, `subprocess`, `sys`, `socket`, `ctypes`, `importlib`, `pickle`,
+  `open`, `exec`, `eval`, `compile`, and `globals()` are all blocked —
+  audited by `tests/tasks/test_ai_transform_sandbox.py`.
+- `_apply_fn(value, expr)` is the production path (silently returns
+  `value` on error). `apply_fn_safe(value, expr)` is the preview path
+  (returns `(result, error)` so the UI can show per-row failures).

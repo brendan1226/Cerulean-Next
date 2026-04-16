@@ -2,6 +2,103 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.1.0] — 2026-04-15 — AI-Assisted Data Manipulation (Phases 1–4)
+
+Implements the first four of six AI-assisted capabilities described in
+`cerulean_ai_spec.md`. Every feature follows the same pattern: **AI
+analyzes → human reviews → pipeline executes**. Nothing AI produces
+touches the data without explicit engineer sign-off.
+
+All features are **off by default** and gated per user via the new
+preference system. Existing functionality is unchanged — everything is
+additive.
+
+### Phase 1 — User Preferences Foundation
+
+- New `user_preferences` table (generic key/value per user) backs AI
+  feature flags today and future granular visibility toggles tomorrow.
+- `cerulean/core/features.py` registry is the single source of truth for
+  every toggleable preference. Adding a new toggle is one dict entry.
+- `require_preference(key)` FastAPI dependency → 403 when disabled.
+  `pref_enabled_sync()` helper for Celery tasks.
+- `GET/PATCH /api/v1/users/me/preferences` + `POST /reset`.
+- New **My Preferences** page in the sidebar, auto-rendered from the
+  server-side registry with per-feature toggles, "Enable all AI features"
+  shortcut, and reset-to-defaults.
+- Dev-mode tolerant: synthetic dev user is created when OAuth isn't
+  configured so the UI still works locally.
+
+### Phase 2 — Value-Aware Field Mapping
+
+- When `ai.value_aware_mapping` is on, the AI Suggest task now sends
+  Claude a top-50 distinct-value index per subfield (capped at 50k
+  records per file) alongside the tag frequency report. Suggestions
+  cite specific values ("values match known branch codes MAIN,
+  BRANCH1, BOOKMOBILE") instead of reasoning from tag names alone.
+- Field Mapping step (Step 5) now shows **High / Med / Low** confidence
+  badges on every AI suggestion row (thresholds 0.85 / 0.60).
+- Hover-reveal **ⓘ info tooltip** on AI rows shows the reasoning inline.
+- Low-confidence rows get an amber tint and stay pending when **Approve
+  All** runs (threshold bumped 0.70 → 0.60 to match the Med/Low cutoff).
+
+### Phase 3 — Data Health Report
+
+- New `marc_files.health_report` JSONB column + status metadata.
+- `data_health_report_task` (analyze queue) runs on every newly-ingested
+  MARC file when `ai.data_health_report` is on. Sends a stratified
+  sample (first 100 + random 400) to Claude, stores the JSON report.
+- New **◈ AI Data Health Report** collapsible panel on Step 1, hidden
+  entirely when the feature is off. Summary paragraph, ILS origin chip
+  + confidence, sample / file size badges, findings cards grouped
+  action_required → warning → info.
+- `GET /api/v1/projects/{pid}/files/{fid}/health-report` and
+  `POST /.../health-report/run` endpoints.
+
+### Phase 4 — Transform Rule Generation
+
+- New `field_maps.ai_prompt` column stores the original plain-English
+  description alongside the generated expression.
+- **Describe transform** panel in the map edit and new modals (hidden
+  when `ai.transform_rule_gen` is off). User types intent, clicks
+  Generate, Claude writes a sandboxed Python expression and a
+  before/after preview on 10 real sample values renders inline.
+- **Mandatory preview gate** (spec §5.4): the Approve checkbox can't
+  be saved until a clean preview has rendered. Editing the expression
+  manually re-engages the gate until Preview is clicked.
+- `fn` transform sandbox expanded so spec examples (`re.sub`,
+  `datetime.strptime` + `strftime`) actually run. `__import__` is
+  whitelisted against `re / datetime / time / _strptime / locale /
+  encodings / string / calendar` only — `os`, `subprocess`, `sys`,
+  `socket`, `ctypes`, `importlib`, `pickle` stay blocked.
+- `apply_fn_safe(value, expr) → (result, error)` surfaces per-row
+  failures so the preview table can show errors inline instead of
+  silently passing the input through.
+- `POST /api/v1/projects/{pid}/maps/ai-transform/generate` and
+  `POST /.../ai-transform/preview` endpoints (both gated).
+
+### Tests
+
+- 69 new unit tests (161 total, up from 92). Coverage:
+  - `tests/core/test_features.py` — registry defaults, AI-off invariants, payload shape.
+  - `tests/core/test_preferences.py` — sync helpers, unknown-key validation.
+  - `tests/tasks/test_ai_value_aware.py` — `_build_value_index`, `_format_value_index`.
+  - `tests/tasks/test_ai_health_report.py` — report parsing, stratified sampling.
+  - `tests/tasks/test_ai_transform_sandbox.py` — spec examples run, dangerous escapes blocked (13 attack vectors), whitelist pinned.
+
+### Bug Fixes
+
+- `_build_value_index` no longer counts whitespace-only subfield values
+  (they collapsed to empty strings and polluted the AI prompt).
+
+### Migrations
+
+- `t0n5o6p7q8r9` — create `user_preferences` table.
+- `u1o6p7q8r9s0` — add `health_report` / `health_report_status` /
+  `health_report_error` / `health_report_generated_at` to `marc_files`.
+- `v2p7q8r9s0t1` — add `ai_prompt` to `field_maps`.
+
+---
+
 ## [2.0.0] — 2026-04-14
 
 ### Major Features

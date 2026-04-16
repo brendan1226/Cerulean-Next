@@ -603,7 +603,12 @@ def _build_value_index(
                             for sf in field.subfields:
                                 if not sf.value:
                                     continue
-                                counters[field.tag][sf.code][_truncate_value(sf.value.strip())] += 1
+                                # Strip before the truthy check — otherwise
+                                # whitespace-only subfields sneak in as "".
+                                stripped = sf.value.strip()
+                                if not stripped:
+                                    continue
+                                counters[field.tag][sf.code][_truncate_value(stripped)] += 1
                     count += 1
                     if count >= max_records_per_file:
                         break

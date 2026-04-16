@@ -21,6 +21,29 @@ All endpoints require JWT authentication via `Authorization: Bearer <token>` hea
 
 ---
 
+## User Preferences (AI Feature Flags)
+
+Per-user toggles backed by a single `user_preferences` table. The
+`registry` in the GET response is the source of truth for which keys
+exist and their defaults — the frontend auto-renders the My Preferences
+page from it. All AI features default **OFF** for every user.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/users/me/preferences` | Return `{registry, values}` — registry metadata + caller's current values |
+| PATCH | `/users/me/preferences` | Set one preference: body `{key, value}`. Unknown keys → 404; wrong type → 400 |
+| POST | `/users/me/preferences/reset` | Delete every stored preference for the caller |
+| GET | `/users/{user_id}/preferences` | Read-only view of another user's values |
+
+**Feature keys (all default `false`):**
+`ai.data_health_report`, `ai.value_aware_mapping`, `ai.transform_rule_gen`,
+`ai.code_reconciliation`, `ai.fuzzy_patron_dedup`, `ai.record_enrichment`.
+
+AI endpoints return **403** with `{error: "PREFERENCE_DISABLED",
+feature_key: "..."}` when the caller's flag for that feature is off.
+
+---
+
 ## Projects
 
 | Method | Path | Description |
@@ -44,6 +67,28 @@ All endpoints require JWT authentication via `Authorization: Bearer <token>` hea
 | GET | `/projects/{id}/files/{fid}/export-mrk` | Export file as MRK format |
 | POST | `/projects/{id}/files/{fid}/mark-ready` | Mark file as push-ready (skip stages 3-6) |
 | POST | `/projects/{id}/files/{fid}/recategorize` | Recategorize file (marc ↔ items) |
+
+### AI Data Health Report (gated: `ai.data_health_report`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/projects/{id}/files/{fid}/health-report` | Current report + status (always available read-only) |
+| POST | `/projects/{id}/files/{fid}/health-report/run` | Trigger a fresh analysis. Requires the feature flag on |
+
+Response shape on GET:
+```json
+{
+  "file_id": "…",
+  "filename": "…",
+  "status": "running" | "ready" | "error" | null,
+  "report": { "summary": "…", "ils_origin": {...}, "findings": [...], ... },
+  "error": "…" | null,
+  "generated_at": "ISO8601" | null
+}
+```
+
+The health task also runs automatically after every MARC ingest when the
+uploading user has `ai.data_health_report` enabled.
 
 ---
 
@@ -122,10 +167,43 @@ All endpoints require JWT authentication via `Authorization: Bearer <token>` hea
 | POST | `/projects/{id}/maps` | Create map manually |
 | PATCH | `/projects/{id}/maps/{mid}` | Edit map |
 | DELETE | `/projects/{id}/maps/{mid}` | Delete map |
-| POST | `/projects/{id}/maps/ai-suggest` | Trigger AI analysis |
+| POST | `/projects/{id}/maps/ai-suggest` | Trigger AI analysis (value-aware when `ai.value_aware_mapping` is on) |
 | POST | `/projects/{id}/maps/{mid}/approve` | Approve single map |
-| POST | `/projects/{id}/maps/approve-all` | Batch approve by confidence |
+| POST | `/projects/{id}/maps/approve-all` | Batch approve (min_confidence defaults to 0.60 → excludes Low-confidence AI rows) |
 | POST | `/projects/{id}/maps/load-template` | Load template into project |
+
+### AI Transform Rule Generation (gated: `ai.transform_rule_gen`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/projects/{id}/maps/ai-transform/generate` | Describe a transform in plain English → sandboxed Python expression + reasoning + 10-row before/after preview |
+| POST | `/projects/{id}/maps/ai-transform/preview` | Re-run preview for an edited expression (no AI call) |
+
+Both endpoints pull sample values directly from the project's indexed
+MARC files; no sample values are accepted from the client. The expression
+is executed against the production `fn` sandbox so what the preview shows
+is exactly what the transform pipeline will produce.
+
+Generate request body:
+```json
+{ "description": "Strip the trailing period and comma",
+  "source_tag": "245", "source_sub": "a" }
+```
+
+Generate response body:
+```json
+{
+  "expression": "re.sub(r'[.,]+$', '', value.strip())",
+  "reasoning": "Strips any run of trailing periods or commas after trimming whitespace.",
+  "preview": [
+    { "before": "Science, technology, and society.",
+      "after":  "Science, technology, and society", "error": null }
+  ]
+}
+```
+
+Approved AI-generated rules are stored with the user's original
+description in `field_maps.ai_prompt` for traceability.
 
 ---
 

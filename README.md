@@ -9,7 +9,9 @@ A comprehensive library data migration platform that moves bibliographic, patron
 ## Features
 
 - **13-step migration pipeline** — Ingest → Config → Quality → Versions → Mapping → Transform → Reconciliation → Patrons → Patron Versions → Load → Holds → Aspen → Evergreen
-- **AI-assisted field mapping** — Claude analyzes your MARC data and suggests field mappings with confidence scores
+- **AI-assisted data manipulation** (opt-in per user, default OFF) — Every AI feature follows the same pattern: AI analyzes → human reviews → pipeline executes. Includes Data Health Report, Value-Aware Field Mapping, Transform Rule Generation from plain English (with sandboxed execution + mandatory before/after preview), and future Branch Reconciliation + Fuzzy Patron Dedup. See [cerulean_ai_spec.md](cerulean_ai_spec.md) for the full feature specification.
+- **My Preferences page** — per-user toggle system for AI features and future granular controls; generic `user_preferences` key/value store with a single registry in `cerulean/core/features.py`
+- **AI-assisted field mapping** — Claude analyzes your MARC data and suggests field mappings with confidence scores (High / Med / Low badges, reasoning tooltips, amber tint on low-confidence)
 - **MARC Data Quality** — 8-category quality scanner with auto-fix, inline editing, leader byte dropdowns
 - **Batch Editing** — MarcEdit-style find/replace, regex, add/delete fields, call number generation
 - **RDA Helper** — Auto-generate 336/337/338 fields from leader bytes
@@ -194,7 +196,7 @@ docker compose --profile minio up -d     # MinIO S3 storage (ports 9000/9001)
 | **Migration Pipeline** | projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, transform, push |
 | **ILS Integration** | aspen, evergreen, sandbox |
 | **MARC Tools** | batch_edit, marc_sql, marc_export, marc_files, csv_to_marc, rda, macros |
-| **Platform** | auth, settings, plugins, suggestions, log, tasks, reference, oai |
+| **Platform** | auth, preferences, settings, plugins, suggestions, log, tasks, reference, oai |
 
 Interactive API documentation: `/api/docs` (Swagger) or `/api/redoc`
 
