@@ -1233,6 +1233,9 @@
       <div class="nav-item" data-view="system-logs" onclick="navigate('system-logs')">
         <span class="nav-icon">▤</span> System Logs
       </div>
+      <div class="nav-item" data-view="preferences" onclick="navigate('preferences')">
+        <span class="nav-icon">✦</span> My Preferences
+      </div>
       <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
         <span class="nav-icon">⚙</span> System Settings
       </div>
@@ -1735,6 +1738,7 @@ function navigate(view, params = {}) {
     macros:         window.renderMacros,
     help:         window.renderHelp,
     plugins:      window.renderPlugins,
+    preferences:  window.renderPreferences,
     'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
@@ -1771,6 +1775,7 @@ function updateBreadcrumb(view) {
     help: 'Help',
     plugins: 'Plugins',
     'system-logs': 'System Logs',
+    preferences: 'My Preferences',
     'system-settings': 'System Settings',
   };
   const crumb = document.getElementById('breadcrumb');
@@ -5231,6 +5236,7 @@ async function checkAuth() {
         _currentUser = await res.json();
         sessionStorage.setItem('cerulean_user', JSON.stringify(_currentUser));
         displayCurrentUser();
+        loadUserPrefs();
         return true;
       }
       // Token expired/invalid — clear it
@@ -5241,6 +5247,7 @@ async function checkAuth() {
     } catch {
       // Network error — proceed anyway
       displayCurrentUser();
+      loadUserPrefs();
       return true;
     }
   }
@@ -5255,11 +5262,41 @@ async function checkAuth() {
       return false;
     }
     // Auth not enforced (no OAuth configured) — proceed without login
+    loadUserPrefs();
     return true;
   } catch {
     return true;
   }
 }
+
+// ── User preferences (AI feature toggles + future granular controls) ──
+// Single source of truth for every per-user toggle. Registry defaults are
+// returned by the API when a user has not yet opted-in, so hasFeature()
+// always reflects "what the server would enforce" without us hard-coding
+// defaults in the frontend.
+window.userPrefs = { registry: null, values: {}, loaded: false };
+
+async function loadUserPrefs() {
+  try {
+    const res = await fetch(`${API_BASE}/users/me/preferences`, {
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    window.userPrefs.registry = data.registry || { categories: [] };
+    window.userPrefs.values = data.values || {};
+    window.userPrefs.loaded = true;
+    // Let any already-rendered view that depends on AI toggles refresh.
+    document.dispatchEvent(new CustomEvent('userprefs:loaded'));
+  } catch {
+    // Fail silently — hasFeature() returns false and AI UI stays hidden.
+  }
+}
+
+window.hasFeature = function(key) {
+  const v = window.userPrefs.values[key];
+  return v === true;
+};
 
 // ══════════════════════════════════════════════════════════════════
 // Step 3 — MARC Data Quality & Remediation
@@ -13447,6 +13484,164 @@ async function loadSystemLogs() {
   }
 }
 
+// ── My Preferences page ──────────────────────────────────────────────
+// Auto-rendered from the server-side feature registry. Adding a new
+// toggle in cerulean/core/features.py makes it appear here with no
+// frontend changes required.
+
+window.renderPreferences = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">My Preferences</div>
+        <div class="page-subtitle">
+          Per-user toggles for AI-assisted features and other granular controls.
+          All AI features are off by default — enable only what you need.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" id="prefs-reset-btn" title="Reset every preference to its default">Reset to defaults</button>
+      </div>
+    </div>
+    <div id="prefs-body">
+      <div class="loading-msg"><div class="spinner"></div>Loading preferences…</div>
+    </div>`;
+
+  // Always re-fetch: a second tab may have changed values.
+  await loadUserPrefs();
+  const body = document.getElementById('prefs-body');
+
+  const reg = window.userPrefs.registry;
+  const vals = window.userPrefs.values;
+
+  if (!reg || !reg.categories || reg.categories.length === 0) {
+    body.innerHTML = `<div class="card" style="max-width:640px">No preferences registered.</div>`;
+    return;
+  }
+
+  const isAiCategory = (cat) => cat.key === 'ai';
+
+  let html = '';
+  for (const cat of reg.categories) {
+    if (!cat.features || cat.features.length === 0) continue;
+
+    const enabledCount = cat.features.filter(f => !f.roadmap && vals[f.key] === true).length;
+    const totalActive = cat.features.filter(f => !f.roadmap).length;
+
+    html += `
+      <div class="card" style="max-width:840px;margin-bottom:16px">
+        <div class="card-header" style="align-items:flex-start">
+          <div style="flex:1">
+            <div class="card-title">${esc(cat.label)}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px;line-height:1.5">
+              ${esc(cat.description || '')}
+            </div>
+          </div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap;padding-top:2px">
+            ${enabledCount} / ${totalActive} enabled
+          </div>
+        </div>`;
+
+    if (isAiCategory(cat)) {
+      html += `
+        <div style="margin:4px 0 16px;padding:10px 12px;border:1px solid rgba(245,166,35,0.25);background:rgba(245,166,35,0.06);border-radius:6px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
+            Enabling an AI feature sends a sample of your library's data to the
+            <b>Anthropic Claude API</b> each time the feature runs.
+          </div>
+          <button class="btn btn-secondary btn-sm" id="prefs-enable-all-ai" style="white-space:nowrap">Enable all AI features</button>
+        </div>`;
+    }
+
+    // Group features within the category by their stage_label
+    const byStage = new Map();
+    for (const f of cat.features) {
+      const key = f.stage_label || '';
+      if (!byStage.has(key)) byStage.set(key, []);
+      byStage.get(key).push(f);
+    }
+
+    for (const [stage, feats] of byStage.entries()) {
+      if (stage) {
+        html += `<div style="font-family:var(--mono);font-size:10px;letter-spacing:0.15em;color:var(--cerulean);text-transform:uppercase;margin:14px 0 8px">${esc(stage)}</div>`;
+      }
+      for (const f of feats) {
+        const isOn = vals[f.key] === true;
+        const disabled = !!f.roadmap;
+        html += `
+          <div class="pref-row" data-key="${esc(f.key)}" style="display:flex;gap:14px;padding:12px 0;border-top:1px solid var(--border);align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:600;color:var(--text)">${esc(f.title)}</span>
+                ${f.roadmap ? '<span style="font-size:9px;letter-spacing:0.1em;padding:2px 6px;border-radius:3px;background:rgba(245,166,35,0.12);color:var(--amber);border:1px solid rgba(245,166,35,0.3);text-transform:uppercase">Coming soon</span>' : ''}
+                ${f.shares_data_with_anthropic ? '<span style="font-size:9px;letter-spacing:0.1em;padding:2px 6px;border-radius:3px;background:rgba(0,188,212,0.1);color:var(--cerulean);border:1px solid rgba(0,188,212,0.28);text-transform:uppercase">Anthropic API</span>' : ''}
+              </div>
+              <div style="font-size:12px;color:var(--text-dim);margin-top:4px;line-height:1.55;font-family:var(--sans)">
+                ${esc(f.description)}
+              </div>
+              <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:6px">
+                <span style="opacity:0.6">key:</span> ${esc(f.key)}
+              </div>
+            </div>
+            <label class="pref-toggle" style="position:relative;display:inline-block;width:42px;height:22px;flex-shrink:0;${disabled ? 'opacity:0.35;cursor:not-allowed' : 'cursor:pointer'}">
+              <input type="checkbox" ${isOn ? 'checked' : ''} ${disabled ? 'disabled' : ''}
+                     onchange="window._onPrefToggle(this, '${esc(f.key)}')"
+                     style="opacity:0;width:0;height:0">
+              <span style="position:absolute;inset:0;background:${isOn ? 'var(--cerulean)' : 'var(--border)'};border-radius:22px;transition:background 0.15s ease">
+                <span style="position:absolute;top:2px;left:${isOn ? '22px' : '2px'};width:18px;height:18px;background:var(--bg);border-radius:50%;transition:left 0.15s ease;box-shadow:0 1px 2px rgba(0,0,0,0.3)"></span>
+              </span>
+            </label>
+          </div>`;
+      }
+    }
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+
+  document.getElementById('prefs-reset-btn').onclick = async () => {
+    if (!confirm('Reset every preference to its default? All AI features will be turned off.')) return;
+    try {
+      await window.api('POST', '/users/me/preferences/reset');
+      toast('Preferences reset', 'success');
+      window.renderPreferences(el);
+    } catch { /* toast already shown */ }
+  };
+
+  const enableAll = document.getElementById('prefs-enable-all-ai');
+  if (enableAll) {
+    enableAll.onclick = async () => {
+      const aiCat = reg.categories.find(c => c.key === 'ai');
+      if (!aiCat) return;
+      const targets = aiCat.features.filter(f => !f.roadmap && vals[f.key] !== true);
+      if (targets.length === 0) { toast('All AI features already enabled', 'info'); return; }
+      for (const f of targets) {
+        try {
+          await window.api('PATCH', '/users/me/preferences', { key: f.key, value: true });
+          window.userPrefs.values[f.key] = true;
+        } catch { /* toast already shown */ }
+      }
+      toast(`Enabled ${targets.length} AI feature${targets.length === 1 ? '' : 's'}`, 'success');
+      window.renderPreferences(el);
+    };
+  }
+};
+
+// Toggle handler — invoked from the onchange attribute on each switch.
+// Persists via PATCH and rolls back the UI on failure.
+window._onPrefToggle = async function(inputEl, key) {
+  const newValue = !!inputEl.checked;
+  try {
+    await window.api('PATCH', '/users/me/preferences', { key, value: newValue });
+    window.userPrefs.values[key] = newValue;
+    document.dispatchEvent(new CustomEvent('userprefs:loaded'));
+    // Rerender the page so the visual state of the toggle track/knob matches.
+    window.renderPreferences(document.getElementById('view'));
+  } catch {
+    inputEl.checked = !newValue;  // rollback
+  }
+};
+
 // ── System Settings page ─────────────────────────────────────────────
 
 window.renderSystemSettings = async function(el) {
@@ -13548,6 +13743,7 @@ window.saveSystemSettings = async function() {
     macros:         window.renderMacros,
     help:          window.renderHelp,
     plugins:       window.renderPlugins,
+    preferences:   window.renderPreferences,
     'system-logs':  window.renderSystemLogs,
     'system-settings': window.renderSystemSettings,
   };

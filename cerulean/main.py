@@ -147,11 +147,12 @@ def _cache_user_email(user_id: str, email: str):
 
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import auth, batch_edit, csv_to_marc, holds, macros, marc_export, marc_files, marc_sql, oai, plugins, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
+from cerulean.api.routers import auth, batch_edit, csv_to_marc, holds, macros, marc_export, marc_files, marc_sql, oai, plugins, preferences, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
 from cerulean.api.routers import rda as rda_router  # noqa: E402
 from cerulean.api.routers import settings as settings_router  # noqa: E402 — avoid shadowing config `settings`
 
 app.include_router(auth.router,               prefix="/api/v1")
+app.include_router(preferences.router,        prefix="/api/v1")
 app.include_router(settings_router.router,    prefix="/api/v1")
 app.include_router(plugins.router,            prefix="/api/v1")
 app.include_router(batch_edit.router,         prefix="/api/v1")

@@ -190,6 +190,41 @@ class User(Base):
 
     # Relationships
     projects: Mapped[list["Project"]] = relationship(back_populates="owner")
+    preferences: Mapped[list["UserPreference"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan",
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# USER PREFERENCES
+# ══════════════════════════════════════════════════════════════════════════
+
+class UserPreference(Base):
+    """Per-user toggle / option value.
+
+    Generic key-value store so AI feature flags today and other granular
+    permission / visibility toggles tomorrow share a single table. Known
+    keys, defaults, and UI metadata live in cerulean/core/features.py.
+    A missing row means "use the registry default" — the table stores only
+    values the user has explicitly set.
+    """
+
+    __tablename__ = "user_preferences"
+    __table_args__ = (
+        sa.UniqueConstraint("user_id", "key", name="uq_user_preference"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    # JSONB so the column holds bools today and strings / structured values
+    # later without another migration.
+    value: Mapped[object] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    user: Mapped["User"] = relationship(back_populates="preferences")
 
 
 # ══════════════════════════════════════════════════════════════════════════
