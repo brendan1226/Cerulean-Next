@@ -178,6 +178,9 @@ def quality_scan_task(
                 # ── 7. Blank / Empty Fields ──
                 _check_blank_fields(record, rec_idx, fid, project_id, scan_type, issues)
 
+                # ── 8. Plugin-contributed checks ──
+                _run_plugin_checks(record, rec_idx, fid, project_id, scan_type, issues)
+
                 # ── Collect for duplicate detection ──
                 f001 = record.get_fields("001")
                 if f001 and f001[0].data:
@@ -599,3 +602,55 @@ def quality_bulk_fix_task(
     except Exception as exc:
         log.error(f"Bulk fix failed: {exc}")
         raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PLUGIN-CONTRIBUTED QUALITY CHECKS (Cerulean Plugin System, Phase A)
+# ══════════════════════════════════════════════════════════════════════════
+
+def _run_plugin_checks(record, rec_idx, file_id, project_id, scan_type, issues):
+    """Invoke every plugin-registered quality-check hook for this record.
+
+    Plugin checks use the same issue dict shape as built-ins so the
+    existing UI renders them with no frontend changes — the check's
+    plugin slug + id appear in the ``category`` field as ``plugin:<slug>``.
+
+    A check that raises is logged but never crashes the scanner. Same
+    safety contract as the rest of the plugin system.
+    """
+    try:
+        from cerulean.core.plugins import all_quality_checks
+    except Exception:
+        return  # plugin system unavailable — built-in checks continue
+    try:
+        record_bytes = record.as_marc()
+    except Exception:
+        # Corrupt record — skip plugin checks for this one, built-ins
+        # already reported the structural issue.
+        return
+
+    for entry in all_quality_checks():
+        if entry.callable is None:
+            continue
+        try:
+            raw_issues = entry.callable(record_bytes, {})
+        except Exception:
+            # Individual check failure — log via audit later; skip this record.
+            continue
+        if not raw_issues:
+            continue
+        for issue in raw_issues:
+            if not isinstance(issue, dict):
+                continue
+            issues.append(_issue(
+                project_id, scan_type,
+                category=f"plugin:{entry.plugin_slug}",
+                severity=str(issue.get("severity") or "warning"),
+                record_index=rec_idx,
+                file_id=file_id,
+                tag=issue.get("tag"),
+                subfield=issue.get("subfield"),
+                description=str(issue.get("description") or entry.label),
+                original_value=issue.get("original_value"),
+                suggested_fix=issue.get("suggested_fix"),
+            ))

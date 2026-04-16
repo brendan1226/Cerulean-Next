@@ -2,6 +2,78 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.2.0] — 2026-04-16 — Cerulean Plugin System (Phase A)
+
+First-party plugin platform that lets any migration specialist extend
+Cerulean with custom transforms and quality checks, in Python or any
+language via a subprocess contract. Distinct from the existing Koha
+`.kpz` plugin manager — these are `.cpz` archives that extend Cerulean
+itself, not plugins pushed AT Koha.
+
+### What shipped
+
+- **Manifest spec** (`manifest.yaml`, version 1) — slug validation,
+  runtime-specific rules, permission whitelist, placeholder checking
+  for subprocess args. See [docs/PLUGIN-AUTHORING.md](docs/PLUGIN-AUTHORING.md).
+- **Two runtimes**:
+  - `python` — plugin imported in-process, `setup(ctx)` registers hooks.
+  - `subprocess` — any-language executable invoked per call with
+    `{input_path} / {output_path} / {config_json}` placeholders; stderr
+    captured, 5-minute default timeout, minimal env (no host secrets).
+- **Two extension points**: `transform` (surfaces in Step 5 dropdown
+  under the **Plugin** category) and `quality_check` (runs in Step 3
+  scanner, issues land in the existing `QualityScanResult` table).
+- **Installer API** under `/api/v1/cerulean-plugins`:
+  upload / list / enable / disable / uninstall. Archives stay in
+  `available/` for rollback.
+- **Sidebar page** "Cerulean Plugins" with drag-and-drop upload,
+  per-row enable / disable / uninstall, error display, and a
+  "restart required" banner after any state change.
+- **Reference plugins** under `examples/plugins/`: `shout-python`
+  (Python) and `shout-perl` (subprocess).
+- **Authoring guide** at `docs/PLUGIN-AUTHORING.md`, served from
+  `/help/plugin-authoring`.
+
+### Schema (migration `w3q8r9s0t1u2`)
+
+- New `cerulean_plugins` table: `slug` (unique), `name`, `version`,
+  `author`, `description`, `runtime`, full parsed `manifest` (JSONB),
+  `install_path`, `archive_filename`, `status` (enabled / disabled /
+  error), `error_message`, `installed_by`, `installed_at`, `updated_at`.
+
+### Tests
+
+- **52 new tests** (223 total, up from 171):
+  - `tests/core/test_plugin_manifest.py` — 37 cases covering manifest
+    validation, malformed YAML, runtime-specific rules, extension-point
+    duplicates, unknown fields.
+  - `tests/core/test_plugin_registry.py` — registry register / lookup /
+    re-register / unregister / isolation between plugins.
+  - `tests/core/test_plugin_loader.py` — end-to-end python plugin load
+    on disk, broken-plugin error isolation, rollback of partial
+    registrations, error-path coverage.
+  - `tests/core/test_plugin_runtime_subprocess.py` — real shell script
+    plugin (happy path, non-zero exit, timeout, missing executable,
+    non-executable entry, env-leak regression).
+
+### Restart-required model
+
+Installing / upgrading / toggling a plugin requires
+`docker compose restart web worker worker-push` — same model Koha uses
+for its `.kpz` plugins. No hot-reload magic; Celery workers and the web
+process each run `load_all_enabled_plugins()` on startup.
+
+### Security model
+
+- Any authenticated user can install (same trust boundary as existing
+  Koha `.kpz` uploads).
+- Python plugins are trusted in-process code.
+- Subprocess plugins run in a scratch directory with a minimal env —
+  host secrets like `ANTHROPIC_API_KEY` don't leak.
+- Every state change writes an AuditEvent.
+
+---
+
 ## [2.1.0] — 2026-04-15 — AI-Assisted Data Manipulation (Phases 1–4)
 
 Implements the first four of six AI-assisted capabilities described in

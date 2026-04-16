@@ -1,0 +1,14 @@
+manifest_version: 1
+slug: shout-perl
+name: Shout (Perl)
+version: 0.1.0
+author: Cerulean Next
+description: Reference any-language plugin — Perl subprocess that uppercases values.
+runtime: subprocess
+entry: ./shout.pl
+args: ["--in", "{input_path}", "--out", "{output_path}", "--config", "{config_json}"]
+timeout_sec: 30
+extension_points:
+  - type: transform
+    key: shout
+    label: Shout (Perl subprocess)

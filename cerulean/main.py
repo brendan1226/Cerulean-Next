@@ -33,8 +33,56 @@ async def lifespan(app: FastAPI):
         logger.info("System settings loaded from database")
     except Exception as exc:
         logger.warn(f"Could not load DB settings (first run?): {exc}")
+
+    # Load Cerulean plugins — restart-required model. Failures on
+    # individual plugins are logged here and persisted to the DB row by
+    # the installer flow; they never take down the host process.
+    try:
+        from cerulean.core.plugins.loader import load_all_enabled_plugins
+        summary = load_all_enabled_plugins()
+        if summary.successes:
+            logger.info(
+                f"Loaded {len(summary.successes)} Cerulean plugin(s): "
+                + ", ".join(r.slug or "?" for r in summary.successes)
+            )
+        if summary.failures:
+            for r in summary.failures:
+                logger.warn(
+                    f"Plugin load failed: slug={r.slug} path={r.install_path} "
+                    f"error={r.error}"
+                )
+            # Best-effort status update so the admin page shows the error.
+            try:
+                await _persist_plugin_load_errors(summary.failures)
+            except Exception as persist_exc:
+                logger.warn(f"Could not persist plugin load errors: {persist_exc}")
+    except Exception as exc:
+        logger.warn(f"Plugin loader skipped: {exc}")
+
     yield
     logger.info("Cerulean Next shutting down")
+
+
+async def _persist_plugin_load_errors(failures):
+    """Stamp each failed load onto its cerulean_plugins row so the UI can
+    show the error. Safe even when the table doesn't exist yet (fresh
+    install before the first migration)."""
+    from cerulean.core.database import get_db
+    from cerulean.models import CeruleanPlugin
+    from sqlalchemy import select
+    async for db in get_db():
+        for r in failures:
+            if not r.slug:
+                continue
+            result = await db.execute(
+                select(CeruleanPlugin).where(CeruleanPlugin.slug == r.slug)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.status = "error"
+                row.error_message = (r.error or "")[:2000]
+        await db.commit()
+        return
 
 
 app = FastAPI(
@@ -147,7 +195,7 @@ def _cache_user_email(user_id: str, email: str):
 
 
 # ── Routers ───────────────────────────────────────
-from cerulean.api.routers import auth, batch_edit, csv_to_marc, holds, macros, marc_export, marc_files, marc_sql, oai, plugins, preferences, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
+from cerulean.api.routers import auth, batch_edit, cerulean_plugins, csv_to_marc, holds, macros, marc_export, marc_files, marc_sql, oai, plugins, preferences, projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, push, sandbox, log, suggestions, transform, reference, tasks, aspen, evergreen  # noqa: E402
 from cerulean.api.routers import rda as rda_router  # noqa: E402
 from cerulean.api.routers import settings as settings_router  # noqa: E402 — avoid shadowing config `settings`
 
@@ -155,6 +203,7 @@ app.include_router(auth.router,               prefix="/api/v1")
 app.include_router(preferences.router,        prefix="/api/v1")
 app.include_router(settings_router.router,    prefix="/api/v1")
 app.include_router(plugins.router,            prefix="/api/v1")
+app.include_router(cerulean_plugins.router,   prefix="/api/v1")
 app.include_router(batch_edit.router,         prefix="/api/v1")
 app.include_router(holds.router,             prefix="/api/v1")
 app.include_router(csv_to_marc.router,       prefix="/api/v1")
@@ -229,6 +278,15 @@ async def serve_connect_local_koha():
         from fastapi.responses import PlainTextResponse
         return PlainTextResponse("Guide not found", status_code=404)
     return FileResponse(path=str(guide), filename="Connect-Local-Koha.md", media_type="text/markdown")
+
+
+@app.get("/help/plugin-authoring")
+async def serve_plugin_authoring():
+    guide = Path(__file__).resolve().parent.parent / "docs" / "PLUGIN-AUTHORING.md"
+    if not guide.is_file():
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("Guide not found", status_code=404)
+    return FileResponse(path=str(guide), filename="Plugin-Authoring.md", media_type="text/markdown")
 
 
 @app.get("/")

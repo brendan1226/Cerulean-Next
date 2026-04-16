@@ -177,6 +177,77 @@ def downgrade():
     op.drop_table("my_table")
 ```
 
+## Cerulean Plugin System
+
+Cerulean ships a `.cpz` plugin system distinct from the `.kpz` Koha
+plugin manager. Cerulean plugins extend **Cerulean itself** — transforms
+that appear in the Step 5 dropdown, quality checks that run in the
+Step 3 scanner, and (Phase B/C) Celery tasks, API endpoints, and UI
+tabs. See [docs/PLUGIN-AUTHORING.md](docs/PLUGIN-AUTHORING.md) for the
+author-facing guide; the notes below are for engineers maintaining the
+plugin loader itself.
+
+### File layout
+```
+cerulean/core/plugins/
+├── __init__.py              # public API re-exports
+├── manifest.py              # YAML load + pydantic validation
+├── extension_points.py      # TRANSFORM_REGISTRY + QUALITY_CHECK_REGISTRY
+├── context.py               # PluginContext passed into python setup()
+├── runtime_python.py        # import + call setup(ctx) in-process
+├── runtime_subprocess.py    # spawn + timeout + stdin/stdout
+└── loader.py                # scan enabled/ on startup, collect errors
+
+cerulean/api/routers/cerulean_plugins.py   # upload/enable/disable/uninstall
+alembic/versions/w3q8r9s0t1u2_add_cerulean_plugins.py
+examples/plugins/shout-python/             # reference Python plugin
+examples/plugins/shout-perl/               # reference subprocess plugin
+```
+
+### Storage on disk (under `DATA_ROOT`)
+```
+/data/projects/plugins/
+├── available/          # uploaded .cpz archives — source of truth for rollback
+├── enabled/<slug>/     # extracted trees that get scanned at startup
+├── disabled/<slug>/    # extracted but dormant (moved here by the disable action)
+└── run/<invocation>/   # scratch dirs for subprocess plugin invocations (temp)
+```
+
+### Restart-required model (matches Koha's .kpz)
+- Plugin hooks register at **process start**: web lifespan + each Celery
+  worker via `worker_process_init`. No hot-reload.
+- Every install / enable / disable / uninstall response carries
+  `restart_required: true` so the UI can remind the operator to run
+  `docker compose restart web worker worker-push`.
+
+### Extension points (Phase A — two kinds)
+- **Transform** — surfaces in `get_preset_registry()` under category
+  `plugin`. Dispatch goes through `apply_preset()` which detects the
+  `plugin:<slug>:<key>` prefix and delegates to the plugin runtime.
+- **Quality check** — `cerulean/tasks/quality.py` calls `_run_plugin_checks()`
+  per record, iterating `all_quality_checks()`. Plugin issues land in the
+  same `QualityScanResult` table with `category="plugin:<slug>"`.
+
+### Security model
+- Any authenticated user can install. Python plugins are trusted code;
+  subprocess plugins run with a minimal env (no `ANTHROPIC_API_KEY`,
+  no DB URLs, no Koha tokens) and a default 5-minute timeout.
+- Zip extraction refuses path-traversal entries; corrupt archives leave
+  nothing on disk.
+- Every registration + registration-failure is visible on the **Cerulean
+  Plugins** page.
+
+### Adding a new extension-point type (e.g. `push_target` in Phase B)
+1. Add the string to `SUPPORTED_EXTENSIONS` in `manifest.py`.
+2. Add a new registry dict + register/unregister/get/all helpers in
+   `extension_points.py`, plus a matching `register_<type>()` on
+   `PluginContext`.
+3. In the consumer (the router / task / etc.) call `all_<type>s()` and
+   pick the right entry to invoke.
+4. Teach `runtime_subprocess.register_subprocess_plugin()` what CLI
+   contract the new type uses.
+5. Update `docs/PLUGIN-AUTHORING.md` with the callable signature.
+
 ## AI-Assisted Features (Phases 1–4)
 
 Cerulean exposes six AI-assisted capabilities. Every one follows the same

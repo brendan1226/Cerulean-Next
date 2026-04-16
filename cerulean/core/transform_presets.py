@@ -294,16 +294,48 @@ _PRESET_MAP: dict[str, dict] = {p["key"]: p for p in PRESETS}
 
 
 def apply_preset(key: str, value: str) -> str:
-    """Apply a preset transform by key. Returns original value if key not found."""
+    """Apply a preset transform by key. Returns original value if key not found.
+
+    Plugin-contributed presets use the composite key
+    ``plugin:<slug>:<ep_key>`` — they're dispatched through the plugin
+    runtime rather than the built-in preset map.
+    """
+    if key.startswith("plugin:"):
+        return _apply_plugin_preset(key, value)
     preset = _PRESET_MAP.get(key)
     if not preset:
         return value
     return preset["fn"](value)
 
 
+def _apply_plugin_preset(key: str, value: str) -> str:
+    """``plugin:<slug>:<ep_key>`` → plugin transform registry lookup."""
+    # Strip the "plugin:" prefix once; the rest is "<slug>:<ep_key>".
+    remainder = key[len("plugin:"):]
+    if ":" not in remainder:
+        return value
+    slug, ep_key = remainder.split(":", 1)
+    try:
+        from cerulean.core.plugins import get_transform
+        entry = get_transform(slug, ep_key)
+        if entry is None or entry.callable is None:
+            return value
+        result = entry.callable(value, {})
+        return value if result is None else str(result)
+    except Exception:
+        # Fall through on any failure — transforms are advisory, a
+        # single bad plugin call must never corrupt the pipeline.
+        return value
+
+
 def get_preset_registry() -> list[dict]:
-    """Return the preset list without function references (JSON-serializable)."""
-    return [
+    """Return the preset list without function references (JSON-serializable).
+
+    Includes plugin-contributed transforms (cerulean_ai_spec §5 plugin
+    system) alongside built-ins so the Step 5 dropdown shows them in
+    the ``Plugin`` category with ``key`` prefixed by ``plugin:<slug>:``.
+    """
+    registry = [
         {
             "key": p["key"],
             "label": p["label"],
@@ -312,3 +344,25 @@ def get_preset_registry() -> list[dict]:
         }
         for p in PRESETS
     ]
+    # Late import to avoid a circular dep (plugins → extension_points)
+    try:
+        from cerulean.core.plugins import all_transforms as _all_plugin_transforms
+        for t in _all_plugin_transforms():
+            registry.append({
+                # Composite key — the frontend encodes this as
+                # "preset:plugin:<slug>:<key>" in the unified transform
+                # dropdown, and the transform pipeline maps it to
+                # transform_type="plugin" with transform_fn="<slug>:<key>".
+                "key": f"plugin:{t.plugin_slug}:{t.key}",
+                "label": f"{t.label}  ({t.plugin_slug})",
+                "category": "plugin",
+                "description": (t.description or ""),
+                "plugin_slug": t.plugin_slug,
+                "runtime": t.runtime,
+            })
+    except Exception:
+        # If the plugin system isn't importable yet (e.g. on first-run
+        # migrations) we just return the built-ins — never fail the
+        # endpoint over an optional extension surface.
+        pass
+    return registry

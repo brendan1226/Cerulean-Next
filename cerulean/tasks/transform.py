@@ -1048,7 +1048,34 @@ def _apply_transform(value: str, transform_type: str, transform_fn: str | None) 
         # Handled in _apply_maps_to_record, but fallback here
         from cerulean.core.transform_presets import apply_preset
         return apply_preset(transform_fn or "", value)
+    elif transform_type == "plugin":
+        # transform_fn carries the plugin preset key: "<slug>:<key>"
+        return _apply_plugin_transform(value, transform_fn or "")
     else:
+        return value
+
+
+def _apply_plugin_transform(value: str, key: str) -> str:
+    """Dispatch a plugin-contributed transform. Format: ``<slug>:<key>``.
+
+    Plugin failures fall through to the input value — same contract as
+    built-in transforms — so one broken plugin never corrupts a run.
+    """
+    if ":" not in key:
+        return value
+    slug, ep_key = key.split(":", 1)
+    from cerulean.core.plugins import get_transform as _get_plugin_transform
+    entry = _get_plugin_transform(slug, ep_key)
+    if entry is None or entry.callable is None:
+        return value
+    try:
+        result = entry.callable(value, {})
+        return value if result is None else str(result)
+    except Exception:
+        logger.debug(
+            "Plugin transform %s:%s raised on value %r",
+            slug, ep_key, value, exc_info=True,
+        )
         return value
 
 

@@ -1,0 +1,12 @@
+manifest_version: 1
+slug: shout-python
+name: Shout (Python)
+version: 0.1.0
+author: Cerulean Next
+description: Minimal Python plugin — uppercases values and appends an exclamation mark.
+runtime: python
+entry: shout_python.plugin:setup
+extension_points:
+  - type: transform
+    key: shout
+    label: Shout (uppercase + !)

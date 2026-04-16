@@ -1283,6 +1283,9 @@
       <div class="nav-item" data-view="preferences" onclick="navigate('preferences')">
         <span class="nav-icon">✦</span> My Preferences
       </div>
+      <div class="nav-item" data-view="cerulean-plugins" onclick="navigate('cerulean-plugins')">
+        <span class="nav-icon">◈</span> Cerulean Plugins
+      </div>
       <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
         <span class="nav-icon">⚙</span> System Settings
       </div>
@@ -1786,6 +1789,7 @@ function navigate(view, params = {}) {
     help:         window.renderHelp,
     plugins:      window.renderPlugins,
     preferences:  window.renderPreferences,
+    'cerulean-plugins': window.renderCeruleanPlugins,
     'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
@@ -1823,6 +1827,7 @@ function updateBreadcrumb(view) {
     plugins: 'Plugins',
     'system-logs': 'System Logs',
     preferences: 'My Preferences',
+    'cerulean-plugins': 'Cerulean Plugins',
     'system-settings': 'System Settings',
   };
   const crumb = document.getElementById('breadcrumb');
@@ -14133,6 +14138,172 @@ window._onPrefToggle = async function(inputEl, key) {
   }
 };
 
+// ── Cerulean Plugins page ────────────────────────────────────────────
+// Installed .cpz plugins extend Cerulean itself (transforms, quality
+// checks, and eventually custom tabs). This is separate from the
+// "Plugins" page which manages Koha .kpz files.
+
+window.renderCeruleanPlugins = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Cerulean Plugins</div>
+        <div class="page-subtitle">
+          Extend Cerulean with custom transforms and quality checks.
+          Upload a <code>.cpz</code> archive — Python or any-language subprocess — then restart web + worker to activate.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <label class="btn btn-primary btn-sm" style="cursor:pointer">
+          ⇑ Upload .cpz
+          <input type="file" id="cpz-upload" accept=".cpz,.zip" style="display:none" onchange="cpzUpload(this)">
+        </label>
+        <button class="btn btn-ghost btn-sm" onclick="window.renderCeruleanPlugins(document.getElementById('view'))">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="cpz-banner"></div>
+    <div id="cpz-body">
+      <div class="loading-msg"><div class="spinner"></div>Loading plugins…</div>
+    </div>`;
+
+  try {
+    const plugins = await window.api('GET', '/cerulean-plugins');
+    _cpzRenderList(plugins || []);
+  } catch (e) {
+    document.getElementById('cpz-body').innerHTML =
+      `<div class="empty-state"><div class="empty-title">Could not load plugins</div><div class="empty-body">${esc(e.message || 'Unknown error')}</div></div>`;
+  }
+};
+
+function _cpzRenderList(plugins) {
+  const body = document.getElementById('cpz-body');
+  if (!plugins.length) {
+    body.innerHTML = `
+      <div class="empty-state" style="padding:24px">
+        <div class="empty-title">No Cerulean plugins installed yet</div>
+        <div class="empty-body">
+          Upload a <code>.cpz</code> archive to extend the pipeline.
+          See <a href="/help/plugin-authoring" target="_blank">the authoring guide</a>
+          for the manifest format and a ten-line Python example.
+        </div>
+      </div>`;
+    return;
+  }
+  body.innerHTML = `
+    <table class="data-table" style="width:100%">
+      <thead><tr>
+        <th>Plugin</th><th>Version</th><th>Runtime</th><th>Status</th><th>Author</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${plugins.map(_cpzRowHtml).join('')}
+      </tbody>
+    </table>`;
+}
+
+function _cpzRowHtml(p) {
+  const statusBadge =
+      p.status === 'enabled'  ? '<span class="badge badge-green" style="font-size:9px">Enabled</span>'
+    : p.status === 'disabled' ? '<span class="badge badge-dim" style="font-size:9px">Disabled</span>'
+    : p.status === 'error'    ? '<span class="badge badge-amber" style="font-size:9px">Error</span>'
+    : `<span class="badge badge-dim" style="font-size:9px">${esc(p.status || '?')}</span>`;
+
+  const ext = (p.manifest?.extension_points || [])
+    .map(e => `<span class="badge badge-cerulean" style="font-size:9px">${esc(e.type)}:${esc(e.key)}</span>`)
+    .join(' ');
+
+  const actions = [];
+  if (p.status === 'enabled')  actions.push(`<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="cpzAction('${esc(p.slug)}','disable')">Disable</button>`);
+  if (p.status === 'disabled') actions.push(`<button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="cpzAction('${esc(p.slug)}','enable')">Enable</button>`);
+  actions.push(`<button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="cpzAction('${esc(p.slug)}','uninstall')">Uninstall</button>`);
+
+  const errorRow = p.error_message
+    ? `<tr><td colspan="6" style="background:rgba(224,82,82,0.05);color:var(--red);font-size:11px;font-family:var(--mono);padding:6px 10px">
+         ${esc(p.error_message)}
+       </td></tr>`
+    : '';
+
+  return `
+    <tr>
+      <td>
+        <div style="font-weight:600">${esc(p.name || p.slug)}</div>
+        <div class="mono text-dim" style="font-size:10px">${esc(p.slug)}</div>
+        ${p.description ? `<div class="text-dim" style="font-size:11px;margin-top:2px">${esc(p.description)}</div>` : ''}
+        ${ext ? `<div style="margin-top:4px">${ext}</div>` : ''}
+      </td>
+      <td class="mono">${esc(p.version || '—')}</td>
+      <td><span class="badge badge-dim" style="font-size:9px">${esc(p.runtime || '—')}</span></td>
+      <td>${statusBadge}</td>
+      <td class="text-dim" style="font-size:11px">${esc(p.author || '—')}</td>
+      <td style="white-space:nowrap">${actions.join('')}</td>
+    </tr>
+    ${errorRow}`;
+}
+
+async function cpzUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.value = '';  // reset so uploading the same file twice in a row re-triggers
+
+  const body = document.getElementById('cpz-body');
+  body.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Uploading and validating plugin…</div>';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch(`${API_BASE}/cerulean-plugins/upload`, {
+      method: 'POST',
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: { message: res.statusText } }));
+      throw new Error(err.detail?.message || err.message || `HTTP ${res.status}`);
+    }
+    const result = await res.json();
+    toast(`Plugin ${result.plugin?.slug || ''} installed`, 'success');
+    _cpzShowRestartBanner(result.message);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  window.renderCeruleanPlugins(document.getElementById('view'));
+}
+
+async function cpzAction(slug, action) {
+  const confirmMsg = action === 'uninstall'
+    ? `Uninstall plugin "${slug}"? The .cpz archive stays in available/ for rollback.`
+    : action === 'disable'
+    ? `Disable plugin "${slug}"? A restart is required for its hooks to clear.`
+    : null;
+  if (confirmMsg && !confirm(confirmMsg)) return;
+
+  try {
+    let res;
+    if (action === 'uninstall') {
+      res = await window.api('DELETE', `/cerulean-plugins/${slug}`);
+    } else {
+      res = await window.api('POST', `/cerulean-plugins/${slug}/${action}`);
+    }
+    if (!res) return;
+    toast(res.message || `${action} ok`, 'success');
+    _cpzShowRestartBanner(res.message);
+  } catch (e) { /* toast shown */ }
+  window.renderCeruleanPlugins(document.getElementById('view'));
+}
+
+function _cpzShowRestartBanner(message) {
+  const banner = document.getElementById('cpz-banner');
+  if (!banner) return;
+  banner.innerHTML = `
+    <div style="margin:0 0 16px;padding:12px 14px;border:1px solid rgba(245,166,35,0.3);background:rgba(245,166,35,0.08);border-radius:6px;display:flex;gap:12px;align-items:center">
+      <span style="font-size:14px">↻</span>
+      <div style="flex:1;font-size:12px;color:var(--text)">
+        <strong>Restart required.</strong> ${esc(message || 'Run')}<br>
+        <code style="font-size:11px;color:var(--cerulean)">docker compose restart web worker worker-push</code>
+        on the host for hooks to take effect.
+      </div>
+    </div>`;
+}
+
 // ── System Settings page ─────────────────────────────────────────────
 
 window.renderSystemSettings = async function(el) {
@@ -14235,6 +14406,7 @@ window.saveSystemSettings = async function() {
     help:          window.renderHelp,
     plugins:       window.renderPlugins,
     preferences:   window.renderPreferences,
+    'cerulean-plugins': window.renderCeruleanPlugins,
     'system-logs':  window.renderSystemLogs,
     'system-settings': window.renderSystemSettings,
   };

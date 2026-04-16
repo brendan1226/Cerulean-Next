@@ -75,3 +75,23 @@ celery_app.conf.update(
     timezone="America/Los_Angeles",
     enable_utc=True,
 )
+
+
+# ── Cerulean plugin loader (runs once per worker process start) ──────
+# The same restart-required model applies to workers as to the web
+# process — installing or upgrading a plugin requires `docker compose
+# restart worker worker-push` so every process's in-memory registries
+# match. One plugin crash on load is tolerated; the worker continues.
+
+from celery.signals import worker_process_init  # noqa: E402
+
+
+@worker_process_init.connect
+def _load_plugins_on_worker_start(**_):
+    try:
+        from cerulean.core.plugins.loader import load_all_enabled_plugins
+        load_all_enabled_plugins()
+    except Exception:
+        # Don't take down the worker if the plugin tree is broken.
+        # Errors were logged per-plugin by the loader.
+        pass

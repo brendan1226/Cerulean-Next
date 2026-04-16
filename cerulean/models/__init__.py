@@ -228,6 +228,47 @@ class UserPreference(Base):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# CERULEAN PLUGINS (distinct from the Koha Plugin table, which manages
+# .kpz files pushed at Koha — these are .cpz plugins that extend Cerulean
+# itself: custom transforms, quality checks, and eventually UI tabs.)
+# ══════════════════════════════════════════════════════════════════════════
+
+class CeruleanPlugin(Base):
+    """Installed Cerulean plugin package (.cpz).
+
+    One row per plugin slug — uploading a new version of the same slug
+    replaces the row in place. The archive itself lives on disk
+    (``/data/plugins/available/<slug>-<version>.cpz``) so rolling back
+    to a prior version is a disk-level operation, not a DB restore.
+    """
+
+    __tablename__ = "cerulean_plugins"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    author: Mapped[str | None] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text)
+    runtime: Mapped[str] = mapped_column(String(20), nullable=False)  # "python" | "subprocess"
+    # Full parsed manifest kept for traceability + display
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Absolute path where the extracted plugin lives on disk
+    install_path: Mapped[str] = mapped_column(Text, nullable=False)
+    # Archive filename for rollback: e.g. "bibliomasher-0.1.0.cpz"
+    archive_filename: Mapped[str | None] = mapped_column(String(300))
+    # Lifecycle — "enabled" contributes hooks at next worker start;
+    # "disabled" is installed but dormant; "error" means load failed.
+    status: Mapped[str] = mapped_column(String(20), default="enabled", nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    installed_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True,
+    )
+    installed_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # PROJECT
 # ══════════════════════════════════════════════════════════════════════════
 

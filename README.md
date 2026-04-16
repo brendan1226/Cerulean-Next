@@ -22,6 +22,7 @@ A comprehensive library data migration platform that moves bibliographic, patron
 - **Template System** — Save/load/share field mappings as reusable templates, import from Google Sheets
 - **Macros** — Save and replay sequences of batch operations
 - **Multi-ILS Push** — Push to Koha (REST API, FastMARCImport, Migration Toolkit), Aspen Discovery (Turbo Migration), Evergreen (direct PostgreSQL)
+- **Cerulean plugin system (`.cpz`)** — Extend the platform itself with custom transforms and quality checks. Python (in-process) or any-language subprocess (Perl, Node, Go, compiled binary). See [docs/PLUGIN-AUTHORING.md](docs/PLUGIN-AUTHORING.md).
 - **Migration Mode** — Stop Koha daemons + tune MariaDB for 10-50x faster bulk imports
 - **Plugin Manager** — Upload, download, auto-install Koha plugins (.kpz)
 - **OAI-PMH 2.0** — Harvest records directly from MarcEdit or any OAI client
@@ -196,7 +197,7 @@ docker compose --profile minio up -d     # MinIO S3 storage (ports 9000/9001)
 | **Migration Pipeline** | projects, files, maps, templates, quality, versions, dedup, reconcile, patrons, items, transform, push |
 | **ILS Integration** | aspen, evergreen, sandbox |
 | **MARC Tools** | batch_edit, marc_sql, marc_export, marc_files, csv_to_marc, rda, macros |
-| **Platform** | auth, preferences, settings, plugins, suggestions, log, tasks, reference, oai |
+| **Platform** | auth, preferences, settings, plugins (Koha `.kpz`), cerulean_plugins (`.cpz`), suggestions, log, tasks, reference, oai |
 
 Interactive API documentation: `/api/docs` (Swagger) or `/api/redoc`
 
