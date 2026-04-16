@@ -1,25 +1,31 @@
 """
 cerulean/api/routers/maps.py
 ─────────────────────────────────────────────────────────────────────────────
-GET    /projects/{id}/maps              — list maps (filter by status)
-POST   /projects/{id}/maps              — create map manually
-PATCH  /projects/{id}/maps/{mid}        — edit map (sets source_label=manual if AI-created)
-DELETE /projects/{id}/maps/{mid}        — delete map
-POST   /projects/{id}/maps/ai-suggest   — trigger Claude API analysis
-POST   /projects/{id}/maps/{mid}/approve — approve single map
-POST   /projects/{id}/maps/approve-all  — batch approve by confidence threshold
+GET    /projects/{id}/maps                      — list maps (filter by status)
+POST   /projects/{id}/maps                      — create map manually
+PATCH  /projects/{id}/maps/{mid}                — edit map (AI-created → manual)
+DELETE /projects/{id}/maps/{mid}                — delete map
+POST   /projects/{id}/maps/ai-suggest           — Claude field-map suggestion run
+POST   /projects/{id}/maps/{mid}/approve        — approve single map
+POST   /projects/{id}/maps/approve-all          — batch approve by confidence
+POST   /projects/{id}/maps/ai-transform/generate — describe a transform in plain
+                                                   English, get back a sandboxed
+                                                   Python expression + preview
+POST   /projects/{id}/maps/ai-transform/preview  — re-run preview for an
+                                                   edited expression
 """
 
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field as PField
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cerulean.api.deps import audit_log, require_project
 from cerulean.core.database import get_db
-from cerulean.models import FieldMap, Project
+from cerulean.models import FieldMap, MARCFile, Project
 from cerulean.schemas.maps import (
     AIMapSuggestResponse,
     AISuggestRequest,
@@ -84,6 +90,7 @@ async def create_map(
         delete_source=body.delete_source,
         notes=body.notes,
         approved=body.approved,
+        ai_prompt=body.ai_prompt,
         ai_suggested=False,
         source_label="manual",
     )
@@ -114,7 +121,7 @@ async def update_map(
 
     for attr in ("source_tag", "source_sub", "target_tag", "target_sub",
                  "transform_type", "transform_fn", "preset_key", "delete_source",
-                 "notes", "approved"):
+                 "notes", "approved", "ai_prompt"):
         val = getattr(body, attr)
         if val is not None:
             setattr(field_map, attr, val)
@@ -306,6 +313,220 @@ async def approve_all_maps(
     return ApproveAllResponse(approved_count=approved_count)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# AI TRANSFORM RULE GENERATION (cerulean_ai_spec.md §5)
+# ══════════════════════════════════════════════════════════════════════════
+# Two synchronous endpoints (no Celery task — user is actively waiting):
+#
+#   POST /maps/ai-transform/generate  describe → expression + preview
+#   POST /maps/ai-transform/preview   expression → preview
+#
+# Both run in the request/response cycle because:
+#  1. The generation call is short (< 2 s typical — small prompt, single turn)
+#  2. The user is staring at a modal waiting to see results
+#  3. No work worth saving across a page reload
+
+
+class AITransformGenerateRequest(BaseModel):
+    description: str = PField(..., min_length=1, max_length=500)
+    source_tag: str
+    source_sub: str | None = None
+
+
+class AITransformPreviewRequest(BaseModel):
+    expression: str
+    source_tag: str
+    source_sub: str | None = None
+
+
+class TransformPreviewRow(BaseModel):
+    before: str
+    after: str
+    error: str | None = None
+
+
+class AITransformGenerateResponse(BaseModel):
+    expression: str
+    reasoning: str
+    preview: list[TransformPreviewRow]
+
+
+class AITransformPreviewResponse(BaseModel):
+    preview: list[TransformPreviewRow]
+
+
+_TRANSFORM_SYSTEM_PROMPT = """You are a MARC data migration specialist who writes single-line
+Python 3 expressions that transform a single string value. The expression is evaluated in
+a sandboxed environment where these names are available:
+
+  value        the incoming string from the MARC subfield (also aliased as `v`)
+  re           the Python `re` regex module
+  datetime     the `datetime.datetime` class
+  date         the `datetime.date` class
+  timedelta    the `datetime.timedelta` class
+
+Builtin names available: len, str, int, float, bool, list, dict, tuple, set, min, max, abs,
+round, sorted, reversed, enumerate, zip, map, filter, isinstance, range, True, False, None.
+
+NOT AVAILABLE: import, open, exec, compile, any file/network/OS call — those are blocked.
+
+REQUIREMENTS
+1. Produce ONE expression (not a statement, not multiple lines). The expression must
+   evaluate to a string OR to None (None means "leave the value unchanged").
+2. The expression must be safe against empty strings and unexpected input shapes — prefer
+   `value.strip()` and guarded regex over assumptions about formatting.
+3. Do not reach outside the sandbox (no I/O, no imports).
+4. If the user's request cannot be accomplished safely with a single expression, explain
+   that in the reasoning and emit `value` as the expression so nothing changes.
+
+RETURN ONLY A JSON OBJECT matching this shape — no markdown, no prose:
+
+{
+  "expression": "<one-line Python expression>",
+  "reasoning": "<one sentence explaining what the expression does>"
+}
+
+EXAMPLES
+
+User: Strip the trailing period and comma
+{
+  "expression": "re.sub(r'[.,]+$', '', value.strip())",
+  "reasoning": "Strips any run of trailing periods or commas from the value after trimming whitespace."
+}
+
+User: Convert MM/DD/YYYY dates to ISO YYYY-MM-DD
+{
+  "expression": "datetime.strptime(value.strip(), '%m/%d/%Y').strftime('%Y-%m-%d') if value.strip() else value",
+  "reasoning": "Parses a MM/DD/YYYY date and reformats as ISO 8601; leaves empty values untouched."
+}
+
+User: Remove an author name appended after a slash at the end of the title
+{
+  "expression": "re.sub(r'\\\\s*/.*$', '', value).rstrip()",
+  "reasoning": "Removes everything from the last slash onward (including leading whitespace) then trims trailing space."
+}
+"""
+
+
+@router.post("/{project_id}/maps/ai-transform/generate", response_model=AITransformGenerateResponse)
+async def ai_transform_generate(
+    project_id: str,
+    request: Request,
+    body: AITransformGenerateRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Plain-English description → sandboxed Python expression + preview.
+
+    Gated by ``ai.transform_rule_gen``. The response always includes a
+    before/after preview on up to 10 sample values drawn from the project's
+    MARC files — per spec the preview is mandatory before approve.
+    """
+    from cerulean.api.routers.preferences import _resolve_user
+    from cerulean.core.preferences import get_user_pref
+
+    await require_project(project_id, db, request)
+
+    user = await _resolve_user(request, db)
+    if not await get_user_pref(db, user.id, "ai.transform_rule_gen"):
+        raise HTTPException(403, detail={
+            "error": "PREFERENCE_DISABLED",
+            "feature_key": "ai.transform_rule_gen",
+            "message": "Enable 'Transform Rule Generation' in My Preferences to use this.",
+        })
+
+    # Pull up to 10 sample values so both Claude and the preview table see
+    # the same data. Pulling early lets us include a few examples in the
+    # user-prompt context too.
+    samples = await _collect_sample_values(project_id, body.source_tag, body.source_sub, db, limit=10)
+    if not samples:
+        raise HTTPException(409, detail={
+            "error": "NO_SAMPLES",
+            "message": f"No values found for {body.source_tag}{'$' + body.source_sub if body.source_sub else ''}. Ingest a file first.",
+        })
+
+    from cerulean.core.config import get_settings
+    settings = get_settings()
+    import anthropic
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+    user_message = (
+        f"SOURCE FIELD: {body.source_tag}"
+        f"{'$' + body.source_sub if body.source_sub else ''}\n"
+        f"SAMPLE VALUES (up to 10):\n"
+        + "\n".join(f"  - {s!r}" for s in samples) + "\n\n"
+        f"USER REQUEST: {body.description}"
+    )
+
+    try:
+        response = client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=512,
+            system=_TRANSFORM_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+        )
+    except Exception as exc:
+        raise HTTPException(502, detail={"error": "AI_UPSTREAM", "message": str(exc)})
+
+    raw = response.content[0].text.strip()
+    parsed = _parse_transform_response(raw)
+    if parsed is None:
+        raise HTTPException(502, detail={
+            "error": "AI_PARSE",
+            "message": "The AI response was not valid JSON. Try rephrasing your description.",
+            "raw": raw[:400],
+        })
+
+    expression = parsed["expression"]
+    reasoning = parsed.get("reasoning") or ""
+
+    preview = _run_preview(expression, samples)
+
+    await audit_log(
+        db, project_id, stage=2, level="info", tag="[ai-transform]",
+        message=f"AI transform rule generated for {body.source_tag}{'$' + body.source_sub if body.source_sub else ''}: "
+                f"{body.description[:80]}",
+    )
+
+    return AITransformGenerateResponse(
+        expression=expression,
+        reasoning=reasoning,
+        preview=[TransformPreviewRow(**row) for row in preview],
+    )
+
+
+@router.post("/{project_id}/maps/ai-transform/preview", response_model=AITransformPreviewResponse)
+async def ai_transform_preview(
+    project_id: str,
+    request: Request,
+    body: AITransformPreviewRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run an expression against sample values and return before/after + any errors.
+
+    Gated by ``ai.transform_rule_gen``: the preview endpoint is part of the
+    AI transform flow, so hiding it when the feature is off keeps the flag
+    surface consistent.
+    """
+    from cerulean.api.routers.preferences import _resolve_user
+    from cerulean.core.preferences import get_user_pref
+
+    await require_project(project_id, db, request)
+
+    user = await _resolve_user(request, db)
+    if not await get_user_pref(db, user.id, "ai.transform_rule_gen"):
+        raise HTTPException(403, detail={
+            "error": "PREFERENCE_DISABLED",
+            "feature_key": "ai.transform_rule_gen",
+            "message": "Enable 'Transform Rule Generation' in My Preferences to use this.",
+        })
+
+    samples = await _collect_sample_values(project_id, body.source_tag, body.source_sub, db, limit=10)
+    preview = _run_preview(body.expression, samples)
+    return AITransformPreviewResponse(
+        preview=[TransformPreviewRow(**row) for row in preview],
+    )
+
+
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
@@ -314,3 +535,103 @@ async def _get_map(project_id: str, map_id: str, db: AsyncSession) -> FieldMap:
     if not field_map or field_map.project_id != project_id:
         raise HTTPException(404, detail={"error": "NOT_FOUND", "message": "Map not found."})
     return field_map
+
+
+async def _collect_sample_values(
+    project_id: str,
+    source_tag: str,
+    source_sub: str | None,
+    db: AsyncSession,
+    limit: int = 10,
+) -> list[str]:
+    """Return up to `limit` distinct non-empty values for a source tag/sub.
+
+    Scans the project's MARC files (raw uploads) until the limit is reached
+    or all files are exhausted. Cheap for small samples — aborts as soon as
+    it has enough values.
+    """
+    result = await db.execute(
+        select(MARCFile.storage_path).where(
+            MARCFile.project_id == project_id,
+            MARCFile.file_category == "marc",
+            MARCFile.status == "indexed",
+        )
+    )
+    paths = [row[0] for row in result.all() if row[0]]
+    if not paths:
+        return []
+
+    import pymarc
+    seen: list[str] = []
+    dedupe: set[str] = set()
+    for path in paths:
+        if len(seen) >= limit:
+            break
+        try:
+            with open(path, "rb") as fh:
+                reader = pymarc.MARCReader(fh, to_unicode=True, force_utf8=True, utf8_handling="replace")
+                for record in reader:
+                    if record is None:
+                        continue
+                    for field in record.get_fields(source_tag):
+                        if field.is_control_field():
+                            val = (field.data or "").strip()
+                            if val and val not in dedupe:
+                                dedupe.add(val)
+                                seen.append(val)
+                        elif source_sub:
+                            for sf in field.subfields:
+                                if sf.code == source_sub and sf.value:
+                                    val = sf.value.strip()
+                                    if val and val not in dedupe:
+                                        dedupe.add(val)
+                                        seen.append(val)
+                        else:
+                            # No subfield specified — take the first subfield value
+                            for sf in field.subfields:
+                                if sf.value:
+                                    val = sf.value.strip()
+                                    if val and val not in dedupe:
+                                        dedupe.add(val)
+                                        seen.append(val)
+                                    break
+                    if len(seen) >= limit:
+                        break
+        except Exception:
+            continue
+    return seen[:limit]
+
+
+def _parse_transform_response(raw: str) -> dict | None:
+    """Extract the JSON object from Claude's response."""
+    import json
+    raw = raw.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        obj = json.loads(raw[start : end + 1])
+        if not isinstance(obj, dict) or "expression" not in obj:
+            return None
+        return obj
+    except Exception:
+        return None
+
+
+def _run_preview(expression: str, samples: list[str]) -> list[dict]:
+    """Evaluate a fn expression against each sample and return before/after
+    rows with per-row error messages. Uses the production sandbox so what
+    the preview shows is exactly what the transform pipeline will produce."""
+    from cerulean.tasks.transform import apply_fn_safe
+    rows: list[dict] = []
+    for before in samples:
+        after, err = apply_fn_safe(before, expression)
+        rows.append({"before": before, "after": after, "error": err})
+    return rows

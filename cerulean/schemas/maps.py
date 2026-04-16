@@ -22,6 +22,7 @@ class FieldMapCreate(BaseModel):
     delete_source: bool = False
     notes: str | None = None
     approved: bool = False
+    ai_prompt: str | None = None
 
 
 class FieldMapUpdate(BaseModel):
@@ -35,6 +36,7 @@ class FieldMapUpdate(BaseModel):
     delete_source: bool | None = None
     notes: str | None = None
     approved: bool | None = None
+    ai_prompt: str | None = None
 
 
 class FieldMapOut(BaseModel):
@@ -53,6 +55,7 @@ class FieldMapOut(BaseModel):
     ai_suggested: bool
     ai_confidence: float | None
     ai_reasoning: str | None
+    ai_prompt: str | None = None
     source_label: str
     approved: bool
     notes: str | None

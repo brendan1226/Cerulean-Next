@@ -426,6 +426,11 @@ class FieldMap(Base):
     ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_confidence: Mapped[float | None] = mapped_column(Float)   # 0.0–1.0
     ai_reasoning: Mapped[str | None] = mapped_column(Text)        # Claude explanation
+    # AI Transform Rule Generation (cerulean_ai_spec.md §5). When the user
+    # describes a transform in plain English and approves the AI-generated
+    # expression, the original description is stored here alongside the
+    # generated code for traceability.
+    ai_prompt: Mapped[str | None] = mapped_column(Text)
     source_label: Mapped[str] = mapped_column(String(50), default="manual")
 
     # Approval

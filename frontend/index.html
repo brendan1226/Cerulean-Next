@@ -4134,8 +4134,9 @@ async function openNewMapModal() {
     </div>
     <div class="form-group" id="nm-fn-group" style="display:none">
       <label class="form-label">Expression / Value</label>
-      <input class="form-input" id="nm-fn" placeholder="Enter value">
+      <input class="form-input" id="nm-fn" placeholder="Enter value" oninput="aiTransformOnExpressionEdit()">
     </div>
+    ${aiTransformPanelHTML()}
     <div class="form-group">
       <label class="form-label">Notes</label>
       <input class="form-input" id="nm-notes" placeholder="Optional">
@@ -4154,6 +4155,7 @@ async function openNewMapModal() {
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitNewMap()">Add Map</button>
     </div>`);
+  aiTransformResetState();
 
   // Async-load presets and populate unified dropdown
   const presets = await s2LoadAndCachePresets();
@@ -4187,6 +4189,7 @@ async function submitNewMap() {
   const p = state.currentProject;
   const unified = document.getElementById('nm-transform').value;
   const parsed = parseUnifiedTransformValue(unified);
+  if (!aiTransformGateAllowsSave(parsed)) return;
   const body = {
     source_tag: (document.getElementById('nm-src-tag').value || '').trim(),
     source_sub: document.getElementById('nm-src-sub').value.trim() || null,
@@ -4198,6 +4201,7 @@ async function submitNewMap() {
     delete_source: document.getElementById('nm-delete-source').checked,
     notes: document.getElementById('nm-notes').value.trim() || null,
     approved: document.getElementById('nm-approve').checked,
+    ai_prompt: _aiTransformState.prompt || null,
   };
   if (!body.source_tag || !body.target_tag) { toast('Source and target tags are required', 'warn'); return; }
   try {
@@ -4360,8 +4364,9 @@ async function openEditMapModal(mapId) {
     </div>
     <div class="form-group" id="nm-fn-group" style="display:${parsed.needsExpression ? '' : 'none'}">
       <label class="form-label">Expression / Value</label>
-      <input class="form-input" id="nm-fn" value="${esc(m.transform_fn||'')}" placeholder="Enter value">
+      <input class="form-input" id="nm-fn" value="${esc(m.transform_fn||'')}" placeholder="Enter value" oninput="aiTransformOnExpressionEdit()">
     </div>
+    ${aiTransformPanelHTML(m)}
     <div class="form-group">
       <label class="form-label">Notes</label>
       <input class="form-input" id="nm-notes" value="${esc(m.notes||'')}" placeholder="Optional">
@@ -4392,12 +4397,22 @@ async function openEditMapModal(mapId) {
   // Populate subfield datalists
   s2UpdateSourceSubs();
   s2UpdateTargetSubs();
+
+  // Seed the AI transform gate state from the existing map: if this map
+  // already has a saved fn expression, treat it as "previously previewed"
+  // so the user can tweak other fields and Save without re-running the
+  // preview. The gate re-engages only when they edit the expression.
+  _aiTransformState.prompt = m.ai_prompt || null;
+  _aiTransformState.expression = m.transform_fn || null;
+  _aiTransformState.previewOk = m.transform_type === 'fn' && !!m.transform_fn;
+  aiTransformUpdateApproveGate();
 }
 
 async function submitEditMap(mapId) {
   const p = state.currentProject;
   const unified = document.getElementById('nm-transform').value;
   const parsed = parseUnifiedTransformValue(unified);
+  if (!aiTransformGateAllowsSave(parsed)) return;
   const body = {
     source_tag: (document.getElementById('nm-src-tag').value || '').trim(),
     source_sub: document.getElementById('nm-src-sub').value.trim() || null,
@@ -4409,6 +4424,7 @@ async function submitEditMap(mapId) {
     delete_source: document.getElementById('nm-delete-source').checked,
     notes: document.getElementById('nm-notes').value.trim() || null,
     approved: document.getElementById('nm-approve').checked,
+    ai_prompt: _aiTransformState.prompt || null,
   };
   if (!body.source_tag || !body.target_tag) { toast('Source and target tags are required', 'warn'); return; }
   try {
@@ -4418,6 +4434,216 @@ async function submitEditMap(mapId) {
     s2LoadMaps();
   } catch (e) { console.error(e); }
 }
+
+// ──────────────────────────────────────────────────────────────────
+// AI Transform Rule Generation (cerulean_ai_spec.md §5)
+// ──────────────────────────────────────────────────────────────────
+// Flow: user types a plain-English description, clicks Generate, the
+// backend returns a sandboxed Python expression + before/after preview
+// on 10 sample values. The approve gate below requires the preview to
+// be present and error-free before an fn expression can be marked
+// approved — so "The approve button is only enabled after preview
+// renders" (spec §5.4) is enforced here.
+
+const _aiTransformState = {
+  prompt: null,      // last-submitted description (stored with the map)
+  expression: null,  // expression that corresponds to the rendered preview
+  previewOk: false,  // true when a preview rendered without any row errors
+};
+
+function aiTransformResetState() {
+  _aiTransformState.prompt = null;
+  _aiTransformState.expression = null;
+  _aiTransformState.previewOk = false;
+  aiTransformUpdateApproveGate();
+}
+
+// Build the HTML for the Describe-transform panel. Returns '' when the
+// feature is disabled so the panel is invisible to users who haven't
+// opted in (per spec §11.5).
+function aiTransformPanelHTML(m) {
+  if (!window.hasFeature || !window.hasFeature('ai.transform_rule_gen')) return '';
+  const existingPrompt = (m && m.ai_prompt) || '';
+  return `
+    <div class="form-group" id="ai-transform-panel"
+         style="border:1px solid rgba(0,229,255,0.2);background:rgba(0,229,255,0.04);border-radius:6px;padding:10px 12px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="badge badge-cerulean" style="font-size:9px">✦ AI</span>
+          <span style="font-size:12px;font-weight:600">Describe transform</span>
+        </div>
+        <span class="text-dim" style="font-size:10px">Claude generates a sandboxed Python expression</span>
+      </div>
+      <textarea id="ai-transform-desc" class="form-input" rows="2"
+        style="width:100%;resize:vertical;font-family:var(--sans);font-size:12px"
+        placeholder="e.g. Strip the trailing period and comma, or: Parse MM/DD/YYYY into ISO YYYY-MM-DD">${esc(existingPrompt)}</textarea>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+        <button class="btn btn-primary btn-sm" style="font-size:10px" type="button" onclick="aiTransformGenerate()">✦ Generate</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:10px" type="button" onclick="aiTransformPreview()" id="ai-transform-preview-btn">↻ Preview</button>
+        <span id="ai-transform-status" class="text-dim" style="font-size:11px"></span>
+      </div>
+      <div id="ai-transform-reasoning" style="display:none;font-size:11px;color:var(--text-secondary);margin-top:8px;line-height:1.5;padding:6px 8px;background:var(--bg-card);border-radius:4px;border-left:2px solid var(--cerulean)"></div>
+      <div id="ai-transform-preview" style="display:none;margin-top:8px"></div>
+    </div>`;
+}
+
+async function aiTransformGenerate() {
+  const p = state.currentProject;
+  const desc = (document.getElementById('ai-transform-desc')?.value || '').trim();
+  const srcTag = (document.getElementById('nm-src-tag')?.value || '').trim();
+  const srcSub = (document.getElementById('nm-src-sub')?.value || '').trim() || null;
+  if (!desc) { toast('Describe what the transform should do first', 'warn'); return; }
+  if (!srcTag) { toast('Set a source tag first', 'warn'); return; }
+
+  const statusEl = document.getElementById('ai-transform-status');
+  if (statusEl) statusEl.textContent = 'Generating…';
+  _aiTransformState.previewOk = false;
+  aiTransformUpdateApproveGate();
+
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/ai-transform/generate`, {
+      description: desc, source_tag: srcTag, source_sub: srcSub,
+    });
+    if (!res) return;
+
+    // Apply: flip transform type to Custom expression, set the expression
+    const transformSel = document.getElementById('nm-transform');
+    if (transformSel) {
+      // Build a minimal "custom:fn" option if the select hasn't loaded yet
+      if (![...transformSel.options].some(o => o.value === 'custom:fn')) {
+        const opt = document.createElement('option');
+        opt.value = 'custom:fn'; opt.textContent = 'Custom expression';
+        transformSel.appendChild(opt);
+      }
+      transformSel.value = 'custom:fn';
+      s2OnTransformTypeChange();
+    }
+    const fnInput = document.getElementById('nm-fn');
+    if (fnInput) fnInput.value = res.expression || '';
+
+    _aiTransformState.prompt = desc;
+    _aiTransformState.expression = res.expression;
+
+    // Reasoning + preview
+    const reasoningEl = document.getElementById('ai-transform-reasoning');
+    if (reasoningEl) {
+      reasoningEl.textContent = res.reasoning || '';
+      reasoningEl.style.display = res.reasoning ? '' : 'none';
+    }
+    aiTransformRenderPreviewTable(res.preview || []);
+    if (statusEl) statusEl.textContent = '';
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '';
+    console.error('aiTransformGenerate failed', e);
+  }
+}
+
+async function aiTransformPreview() {
+  const p = state.currentProject;
+  const expression = (document.getElementById('nm-fn')?.value || '').trim();
+  const srcTag = (document.getElementById('nm-src-tag')?.value || '').trim();
+  const srcSub = (document.getElementById('nm-src-sub')?.value || '').trim() || null;
+  if (!expression) { toast('No expression to preview', 'warn'); return; }
+  if (!srcTag) { toast('Set a source tag first', 'warn'); return; }
+
+  const statusEl = document.getElementById('ai-transform-status');
+  if (statusEl) statusEl.textContent = 'Running…';
+  try {
+    const res = await api('POST', `/projects/${p.id}/maps/ai-transform/preview`, {
+      expression, source_tag: srcTag, source_sub: srcSub,
+    });
+    if (!res) return;
+    _aiTransformState.expression = expression;
+    aiTransformRenderPreviewTable(res.preview || []);
+    if (statusEl) statusEl.textContent = '';
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '';
+    console.error('aiTransformPreview failed', e);
+  }
+}
+
+function aiTransformRenderPreviewTable(rows) {
+  const el = document.getElementById('ai-transform-preview');
+  if (!el) return;
+  if (!rows.length) {
+    el.style.display = '';
+    el.innerHTML = '<div class="text-dim" style="font-size:11px">No sample values available to preview.</div>';
+    _aiTransformState.previewOk = false;
+    aiTransformUpdateApproveGate();
+    return;
+  }
+  const anyErrors = rows.some(r => r.error);
+  _aiTransformState.previewOk = !anyErrors;
+  el.style.display = '';
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+      <span style="font-size:11px;font-weight:600">Before → After</span>
+      ${anyErrors
+        ? '<span class="badge badge-amber" style="font-size:9px">Some rows failed — fix the expression before approving</span>'
+        : '<span class="badge badge-green" style="font-size:9px">All rows evaluated successfully</span>'}
+    </div>
+    <table class="data-table" style="font-size:11px;width:100%">
+      <thead><tr><th style="width:45%">Before</th><th style="width:45%">After</th><th>Error</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `<tr>
+          <td class="mono" style="word-break:break-word">${esc(r.before)}</td>
+          <td class="mono" style="${r.error ? 'color:var(--text-dim)' : (r.after !== r.before ? 'color:var(--green)' : '')};word-break:break-word">${esc(r.after)}</td>
+          <td class="mono" style="color:var(--red);font-size:10px">${r.error ? esc(r.error) : ''}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  aiTransformUpdateApproveGate();
+}
+
+function aiTransformOnExpressionEdit() {
+  // If the user edits the expression after generate/preview ran, the
+  // preview no longer matches what they're about to save — invalidate it.
+  const fn = document.getElementById('nm-fn');
+  if (!fn) return;
+  if (fn.value.trim() !== (_aiTransformState.expression || '').trim()) {
+    _aiTransformState.previewOk = false;
+    aiTransformUpdateApproveGate();
+  }
+}
+
+// Gate: when transform_type=fn, the Approve checkbox may only be checked
+// after a successful preview. This mirrors spec §5.4's mandatory preview
+// requirement without blocking the rest of the form.
+function aiTransformUpdateApproveGate() {
+  const approveEl = document.getElementById('nm-approve');
+  const transformSel = document.getElementById('nm-transform');
+  if (!approveEl || !transformSel) return;
+  const parsed = parseUnifiedTransformValue(transformSel.value);
+  const fnInput = document.getElementById('nm-fn');
+  const hasExpression = !!(fnInput && fnInput.value.trim());
+  const needsGate = parsed.transform_type === 'fn' && hasExpression && !_aiTransformState.previewOk;
+
+  approveEl.dataset.aiGated = needsGate ? '1' : '';
+  // Visual treatment — we don't hard-disable the checkbox so the user can
+  // still uncheck it. But we block approve-save via the gate below.
+  approveEl.parentElement.style.opacity = needsGate ? '0.6' : '';
+}
+
+function aiTransformGateAllowsSave(parsed) {
+  const approveEl = document.getElementById('nm-approve');
+  if (!approveEl) return true;
+  if (approveEl.checked
+      && parsed.transform_type === 'fn'
+      && approveEl.dataset.aiGated === '1') {
+    toast('Run the preview and fix any errors before approving this expression', 'warn');
+    return false;
+  }
+  return true;
+}
+
+// Keep the gate state in sync when the user changes transform type or
+// toggles approve — defer wiring to the next tick so the DOM is ready.
+document.addEventListener('change', (e) => {
+  if (!e.target || !e.target.id) return;
+  if (e.target.id === 'nm-transform' || e.target.id === 'nm-approve') {
+    aiTransformUpdateApproveGate();
+  }
+});
 
 function openSaveTemplateModal() {
   openModal(`

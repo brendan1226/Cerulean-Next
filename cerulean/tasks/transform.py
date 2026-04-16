@@ -1093,7 +1093,36 @@ def _apply_lookup(value: str, lookup_json: str | None) -> str:
         return value
 
 
-# Sandboxed builtins for fn transforms — no file I/O, no imports
+# Stdlib modules that are safe to let CPython's C-level code lazy-import
+# on behalf of sandboxed expressions. Limited to pure string / date / time
+# work — nothing that touches the filesystem, network, process table, or
+# reflection surface. Any module whose root isn't in this set raises
+# ImportError inside the sandbox, so `__import__("os")` still fails hard.
+_SANDBOX_ALLOWED_IMPORTS = {
+    "re", "_sre",
+    "datetime", "_datetime",
+    "time", "_strptime",
+    "locale", "_locale",
+    "encodings",
+    "string",
+    "calendar",
+}
+
+
+def _sandbox_import(name, globals=None, locals=None, fromlist=(), level=0):
+    """Whitelisted __import__ stub.
+
+    The Python builtin is still used underneath — we just gate which top-
+    level package the caller can reach. This covers lazy-imports made by
+    C-level methods like datetime.strftime (which pulls in time/locale).
+    """
+    root = name.split(".")[0]
+    if root not in _SANDBOX_ALLOWED_IMPORTS:
+        raise ImportError(f"import of {name!r} is not permitted in sandboxed expressions")
+    return __import__(name, globals, locals, fromlist, level)
+
+
+# Sandboxed builtins for fn transforms — no file I/O, no arbitrary imports
 _SAFE_BUILTINS = {
     "len": len, "str": str, "int": int, "float": float, "bool": bool,
     "list": list, "dict": dict, "tuple": tuple, "set": set,
@@ -1101,6 +1130,23 @@ _SAFE_BUILTINS = {
     "sorted": sorted, "reversed": reversed, "enumerate": enumerate,
     "zip": zip, "map": map, "filter": filter, "isinstance": isinstance,
     "range": range, "True": True, "False": False, "None": None,
+    "__import__": _sandbox_import,
+}
+
+# Module-level names available inside fn expressions. Added so AI-generated
+# transforms (cerulean_ai_spec.md §5) can use common string-manipulation
+# idioms like re.sub(...) and datetime.strptime(...). The whitelisted
+# __import__ in _SAFE_BUILTINS is what lets CPython's C-level date/time
+# code lazy-import `time` / `_strptime` / `locale` on first use.
+import re as _re
+import datetime as _datetime_mod
+
+_SAFE_GLOBALS = {
+    "__builtins__": _SAFE_BUILTINS,
+    "re": _re,
+    "datetime": _datetime_mod.datetime,
+    "date": _datetime_mod.date,
+    "timedelta": _datetime_mod.timedelta,
 }
 
 
@@ -1109,11 +1155,27 @@ def _apply_fn(value: str, expression: str | None) -> str:
     if not expression:
         return value
     try:
-        result = eval(expression, {"__builtins__": _SAFE_BUILTINS}, {"value": value})
+        result = eval(expression, _SAFE_GLOBALS, {"value": value, "v": value})
         return str(result) if result is not None else value
     except Exception:
         logger.debug("Expression eval failed: %r on value %r", expression, value, exc_info=True)
         return value
+
+
+def apply_fn_safe(value: str, expression: str) -> tuple[str, str | None]:
+    """Public helper — run a fn expression against a single value and surface
+    the exception string on failure instead of swallowing it.
+
+    Returns (result, error_or_none). Used by the AI Transform Rule preview
+    endpoint so the UI can show per-row errors inline.
+    """
+    if not expression:
+        return value, None
+    try:
+        result = eval(expression, _SAFE_GLOBALS, {"value": value, "v": value})
+        return (str(result) if result is not None else value), None
+    except Exception as exc:
+        return value, f"{type(exc).__name__}: {exc}"
 
 
 def _subfield_sort_key(code: str) -> tuple[int, str]:
