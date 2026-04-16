@@ -7,6 +7,12 @@ process, tightest integration) and **Subprocess** (any language — Perl,
 Node, Go, Ruby, compiled binaries — so long as it can read a file, write
 a file, and exit 0).
 
+> **Handing existing code to an AI agent?** See the sibling doc
+> [PLUGIN-FROM-EXISTING-CODE.md](PLUGIN-FROM-EXISTING-CODE.md) — it's a
+> prescriptive briefing (decision tree, copy-paste templates, packaging
+> checklist, verification loop) you can paste into Claude Code / Cursor
+> alongside the author's source files.
+
 This guide covers the manifest format, both runtimes, and ships two
 copy-paste starting points. See the full examples under
 [`examples/plugins/`](../examples/plugins/).

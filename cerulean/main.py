@@ -289,6 +289,20 @@ async def serve_plugin_authoring():
     return FileResponse(path=str(guide), filename="Plugin-Authoring.md", media_type="text/markdown")
 
 
+@app.get("/help/plugin-from-existing-code")
+async def serve_plugin_from_existing_code():
+    """Agent-oriented briefing for wrapping existing code as a .cpz plugin.
+
+    Intended to be pasted into an AI coding agent (Claude Code, Cursor,
+    Copilot Workspace, etc.) alongside the author's original source files.
+    """
+    guide = Path(__file__).resolve().parent.parent / "docs" / "PLUGIN-FROM-EXISTING-CODE.md"
+    if not guide.is_file():
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("Guide not found", status_code=404)
+    return FileResponse(path=str(guide), filename="Plugin-From-Existing-Code.md", media_type="text/markdown")
+
+
 @app.get("/")
 async def serve_frontend():
     return FileResponse(_FRONTEND_DIR / "index.html")

@@ -22,7 +22,7 @@ A comprehensive library data migration platform that moves bibliographic, patron
 - **Template System** — Save/load/share field mappings as reusable templates, import from Google Sheets
 - **Macros** — Save and replay sequences of batch operations
 - **Multi-ILS Push** — Push to Koha (REST API, FastMARCImport, Migration Toolkit), Aspen Discovery (Turbo Migration), Evergreen (direct PostgreSQL)
-- **Cerulean plugin system (`.cpz`)** — Extend the platform itself with custom transforms and quality checks. Python (in-process) or any-language subprocess (Perl, Node, Go, compiled binary). See [docs/PLUGIN-AUTHORING.md](docs/PLUGIN-AUTHORING.md).
+- **Cerulean plugin system (`.cpz`)** — Extend the platform itself with custom transforms and quality checks. Python (in-process) or any-language subprocess (Perl, Node, Go, compiled binary). See [docs/PLUGIN-AUTHORING.md](docs/PLUGIN-AUTHORING.md) for authors, or [docs/PLUGIN-FROM-EXISTING-CODE.md](docs/PLUGIN-FROM-EXISTING-CODE.md) — an agent-oriented briefing for wrapping existing code as a plugin.
 - **Migration Mode** — Stop Koha daemons + tune MariaDB for 10-50x faster bulk imports
 - **Plugin Manager** — Upload, download, auto-install Koha plugins (.kpz)
 - **OAI-PMH 2.0** — Harvest records directly from MarcEdit or any OAI client
