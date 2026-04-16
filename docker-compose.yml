@@ -64,6 +64,15 @@ services:
       - TZ=America/Los_Angeles
     depends_on:
       - postgres
+      - redis
+    # Must attach to the same Docker network as redis + postgres — otherwise
+    # Compose drops this service on the auto-default network and the worker
+    # can never resolve the 'redis' / 'postgres' hostnames, silently hanging
+    # every Celery task. Every other service lists these explicitly; 'worker'
+    # was the historical odd one out.
+    networks:
+      - cerulean
+      - kohanet
 
   # ── Celery worker (push — long-running Koha/Aspen/Evergreen tasks) ──
   worker-push:
