@@ -92,6 +92,10 @@ class MARCFileOut(BaseModel):
     sort_order: int
     created_at: datetime
     updated_at: datetime
+    # AI Data Health Report (cerulean_ai_spec.md §3). Status fields only —
+    # the full report body is fetched on demand via /health-report.
+    health_report_status: str | None = None
+    health_report_generated_at: datetime | None = None
 
 
 class MARCFileUploadResponse(BaseModel):

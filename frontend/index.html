@@ -2182,6 +2182,10 @@ async function renderStage1(el) {
       </div>
       <div id="file-table-wrap"><div class="loading-msg"><div class="spinner"></div>Loading files...</div></div>
     </div>
+    <!-- AI Data Health Report — hidden when the user hasn't enabled the
+         feature (cerulean_ai_spec.md §3 / §11.5). Populated by
+         renderHealthReports() after loadFiles(). -->
+    <div id="health-reports-wrap" style="display:none"></div>
     <div class="card" id="items-csv-detail-card" style="display:none">
       <div class="card-header">
         <span class="card-title">Item CSV — Columns &amp; Preview</span>
@@ -2275,7 +2279,190 @@ async function loadFiles() {
     }
 
     wrap.innerHTML = html || `<div class="empty-state" style="padding:24px"><div class="empty-title">No files uploaded yet</div></div>`;
+
+    // Render AI Data Health Report panels (hidden unless the feature is on).
+    try { renderHealthReports(files); } catch (e) { console.warn('health panel render failed', e); }
   } catch (e) { console.error(e); }
+}
+
+// ── AI Data Health Report panel (Step 1) ──────────────────────────────
+// Gated by ai.data_health_report. Hidden when off per spec §11.5.
+// Polls per-file status while any report is still "running".
+
+async function renderHealthReports(files) {
+  const wrap = document.getElementById('health-reports-wrap');
+  if (!wrap) return;
+  // Respect the per-user feature flag — hide entirely when off
+  if (!window.hasFeature || !window.hasFeature('ai.data_health_report')) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+
+  const marcFiles = (files || []).filter(f => f.file_category === 'marc' && f.status === 'indexed');
+  if (!marcFiles.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <span class="card-title">◈ AI Data Health Report</span>
+        <span class="badge badge-cerulean" style="font-size:9px">Anthropic API</span>
+      </div>
+      <div class="text-dim" style="font-size:11px;margin-bottom:10px">
+        Plain-English briefing generated from a stratified sample of your MARC data.
+        The AI analyzes — you decide what to act on.
+      </div>
+      <div id="health-reports-body"></div>
+    </div>`;
+
+  const body = document.getElementById('health-reports-body');
+  body.innerHTML = marcFiles.map(f => renderHealthFileBlock(f)).join('');
+
+  // If any report is "running", poll every few seconds until done.
+  if (marcFiles.some(f => f.health_report_status === 'running')) {
+    clearTimeout(window._healthPollTimer);
+    window._healthPollTimer = setTimeout(() => { loadFiles(); }, 4000);
+  }
+}
+
+function renderHealthFileBlock(f) {
+  const status = f.health_report_status;
+  const collapseId = 'hr-' + f.id;
+  const generated = f.health_report_generated_at
+    ? new Date(f.health_report_generated_at).toLocaleString()
+    : null;
+
+  let statusPill = '';
+  if (status === 'running')      statusPill = '<span class="badge badge-cerulean" style="font-size:9px">Analyzing…</span>';
+  else if (status === 'ready')   statusPill = `<span class="badge badge-green" style="font-size:9px">Ready</span>`;
+  else if (status === 'error')   statusPill = '<span class="badge badge-amber" style="font-size:9px">Error</span>';
+  else                           statusPill = '<span class="badge badge-dim" style="font-size:9px">Not run</span>';
+
+  return `
+    <div style="border:1px solid var(--border);border-radius:6px;margin-bottom:8px;background:var(--bg-surface)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;cursor:pointer"
+           onclick="toggleHealthPanel('${esc(f.id)}')">
+        <div style="display:flex;gap:10px;align-items:center;min-width:0">
+          <span style="font-size:10px;color:var(--text-dim)" id="${collapseId}-chev">▸</span>
+          <span class="mono" style="font-weight:600">${esc(f.filename)}</span>
+          ${statusPill}
+          ${generated ? `<span class="text-dim" style="font-size:10px">generated ${esc(generated)}</span>` : ''}
+        </div>
+        <div onclick="event.stopPropagation()">
+          <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="runHealthReport('${esc(f.id)}')" ${status === 'running' ? 'disabled' : ''}>
+            ${status === 'ready' ? '↻ Re-run' : (status === 'error' ? '↻ Retry' : '✦ Analyze')}
+          </button>
+        </div>
+      </div>
+      <div id="${collapseId}-body" style="display:none;padding:0 12px 12px"></div>
+    </div>`;
+}
+
+async function toggleHealthPanel(fileId) {
+  const body = document.getElementById('hr-' + fileId + '-body');
+  const chev = document.getElementById('hr-' + fileId + '-chev');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  if (isOpen) {
+    body.style.display = 'none';
+    chev.textContent = '▸';
+    return;
+  }
+  body.style.display = '';
+  chev.textContent = '▾';
+  // Fetch the full report on expand (kept out of the file list payload)
+  body.innerHTML = '<div class="loading-msg" style="padding:8px 0"><div class="spinner"></div>Loading report…</div>';
+  try {
+    const p = state.currentProject;
+    const res = await window.api('GET', `/projects/${p.id}/files/${fileId}/health-report`);
+    body.innerHTML = renderHealthReportContents(res);
+  } catch (e) {
+    body.innerHTML = `<div style="padding:8px 0;color:var(--red);font-size:12px">Failed to load: ${esc(e.message || 'Unknown error')}</div>`;
+  }
+}
+
+function renderHealthReportContents(res) {
+  if (res.status === 'running') {
+    return '<div style="padding:12px 0;color:var(--text-dim);font-size:12px"><div class="spinner" style="display:inline-block;vertical-align:middle;margin-right:8px"></div>Analysis in progress — results usually ready within 20–40 seconds.</div>';
+  }
+  if (res.status === 'error') {
+    return `<div style="padding:8px 0;font-size:12px">
+      <div style="color:var(--red);margin-bottom:6px">Analysis failed: ${esc(res.error || 'Unknown error')}</div>
+      <div class="text-dim">You can re-run the analysis with the button above.</div>
+    </div>`;
+  }
+  if (res.status !== 'ready' || !res.report) {
+    return '<div class="text-dim" style="padding:8px 0;font-size:12px">No report yet — click Analyze to generate one.</div>';
+  }
+  const r = res.report;
+  const origin = r.ils_origin || {};
+  const findings = r.findings || [];
+
+  const counts = { action_required: 0, warning: 0, info: 0 };
+  for (const f of findings) counts[f.severity] = (counts[f.severity] || 0) + 1;
+
+  return `
+    ${r.summary ? `<div style="font-size:12px;color:var(--text);line-height:1.55;margin:6px 0 10px;padding:10px;background:var(--bg-card);border-radius:6px;border-left:3px solid var(--cerulean)">
+      ${esc(r.summary)}
+    </div>` : ''}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:11px">
+      ${origin.name ? `<span class="badge badge-cerulean">ILS: ${esc(origin.name)}${origin.confidence != null ? ` · ${Math.round(origin.confidence*100)}%` : ''}</span>` : ''}
+      ${r.sample_size ? `<span class="badge badge-dim">Sample: ${r.sample_size.toLocaleString()} rec</span>` : ''}
+      ${r.record_count ? `<span class="badge badge-dim">File: ${r.record_count.toLocaleString()} rec</span>` : ''}
+      ${counts.action_required ? `<span class="badge badge-amber">${counts.action_required} action required</span>` : ''}
+      ${counts.warning ? `<span class="badge badge-amber" style="opacity:0.75">${counts.warning} warning</span>` : ''}
+      ${counts.info ? `<span class="badge badge-dim">${counts.info} info</span>` : ''}
+    </div>
+
+    ${origin.reasoning ? `<div class="text-dim" style="font-size:11px;margin-bottom:10px;font-style:italic">
+      ILS detection: ${esc(origin.reasoning)}
+    </div>` : ''}
+
+    ${findings.length === 0
+      ? '<div class="text-dim" style="font-size:12px;padding:6px 0">No issues flagged in this sample. The data looks clean.</div>'
+      : findings.map(f => renderHealthFinding(f)).join('')}
+  `;
+}
+
+function renderHealthFinding(f) {
+  const sev = f.severity || 'info';
+  const color = sev === 'action_required' ? 'var(--red)' : sev === 'warning' ? 'var(--amber)' : 'var(--cerulean)';
+  const bg = sev === 'action_required' ? 'rgba(224,82,82,0.05)' : sev === 'warning' ? 'rgba(245,166,35,0.05)' : 'rgba(0,188,212,0.04)';
+  const sevLabel = sev === 'action_required' ? 'Action required' : sev === 'warning' ? 'Warning' : 'Info';
+  return `
+    <div style="border:1px solid ${color}33;background:${bg};border-left:3px solid ${color};padding:8px 10px;margin-bottom:6px;border-radius:4px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+        <span class="mono" style="font-size:9px;padding:1px 6px;border-radius:3px;background:${color};color:#0b0d10;text-transform:uppercase;letter-spacing:0.05em">${esc(sevLabel)}</span>
+        <span style="font-size:12px;font-weight:600;color:var(--text)">${esc(f.title || '')}</span>
+        ${f.tag_hint ? `<span class="badge badge-dim" style="font-size:9px">${esc(f.tag_hint)}</span>` : ''}
+        ${f.record_count_estimate ? `<span class="badge badge-dim" style="font-size:9px">~${Number(f.record_count_estimate).toLocaleString()} rec</span>` : ''}
+        <span class="badge badge-dim" style="font-size:9px;opacity:0.7">${esc(f.category || 'other')}</span>
+      </div>
+      ${f.detail ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5">${esc(f.detail)}</div>` : ''}
+    </div>`;
+}
+
+async function runHealthReport(fileId) {
+  const p = state.currentProject;
+  try {
+    const res = await window.api('POST', `/projects/${p.id}/files/${fileId}/health-report/run`);
+    if (!res) return;  // api() returned null on 401 → login modal
+    toast('Health analysis started', 'info');
+    // Immediately reflect "running" in the UI
+    const body = document.getElementById('hr-' + fileId + '-body');
+    if (body && body.style.display !== 'none') {
+      body.innerHTML = renderHealthReportContents({ status: 'running' });
+    }
+    // Reload file list so the pill + poll timer update
+    setTimeout(loadFiles, 500);
+  } catch (e) {
+    // 403 with feature flag — nudge toward the Preferences page
+    if (e && e.message && e.message.toLowerCase().includes('preferences')) {
+      toast('Enable Data Health Report in My Preferences first', 'warn');
+    }
+  }
 }
 
 async function uploadFiles(fileList) {

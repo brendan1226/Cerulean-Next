@@ -371,6 +371,14 @@ class MARCFile(Base):
 
     sort_order: Mapped[int] = mapped_column(Integer, default=0)  # merge queue position
 
+    # AI Data Health Report (cerulean_ai_spec.md §3). The payload is a JSON
+    # object produced by Claude against a stratified sample of records; the
+    # status field drives the UI spinner vs. rendered cards.
+    health_report: Mapped[dict | None] = mapped_column(JSONB)
+    health_report_status: Mapped[str | None] = mapped_column(String(20))  # "running"|"ready"|"error"
+    health_report_error: Mapped[str | None] = mapped_column(Text)
+    health_report_generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 

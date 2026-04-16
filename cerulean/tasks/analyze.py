@@ -10,12 +10,14 @@ Stage 2 Celery tasks:
 """
 
 import json
+import random
 import uuid
 from collections import Counter, defaultdict
+from datetime import datetime
 
 import pymarc
 from celery import shared_task
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from cerulean.core.config import get_settings
@@ -649,3 +651,289 @@ def _format_value_index(
         if tag_block:
             lines.append("\n".join(tag_block))
     return "\n\n".join(lines) if lines else "(no value samples available)"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DATA HEALTH REPORT (AI Feature 1 — per cerulean_ai_spec.md §3)
+# ══════════════════════════════════════════════════════════════════════════
+
+# Stratified sample: first N (catches the file header / early-record quirks)
+# + random R from across the rest (catches inconsistencies hidden deep in
+# the file). Per spec §3.3: "first 100 + random 400 from across the file".
+_HEALTH_FIRST_N = 100
+_HEALTH_RANDOM_N = 400
+# Cap what we actually scan when picking the random sample so a 5M-record
+# file doesn't force us to read the whole thing twice.
+_HEALTH_SCAN_CAP = 100_000
+
+_HEALTH_SYSTEM_PROMPT = """You are an expert MARC21 cataloguing and data-quality analyst working
+for a library migration team. You will be given a stratified sample of MARC records from a
+single file that a customer has exported from their legacy ILS. Your job is to produce a
+plain-English Data Health Report that gives the project manager — who may never have seen
+this library's data before — an immediate briefing on what they're working with.
+
+ANALYSE THE SAMPLE FOR:
+- ILS origin: which ILS did this likely come from, and with what confidence?
+  (Look at signature tags: 907/945/Sierra, 949/Polaris, 852+999/Symphony, 852+952/Koha,
+  035$a containing "Sirsi", etc.)
+- Record completeness: what percentage of records have each of the core fields?
+  (245, 100/110/111, 020, 300, 008, 852/949/945)
+- Data inconsistencies: values that look malformed, duplicated, or appended together
+  (e.g. "245$a contains author after a slash in ~N% of records")
+- Branch / location codes: distinct values found in location-bearing fields with counts,
+  flag any that look malformed or inconsistent in casing.
+- Date format anomalies: mixed or non-standard date formats in 008, 260$c, 264$c, etc.
+- Encoding issues: mojibake, stray control characters, truncated subfields, mis-encoded
+  diacritics.
+- Outlier records: records missing 245, records with 50+ item tags, control fields with
+  unexpected lengths, etc.
+
+OUTPUT
+Return ONLY a single JSON object with this exact shape — no preamble, no markdown fences:
+
+{
+  "summary": "one short paragraph — the migration specialist reads this first",
+  "ils_origin": {
+    "name": "Best guess ILS name and version if visible (e.g. 'Polaris 7.x')",
+    "confidence": 0.0-1.0,
+    "reasoning": "one sentence citing the signature tags you saw"
+  },
+  "findings": [
+    {
+      "severity": "action_required" | "warning" | "info",
+      "category": "completeness" | "encoding" | "dates" | "branches" | "inconsistency" | "outlier" | "other",
+      "title": "5-8 word headline",
+      "detail": "1-3 sentences explaining the finding and its migration implication",
+      "record_count_estimate": 1234,
+      "tag_hint": "MARC tag most relevant to this finding, e.g. '245' or '008' (or null)"
+    }
+  ]
+}
+
+RULES
+1. Put action_required findings first, then warning, then info.
+2. Prefer concrete counts and tag citations over vague language.
+3. If you cannot determine the ILS with reasonable confidence, set confidence < 0.5
+   and say so in reasoning — do NOT guess.
+4. No PII assumptions — this is bib/item data, not patron data.
+5. Keep the report tight. Aim for 4–10 findings, not a wall of text.
+"""
+
+
+@celery_app.task(bind=True, name="cerulean.tasks.analyze.data_health_report_task")
+def data_health_report_task(
+    self,
+    project_id: str,
+    file_id: str,
+    user_id: str | None = None,
+) -> dict:
+    """Generate an AI Data Health Report for a single MARC file.
+
+    Gated by the ``ai.data_health_report`` user preference. When disabled,
+    the task exits cleanly without touching the DB — callers (including
+    the ingest chain) can call this unconditionally.
+
+    Writes health_report / health_report_status / health_report_generated_at
+    on the MARCFile row. Never throws out of the task body — failures are
+    recorded as status="error".
+    """
+    from cerulean.models import MARCFile
+
+    log = AuditLogger(project_id=project_id, stage=1, tag="[health-report]")
+
+    try:
+        with Session(_engine) as db:
+            if not pref_enabled_sync(db, user_id, "ai.data_health_report"):
+                # Feature not enabled for this user — silent no-op so the
+                # ingest chain can always fire the task without branching.
+                return {"skipped": True, "reason": "feature_disabled"}
+
+            marc_file = db.get(MARCFile, file_id)
+            if not marc_file:
+                log.error(f"File {file_id} not found")
+                return {"error": "file_not_found"}
+
+            storage_path = marc_file.storage_path
+            filename = marc_file.filename
+            record_count = marc_file.record_count or 0
+
+            # Mark running so the UI can show a spinner
+            db.execute(
+                update(MARCFile)
+                .where(MARCFile.id == file_id)
+                .values(
+                    health_report_status="running",
+                    health_report_error=None,
+                )
+            )
+            db.commit()
+
+        log.info(f"Building health report for {filename}")
+
+        # 1. Stratified sample
+        sample = _health_stratified_sample(
+            storage_path,
+            first_n=_HEALTH_FIRST_N,
+            random_n=_HEALTH_RANDOM_N,
+            scan_cap=_HEALTH_SCAN_CAP,
+        )
+        if not sample:
+            raise RuntimeError("Could not read any records from the file")
+
+        sample_text = _records_to_text(sample)
+        user_message = (
+            f"FILE: {filename}\n"
+            f"TOTAL RECORDS IN FILE: {record_count:,}\n"
+            f"SAMPLE SIZE: {len(sample)} records "
+            f"(first {min(_HEALTH_FIRST_N, record_count)} + random {max(0, len(sample) - _HEALTH_FIRST_N)})\n\n"
+            f"SAMPLE RECORDS:\n{sample_text}"
+        )
+
+        # 2. Call Claude
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        response = client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=4096,
+            system=_HEALTH_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+        )
+        raw_text = response.content[0].text.strip()
+
+        # 3. Parse
+        report = _parse_health_report(raw_text)
+        if report is None:
+            raise RuntimeError("Claude returned unparseable JSON")
+
+        # Annotate with run metadata so the UI can show sample size / when
+        report["sample_size"] = len(sample)
+        report["record_count"] = record_count
+        report["model"] = settings.anthropic_model
+
+        # 4. Persist
+        with Session(_engine) as db:
+            db.execute(
+                update(MARCFile)
+                .where(MARCFile.id == file_id)
+                .values(
+                    health_report=report,
+                    health_report_status="ready",
+                    health_report_error=None,
+                    health_report_generated_at=datetime.utcnow(),
+                )
+            )
+            db.commit()
+
+        log.complete(
+            f"Health report ready — {len(report.get('findings') or [])} findings for {filename}"
+        )
+        return {
+            "status": "ready",
+            "findings": len(report.get("findings") or []),
+        }
+
+    except Exception as exc:
+        # Persist error state so the UI can show a retry CTA.
+        try:
+            with Session(_engine) as db:
+                db.execute(
+                    update(MARCFile)
+                    .where(MARCFile.id == file_id)
+                    .values(
+                        health_report_status="error",
+                        health_report_error=str(exc)[:500],
+                    )
+                )
+                db.commit()
+        except Exception:
+            pass
+        log.error(f"Health report failed: {exc}")
+        return {"error": str(exc)}
+
+
+def _health_stratified_sample(
+    storage_path: str,
+    first_n: int,
+    random_n: int,
+    scan_cap: int,
+) -> list[pymarc.Record]:
+    """Collect the first N bib records plus up to random_n reservoir-sampled
+    records from the next scan_cap - first_n records. Records without a 245
+    are skipped (those are usually pure item-level rows)."""
+    first: list[pymarc.Record] = []
+    # Reservoir sampling so we get a uniformly-random subset without reading
+    # the whole file into memory.
+    reservoir: list[pymarc.Record] = []
+    seen = 0
+
+    try:
+        with open(storage_path, "rb") as fh:
+            reader = pymarc.MARCReader(
+                fh, to_unicode=True, force_utf8=True, utf8_handling="replace",
+            )
+            for record in reader:
+                if record is None:
+                    continue
+                if not record.get_fields("245"):
+                    # Skip records without a title — rarely useful for bib health
+                    continue
+                seen += 1
+                if len(first) < first_n:
+                    first.append(record)
+                elif seen <= scan_cap:
+                    if len(reservoir) < random_n:
+                        reservoir.append(record)
+                    else:
+                        # Reservoir sampling — replace at random
+                        j = random.randint(0, seen - 1)
+                        if j < random_n:
+                            reservoir[j] = record
+                else:
+                    break
+    except Exception:
+        pass
+
+    return first + reservoir
+
+
+def _parse_health_report(raw: str) -> dict | None:
+    """Extract the JSON object from Claude's response. Tolerant of markdown
+    fences and trailing prose."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        # Strip ```json\n...\n``` or ```\n...\n```
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+    # Trim anything outside the outermost {...} block
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        obj = json.loads(raw[start : end + 1])
+        if not isinstance(obj, dict):
+            return None
+        # Normalise findings list so the frontend can trust its shape
+        findings = obj.get("findings") or []
+        normalised: list[dict] = []
+        for f in findings:
+            if not isinstance(f, dict):
+                continue
+            normalised.append({
+                "severity": f.get("severity") or "info",
+                "category": f.get("category") or "other",
+                "title": f.get("title") or "(untitled)",
+                "detail": f.get("detail") or "",
+                "record_count_estimate": f.get("record_count_estimate"),
+                "tag_hint": f.get("tag_hint"),
+            })
+        # Sort action_required > warning > info
+        order = {"action_required": 0, "warning": 1, "info": 2}
+        normalised.sort(key=lambda x: order.get(x["severity"], 3))
+        obj["findings"] = normalised
+        return obj
+    except json.JSONDecodeError:
+        return None

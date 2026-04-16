@@ -36,13 +36,22 @@ _engine = create_engine(_sync_url, pool_pre_ping=True)
 
 
 @celery_app.task(bind=True, name="cerulean.tasks.ingest.ingest_marc_task")
-def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> dict:
+def ingest_marc_task(
+    self,
+    project_id: str,
+    file_id: str,
+    storage_path: str,
+    user_id: str | None = None,
+) -> dict:
     """Parse a MARC file, count records, and mark it indexed.
 
     Args:
         project_id: UUID string of the owning project.
         file_id: UUID string of the MARCFile row.
         storage_path: Absolute path to the uploaded .mrc file.
+        user_id: Optional UUID of the user who triggered the upload.
+            Forwarded to chained AI tasks so they can check per-user
+            feature flags (``ai.data_health_report`` etc.).
 
     Returns:
         dict with record_count and file_format detected.
@@ -51,6 +60,8 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
         Exception: Re-raised after writing an AuditEvent and marking the file error.
     """
     from cerulean.models import MARCFile
+    # Late import to avoid a circular import with analyze → preferences → models
+    from cerulean.tasks.analyze import data_health_report_task
 
     log = AuditLogger(project_id=project_id, stage=1, tag="[ingest]")
     log.info(f"Parsing {Path(storage_path).name}")
@@ -84,6 +95,15 @@ def ingest_marc_task(self, project_id: str, file_id: str, storage_path: str) -> 
         # Chain: kick off ILS detection and tag frequency automatically
         detect_ils_task.apply_async(args=[project_id, file_id, storage_path], queue="ingest")
         tag_frequency_task.apply_async(args=[project_id, file_id, storage_path], queue="analyze")
+
+        # Data Health Report — task is self-gating by user preference so we
+        # queue it unconditionally. No-op returns instantly when the user
+        # hasn't opted in (per cerulean_ai_spec.md §3 / §11.5).
+        data_health_report_task.apply_async(
+            args=[project_id, file_id],
+            kwargs={"user_id": user_id},
+            queue="analyze",
+        )
 
         # Index to Elasticsearch if configured (non-blocking)
         try:

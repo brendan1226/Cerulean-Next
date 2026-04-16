@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 
 import pymarc
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,7 @@ MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 @router.post("/{project_id}/files", response_model=MARCFileUploadResponse, status_code=201)
 async def upload_file(
     project_id: str,
+    request: Request,
     file: UploadFile,
     mode: str = Query("auto", description="Duplicate handling: auto|replace|add"),
     category: str = Query("marc", description="File category: marc|items|items_csv"),
@@ -146,6 +147,7 @@ async def upload_file(
     else:
         task = ingest_marc_task.apply_async(
             args=[project_id, file_id, storage_path],
+            kwargs={"user_id": getattr(request.state, "user_id", None)},
             queue="ingest",
         )
 
@@ -209,6 +211,7 @@ async def delete_file(
 async def recategorize_file(
     project_id: str,
     file_id: str,
+    request: Request,
     category: str = Query(..., description="New category: marc|items|items_csv"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -238,7 +241,9 @@ async def recategorize_file(
                 args=[project_id, file_id, marc_file.storage_path], queue="ingest")
     else:
         task = ingest_marc_task.apply_async(
-            args=[project_id, file_id, marc_file.storage_path], queue="ingest")
+            args=[project_id, file_id, marc_file.storage_path],
+            kwargs={"user_id": getattr(request.state, "user_id", None)},
+            queue="ingest")
 
     return {"file_id": file_id, "category": category, "task_id": task.id, "message": f"Re-categorized as {category}. Re-indexing started."}
 
@@ -434,3 +439,77 @@ def _read_record_at_index(storage_path: str, index: int) -> pymarc.Record | None
         logger.warning("Error reading record at index %d from %s", index, storage_path, exc_info=True)
         return None
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AI DATA HEALTH REPORT (per cerulean_ai_spec.md §3)
+# ══════════════════════════════════════════════════════════════════════════
+
+@router.get("/{project_id}/files/{file_id}/health-report")
+async def get_health_report(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current Data Health Report state for a file.
+
+    Always available (read-only) — the ``ai.data_health_report`` flag
+    controls whether new reports get generated, not whether existing
+    ones can be viewed.
+    """
+    marc_file = await _get_marc_file(project_id, file_id, db)
+    return {
+        "file_id": file_id,
+        "filename": marc_file.filename,
+        "status": marc_file.health_report_status,  # None | "running" | "ready" | "error"
+        "report": marc_file.health_report,
+        "error": marc_file.health_report_error,
+        "generated_at": marc_file.health_report_generated_at.isoformat()
+            if marc_file.health_report_generated_at else None,
+    }
+
+
+@router.post("/{project_id}/files/{file_id}/health-report/run")
+async def run_health_report(
+    project_id: str,
+    file_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger (or re-run) a Data Health Report for a file.
+
+    Gated by the ``ai.data_health_report`` user preference: callers without
+    the flag enabled get a 403 with ``feature_key`` so the UI can prompt
+    them to enable the feature instead of silently no-op'ing.
+    """
+    from cerulean.api.routers.preferences import _resolve_user
+    from cerulean.core.preferences import get_user_pref
+    from cerulean.tasks.analyze import data_health_report_task
+
+    # Enforce the feature flag at the router layer so the UI can show a
+    # helpful 403 on the trigger button. The task itself re-checks (defence
+    # in depth per cerulean_ai_spec.md §11.5).
+    user = await _resolve_user(request, db)
+    if not await get_user_pref(db, user.id, "ai.data_health_report"):
+        raise HTTPException(403, detail={
+            "error": "PREFERENCE_DISABLED",
+            "feature_key": "ai.data_health_report",
+            "message": "Enable 'Data Health Report' in My Preferences to use this.",
+        })
+
+    marc_file = await _get_marc_file(project_id, file_id, db)
+    if marc_file.status != "indexed":
+        raise HTTPException(409, detail={
+            "error": "FILE_NOT_READY",
+            "message": "Health report can only run after the file is indexed.",
+        })
+
+    task = data_health_report_task.apply_async(
+        args=[project_id, file_id],
+        kwargs={"user_id": user.id},
+        queue="analyze",
+    )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "health_report")
+
+    return {"file_id": file_id, "task_id": task.id, "status": "running"}
