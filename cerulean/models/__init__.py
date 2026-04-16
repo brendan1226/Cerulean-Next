@@ -660,6 +660,13 @@ class ReconciliationRule(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Phase 5 — AI Code Reconciliation. When an AI suggest task creates a
+    # rule it lands inactive with these fields set; the user approves by
+    # flipping active=True via the normal PATCH endpoint.
+    ai_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_confidence: Mapped[float | None] = mapped_column(Float)   # 0.0–1.0
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)        # Claude explanation
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 

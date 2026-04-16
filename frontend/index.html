@@ -8257,25 +8257,34 @@ async function renderRecRules() {
   el.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
   try {
     const rules = await window.api('GET', `/projects/${p.id}/reconcile/rules`);
+    // Phase 5 — AI Code Reconciliation button is shown only when the
+    // caller enabled ai.code_reconciliation AND the project has Koha
+    // config (we can't match against anything otherwise).
+    const aiEnabled = window.hasFeature && window.hasFeature('ai.code_reconciliation');
+    const hasKoha = !!(p && p.koha_url);
+    let aiBlock = '';
+    if (aiEnabled) {
+      aiBlock = `
+        <button class="btn btn-primary" onclick="recAiSuggest()" id="rec-ai-btn"
+                ${hasKoha ? '' : 'disabled title="Configure Koha URL and token on the project first"'}>
+          ✦ AI Suggest Matches
+        </button>`;
+    }
+    const suggestedCount = rules.filter(r => r.ai_suggested && !r.active).length;
     el.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <span class="text-secondary" style="font-size:12px">${rules.length} rule(s)</span>
-        <button class="btn btn-primary" onclick="recShowAddRule()">+ Add Rule</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+        <span class="text-secondary" style="font-size:12px">${rules.length} rule(s)${suggestedCount ? ` — <strong>${suggestedCount}</strong> AI suggestion${suggestedCount===1?'':'s'} awaiting review` : ''}</span>
+        <div style="display:flex;gap:8px">
+          ${aiBlock}
+          <button class="btn btn-primary" onclick="recShowAddRule()">+ Add Rule</button>
+        </div>
       </div>
+      <div id="rec-ai-status" style="margin-bottom:12px"></div>
       <div id="rec-rules-list">
         ${rules.length ? `<table class="data-table" style="font-size:12px;width:100%">
-          <thead><tr><th>Category</th><th>Operation</th><th>Source</th><th>Target</th><th>Active</th><th></th></tr></thead>
-          <tbody>${rules.map(r => `<tr>
-            <td><span class="badge badge-dim">${esc(r.vocab_category)}</span></td>
-            <td>${esc(r.operation)}</td>
-            <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc((r.source_values || []).join(', '))}</td>
-            <td class="mono">${esc(r.target_value || '—')}</td>
-            <td>${r.active ? '<span class="text-green">yes</span>' : '<span class="text-dim">no</span>'}</td>
-            <td style="text-align:right;white-space:nowrap">
-              <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="recDeleteRule('${esc(r.id)}')">Delete</button>
-            </td>
-          </tr>`).join('')}</tbody>
-        </table>` : '<div class="empty-state"><div class="empty-title">No rules defined</div><div class="empty-body">Add rules to map source values to Koha vocabulary.</div></div>'}
+          <thead><tr><th>Category</th><th>Operation</th><th>Source</th><th>Target</th><th>Confidence</th><th>Active</th><th></th></tr></thead>
+          <tbody>${rules.map(r => _recRenderRuleRow(r)).join('')}</tbody>
+        </table>` : '<div class="empty-state"><div class="empty-title">No rules defined</div><div class="empty-body">Add rules manually, or use ✦ AI Suggest Matches to have Claude propose them from your Koha authorized values.</div></div>'}
       </div>
       <div class="card" style="margin-top:16px">
         <div class="card-header"><span class="card-title">Koha Values (from API)</span></div>
@@ -8301,6 +8310,115 @@ async function renderRecRules() {
     el.innerHTML = '<span class="text-dim">Failed to load rules.</span>';
   }
 }
+
+// ── Phase 5 — AI Code Reconciliation ───────────────────────────────
+
+function _recConfidenceTier(r) {
+  if (!r.ai_suggested || r.ai_confidence == null) return null;
+  const c = r.ai_confidence;
+  if (c >= 0.85) return { label: 'High', cls: 'badge-green', title: `High confidence (${Math.round(c*100)}%)`, low: false };
+  if (c >= 0.60) return { label: 'Med',  cls: 'badge-cerulean', title: `Medium confidence (${Math.round(c*100)}%)`, low: false };
+  return { label: 'Low', cls: 'badge-amber', title: `Low confidence (${Math.round(c*100)}%) — review before approving`, low: true };
+}
+
+function _recRenderRuleRow(r) {
+  const tier = _recConfidenceTier(r);
+  const isUnreviewed = r.ai_suggested && !r.active;
+  const rowStyle = (tier && tier.low && isUnreviewed) ? 'background:rgba(245,158,11,0.05)' : '';
+  const srcDisplay = (r.source_values || []).join(', ');
+  const tgtDisplay = r.target_value || (isUnreviewed ? '<span class="text-dim">no match</span>' : '—');
+  let conf = '—';
+  if (tier) {
+    const reasoningTitle = r.ai_reasoning ? ` — ${r.ai_reasoning.replace(/"/g, '&quot;')}` : '';
+    conf = `<span class="badge ${tier.cls}" title="${tier.title}${reasoningTitle}" style="cursor:help">${tier.label}</span>`;
+    if (r.ai_reasoning) {
+      conf += `<span class="s2-ai-info" title="${esc(r.ai_reasoning)}" style="margin-left:4px;cursor:help">ⓘ</span>`;
+    }
+  }
+  const activeCell = r.active
+    ? '<span class="text-green">yes</span>'
+    : (isUnreviewed
+        ? `<button class="btn btn-sm btn-primary" style="font-size:10px;padding:2px 8px" onclick="recApproveRule('${esc(r.id)}')">Approve</button>`
+        : '<span class="text-dim">no</span>');
+  return `<tr style="${rowStyle}" data-rec-rule-row="${esc(r.id)}">
+    <td><span class="badge badge-dim">${esc(r.vocab_category)}</span>${r.ai_suggested ? ' <span class="badge badge-cerulean" style="font-size:10px" title="AI-generated suggestion">AI</span>' : ''}</td>
+    <td>${esc(r.operation)}</td>
+    <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(srcDisplay)}">${esc(srcDisplay)}</td>
+    <td class="mono">${tgtDisplay}</td>
+    <td>${conf}</td>
+    <td>${activeCell}</td>
+    <td style="text-align:right;white-space:nowrap">
+      <button class="btn btn-ghost btn-sm" style="font-size:10px" onclick="recDeleteRule('${esc(r.id)}')">Delete</button>
+    </td>
+  </tr>`;
+}
+
+async function recApproveRule(ruleId) {
+  const p = state.currentProject;
+  try {
+    await window.api('PATCH', `/projects/${p.id}/reconcile/rules/${ruleId}`, { active: true });
+    toast('Rule approved', 'success');
+    renderRecRules();
+  } catch (e) {
+    toast('Failed to approve rule: ' + (e.message || e), 'error');
+  }
+}
+
+async function recAiSuggest() {
+  const p = state.currentProject;
+  if (!p) return;
+  const statusEl = document.getElementById('rec-ai-status');
+  const btn = document.getElementById('rec-ai-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '✦ Analysing…'; }
+  if (statusEl) statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Asking Claude to match your source codes against Koha authorized values…</div>';
+
+  let resp;
+  try {
+    resp = await window.api('POST', `/projects/${p.id}/reconcile/ai-suggest`);
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">${esc((e && e.message) || 'AI suggest failed')}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = '✦ AI Suggest Matches'; }
+    toast('AI suggest failed: ' + ((e && e.message) || e), 'error');
+    return;
+  }
+
+  const taskId = resp.task_id;
+  let done = false;
+  let tries = 0;
+  while (!done && tries < 150) {      // ~5 min cap (2s × 150)
+    await new Promise(r => setTimeout(r, 2000));
+    tries++;
+    try {
+      const s = await window.api('GET', `/projects/${p.id}/reconcile/ai-suggest/status?task_id=${encodeURIComponent(taskId)}`);
+      if (s.state === 'PROGRESS' && s.progress) {
+        const { categories_done = 0, categories_total = 0, current_category = '' } = s.progress;
+        if (statusEl) statusEl.innerHTML = `<div class="loading-msg"><div class="spinner"></div>Analysing <strong>${esc(current_category)}</strong> — ${categories_done}/${categories_total} categor${categories_total===1?'y':'ies'}</div>`;
+      } else if (s.state === 'SUCCESS') {
+        done = true;
+        const r = s.result || {};
+        if (r.skipped) {
+          if (statusEl) statusEl.innerHTML = '<div class="text-dim" style="font-size:12px">AI reconciliation is disabled. Enable it in My Preferences.</div>';
+        } else if (r.error) {
+          if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">Could not complete: ${esc(r.error)}</div>`;
+        } else {
+          const summary = `Matched <strong>${r.total_matched || 0}</strong>, unmatched <strong>${r.total_unmatched || 0}</strong> across ${r.categories_analyzed || 0} categor${(r.categories_analyzed||0)===1?'y':'ies'}. Review below and click Approve to activate each rule.`;
+          if (statusEl) statusEl.innerHTML = `<div class="text-green" style="font-size:12px">${summary}</div>`;
+          toast('AI suggestions ready — review the Rules table', 'success');
+        }
+        renderRecRules();
+      } else if (s.state === 'FAILURE') {
+        done = true;
+        if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">Task failed: ${esc(s.error || 'unknown error')}</div>`;
+        toast('AI reconciliation failed', 'error');
+      }
+    } catch (e) {
+      // Transient polling error — ignore, will retry
+    }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '✦ AI Suggest Matches'; }
+}
+window.recAiSuggest = recAiSuggest;
+window.recApproveRule = recApproveRule;
 
 // Cache scan values per vocab category for the rule modal
 window._recScanCache = {};

@@ -49,6 +49,9 @@ class ReconcileRuleOut(BaseModel):
     delete_mode: str | None
     sort_order: int
     active: bool
+    ai_suggested: bool = False
+    ai_confidence: float | None = None
+    ai_reasoning: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -132,5 +135,21 @@ class ValidateResponse(BaseModel):
 class ReconcileReportOut(BaseModel):
     task_id: str | None
     state: str
+    result: dict | None = None
+    error: str | None = None
+
+
+# ── Phase 5: AI Code Reconciliation ──────────────────────────────────────
+
+
+class ReconcileAiSuggestResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+class ReconcileAiSuggestStatusResponse(BaseModel):
+    task_id: str | None
+    state: str
+    progress: dict | None = None
     result: dict | None = None
     error: str | None = None

@@ -2,6 +2,64 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.4.0] — 2026-04-16 — AI Phase 5: Code Reconciliation
+
+Fifth of six AI-assisted features from `cerulean_ai_spec.md`. Matching
+source item codes (branch, location, item type, collection, status) to
+Koha authorized values is one of the most time-consuming manual tasks
+in every migration; this hands Claude the first pass.
+
+### Feature flag
+
+`ai.code_reconciliation` — registered in `cerulean/core/features.py`,
+default off, per-user opt-in. Shown on the Rules tab of Step 7 as
+`✦ AI Suggest Matches` when enabled AND the project has a Koha URL +
+token configured.
+
+### Backend
+
+- **`POST /projects/{id}/reconcile/ai-suggest`** — gated by
+  `require_preference("ai.code_reconciliation")`. Returns 409 when Koha
+  config is missing or when no scan rows exist.
+- **`GET /projects/{id}/reconcile/ai-suggest/status?task_id=…`** —
+  stateless polling. Returns PROGRESS meta with
+  `{categories_done, categories_total, current_category}` for UI
+  progress rendering.
+- **`ai_reconciliation_suggest_task`** (Celery, `reconcile` queue) —
+  walks every vocab category that has scan rows, fetches the matching
+  Koha authorized values list via REST, asks Claude one category at a
+  time, and persists the response as inactive `ReconciliationRule`
+  rows. Re-running is idempotent:
+  * Active (engineer-approved) rules are never touched.
+  * Existing inactive ai_suggested rules refresh in place.
+  * Null-match ("no Koha value found") suggestions still seed a row so
+    the AI's reasoning surfaces in the UI instead of silently vanishing.
+- **Migration `x4r9s0t1u2v3_add_recrule_ai_fields.py`** adds
+  `ai_suggested BOOLEAN`, `ai_confidence FLOAT`, `ai_reasoning TEXT` to
+  `reconciliation_rules`.
+
+### Frontend (Step 7 → Rules tab)
+
+- `✦ AI Suggest Matches` button, hidden unless the feature flag is on.
+  Disabled with a tooltip when Koha is unconfigured.
+- Rules table gets a Confidence column and an "AI" badge on
+  ai_suggested rows.
+- Low-confidence rows get an amber row tint so the engineer visually
+  triages them before bulk-approving.
+- Hover tooltip on the confidence badge shows Claude's reasoning.
+- Inactive ai_suggested rows get an inline `Approve` button; approval
+  flips `active=true` via the existing PATCH endpoint and drops the row
+  into the pipeline — no separate approval flow.
+
+### Tests
+
+Added `tests/tasks/test_ai_code_reconciliation.py` — 48 unit tests
+covering the Koha endpoint mapper, Koha-value summarisation across the
+three API shapes (item_types, libraries, authorised_values), prompt
+shape, JSON parsing (good + malformed + hallucinated types), confidence
+clamping, and system-prompt invariants. Full suite now at **299
+passing**.
+
 ## [2.3.0] — 2026-04-16 — Patron fast path: skip Column Mapping + SQL export
 
 Two-part quality-of-life improvement for Step 8 (Patrons) aimed at

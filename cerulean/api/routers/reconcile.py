@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 import pymarc
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,10 +36,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cerulean.api.deps import audit_log, require_project
 from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
+from cerulean.core.preferences import require_preference
 from cerulean.models import ReconciliationRule, ReconciliationScanResult
 from cerulean.schemas.reconcile import (
     ConfirmSourceRequest,
     ConfirmSourceResponse,
+    ReconcileAiSuggestResponse,
+    ReconcileAiSuggestStatusResponse,
     ReconcileApplyResponse,
     ReconcileApplyStatusResponse,
     ReconcileReportOut,
@@ -55,6 +58,7 @@ from cerulean.schemas.reconcile import (
 from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.reconcile import (
     VOCAB_SUBFIELD_MAP,
+    ai_reconciliation_suggest_task,
     reconciliation_apply_task,
     reconciliation_scan_task,
 )
@@ -273,6 +277,109 @@ async def koha_vocab_list(
             "error": "KOHA_API_ERROR",
             "message": f"Koha API request failed: {exc}",
         })
+
+
+# ── 5b. AI Code Reconciliation (Phase 5) ────────────────────────────────
+# Dispatch + poll endpoints for ai.code_reconciliation. Gated by the
+# per-user preference — require_preference() returns 403 when the user
+# hasn't enabled the feature.
+
+
+@router.post(
+    "/{project_id}/reconcile/ai-suggest",
+    response_model=ReconcileAiSuggestResponse,
+    status_code=202,
+)
+async def start_ai_suggest(
+    project_id: str,
+    request: Request,
+    _user=Depends(require_preference("ai.code_reconciliation")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispatch the AI code reconciliation task for this project.
+
+    Preconditions:
+      * Scan has been run (scan rows exist).
+      * Koha URL and API token are configured on the project — we need
+        the authorized values list to match against.
+    """
+    project = await require_project(project_id, db)
+
+    if not project.koha_url or not project.koha_token_enc:
+        raise HTTPException(409, detail={
+            "error": "NO_KOHA_CONFIG",
+            "message": "Koha URL and token must be configured on the project.",
+        })
+
+    # Scan rows are required — AI can't suggest matches for codes we haven't seen
+    row = await db.execute(
+        select(ReconciliationScanResult.id)
+        .where(ReconciliationScanResult.project_id == project_id)
+        .limit(1)
+    )
+    if row.scalar_one_or_none() is None:
+        raise HTTPException(409, detail={
+            "error": "NO_SCAN_RESULTS",
+            "message": "Run a reconciliation scan first.",
+        })
+
+    user_id = getattr(request.state, "user_id", None)
+
+    await audit_log(
+        db, project_id, stage=8, level="info", tag="[ai-reconcile]",
+        message="AI code reconciliation dispatched",
+    )
+    await db.flush()
+
+    task = ai_reconciliation_suggest_task.apply_async(
+        args=[project_id],
+        kwargs={"user_id": user_id},
+        queue="reconcile",
+    )
+    from cerulean.api.routers.tasks import register_task
+    register_task(project_id, task.id, "ai_reconciliation")
+
+    return ReconcileAiSuggestResponse(
+        task_id=task.id,
+        message="AI reconciliation started.",
+    )
+
+
+@router.get(
+    "/{project_id}/reconcile/ai-suggest/status",
+    response_model=ReconcileAiSuggestStatusResponse,
+)
+async def ai_suggest_status(
+    project_id: str,
+    task_id: str = Query(..., description="Task ID returned by POST ai-suggest"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Poll a specific AI reconciliation task.
+
+    Unlike the scan/apply endpoints, the task id is not persisted on the
+    project row — the caller must pass it through from the dispatch
+    response. This keeps the flow stateless and lets the UI show progress
+    without a schema migration.
+    """
+    await require_project(project_id, db)
+
+    async_result = AsyncResult(task_id, app=celery_app)
+    state = async_result.state
+    progress = None
+    result_data = None
+    error = None
+
+    if state == "PROGRESS":
+        progress = async_result.info
+    elif state == "SUCCESS":
+        result_data = async_result.result
+    elif state == "FAILURE":
+        error = str(async_result.info)
+
+    return ReconcileAiSuggestStatusResponse(
+        task_id=task_id, state=state, progress=progress,
+        result=result_data, error=error,
+    )
 
 
 # ── 6-9. Rules CRUD ─────────────────────────────────────────────────────

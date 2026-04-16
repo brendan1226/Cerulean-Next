@@ -271,7 +271,7 @@ Every AI feature is opt-in per user via the preference system:
 | `ai.data_health_report` | 3 | Auto-analyzes ingested MARC files, produces plain-English briefing |
 | `ai.value_aware_mapping` | 2 | Adds a top-50 distinct-value index to the AI Suggest prompt |
 | `ai.transform_rule_gen` | 4 | Plain-English → sandboxed Python expression + mandatory before/after preview |
-| `ai.code_reconciliation` | 5 (TBD) | Koha authorized-value matching for branch / location / item-type codes |
+| `ai.code_reconciliation` | 5 | Koha authorized-value matching for branch / location / item-type codes |
 | `ai.fuzzy_patron_dedup` | 6 (TBD) | AI confidence scoring on probable patron duplicate clusters |
 | `ai.record_enrichment` | roadmap | Thin-record enrichment from ISBN / OCLC (not built) |
 
@@ -282,6 +282,34 @@ Every AI feature is opt-in per user via the preference system:
 3. **Gate the task** — call `pref_enabled_sync(session, user_id, key)` at the top of the Celery task; return a `{"skipped": True}` no-op when disabled. Tasks must be self-gating so routers can queue them without branching.
 4. **Pipe `user_id` through** — the triggering router pulls it from `request.state.user_id` and passes as a kwarg to `apply_async`. Tasks that chain into AI tasks forward `user_id` down.
 5. **Hide the UI when off** — frontend helper `window.hasFeature(key)` returns true only when the server-loaded `window.userPrefs.values[key]` is true. Wrap the UI block in `if (!window.hasFeature(...)) return;` or skip the DOM insertion entirely.
+
+### Code Reconciliation (Phase 5)
+
+Shipped. Dispatcher lives in `cerulean/api/routers/reconcile.py`:
+
+* `POST /projects/{id}/reconcile/ai-suggest` — gated by
+  `require_preference("ai.code_reconciliation")`; 409s when Koha is
+  unconfigured or no scan rows exist.
+* `GET  /projects/{id}/reconcile/ai-suggest/status?task_id=…` — stateless
+  polling; task_id is not persisted on the project row so no schema
+  migration was needed for tracking.
+
+The Celery task (`cerulean/tasks/reconcile.py :: ai_reconciliation_suggest_task`)
+walks every vocab category that has scan rows, fetches the matching Koha
+authorized values list, asks Claude one category at a time, and persists
+the response as **inactive** `ReconciliationRule` rows with
+`ai_suggested=True`, `ai_confidence` and `ai_reasoning` populated.
+Approving a suggestion via the existing `PATCH` endpoint flips
+`active=True` — the apply task needs no changes.
+
+Idempotency: active (engineer-approved) rules are never overwritten; an
+inactive ai_suggested rule for the same `(vocab_category, source_value)`
+is refreshed in place rather than duplicated, so repeated runs converge.
+
+Null-match handling: when Claude returns `koha_value=null` ("no match
+found") the task still seeds an inactive rule with empty target and the
+reasoning on it, so the engineer sees the AI commentary in the Rules tab
+rather than having the row silently disappear.
 
 ### Transform Rule Generation sandbox (Phase 4)
 
