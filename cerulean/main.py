@@ -59,8 +59,58 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warn(f"Plugin loader skipped: {exc}")
 
+    # Phase B: mount plugin API routers + auto-create db_store tables.
+    # Runs after plugin load so registries are populated. Failures are
+    # per-plugin and never take down the host.
+    try:
+        _mount_plugin_endpoints(app)
+    except Exception as exc:
+        logger.warn(f"Plugin endpoint mounting skipped: {exc}")
+    try:
+        await _create_plugin_db_tables()
+    except Exception as exc:
+        logger.warn(f"Plugin DB table creation skipped: {exc}")
+
     yield
     logger.info("Cerulean Next shutting down")
+
+
+def _mount_plugin_endpoints(app_instance):
+    """Mount API routers contributed by plugins at /api/v1/plugins/<slug>/<key>."""
+    from cerulean.core.plugins import all_api_endpoints
+    for ep in all_api_endpoints():
+        if ep.router is None:
+            continue
+        prefix = f"/api/v1/plugins/{ep.plugin_slug}/{ep.key}"
+        try:
+            app_instance.include_router(ep.router, prefix=prefix, tags=[f"plugin:{ep.plugin_slug}"])
+            logger.info(f"Mounted plugin endpoint: {prefix}")
+        except Exception as exc:
+            logger.warn(f"Failed to mount plugin endpoint {prefix}: {exc}")
+
+
+async def _create_plugin_db_tables():
+    """Auto-create tables for db_store extension points using the sync engine."""
+    from cerulean.core.plugins import all_db_stores
+    stores = all_db_stores()
+    if not stores:
+        return
+    from cerulean.core.config import get_settings
+    from sqlalchemy import create_engine
+    s = get_settings()
+    sync_url = s.database_url.replace("+asyncpg", "+psycopg2")
+    engine = create_engine(sync_url, pool_pre_ping=True)
+    for store in stores:
+        if store.model_class is None:
+            continue
+        try:
+            table_meta = getattr(store.model_class, "metadata", None)
+            if table_meta is not None:
+                table_meta.create_all(engine, checkfirst=True)
+                logger.info(f"Plugin DB table ensured: {store.plugin_slug}/{store.key}")
+        except Exception as exc:
+            logger.warn(f"Plugin DB table creation failed for {store.plugin_slug}/{store.key}: {exc}")
+    engine.dispose()
 
 
 async def _persist_plugin_load_errors(failures):

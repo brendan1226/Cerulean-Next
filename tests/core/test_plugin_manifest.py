@@ -220,3 +220,58 @@ class TestMalformedYaml:
     def test_rejects_empty_string(self):
         with pytest.raises(ManifestError):
             parse_manifest("")
+
+
+# ── Phase B extension types ────────────────────────────────────────
+
+class TestPhaseBExtensionTypes:
+    def test_celery_task_python_accepted(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "celery_task", "key": "my-task", "label": "My Task"},
+        ]))
+        assert m.extension_points[0].type == "celery_task"
+
+    def test_celery_task_subprocess_accepted(self):
+        m = parse_manifest(_subprocess_manifest(extension_points=[
+            {"type": "celery_task", "key": "my-task", "label": "My Task"},
+        ]))
+        assert m.extension_points[0].type == "celery_task"
+
+    def test_api_endpoint_python_accepted(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "api_endpoint", "key": "routes", "label": "Routes"},
+        ]))
+        assert m.extension_points[0].type == "api_endpoint"
+
+    def test_api_endpoint_subprocess_rejected(self):
+        with pytest.raises(ManifestError, match="requires runtime 'python'"):
+            parse_manifest(_subprocess_manifest(extension_points=[
+                {"type": "api_endpoint", "key": "routes", "label": "Routes"},
+            ]))
+
+    def test_db_store_python_accepted(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "db_store", "key": "data", "label": "Data"},
+        ]))
+        assert m.extension_points[0].type == "db_store"
+
+    def test_db_store_subprocess_rejected(self):
+        with pytest.raises(ManifestError, match="requires runtime 'python'"):
+            parse_manifest(_subprocess_manifest(extension_points=[
+                {"type": "db_store", "key": "data", "label": "Data"},
+            ]))
+
+    def test_celery_task_metadata_passthrough(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "celery_task", "key": "job", "label": "Job",
+             "metadata": {"queue": "analyze"}},
+        ]))
+        assert m.extension_points[0].metadata == {"queue": "analyze"}
+
+    def test_mixed_phase_a_and_b(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "transform", "key": "up", "label": "Upper"},
+            {"type": "celery_task", "key": "job", "label": "Job"},
+            {"type": "api_endpoint", "key": "api", "label": "API"},
+        ]))
+        assert len(m.extension_points) == 3

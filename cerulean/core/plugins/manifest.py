@@ -29,7 +29,13 @@ SUPPORTED_RUNTIMES = {RUNTIME_PYTHON, RUNTIME_SUBPROCESS}
 
 EXT_TRANSFORM = "transform"
 EXT_QUALITY_CHECK = "quality_check"
-SUPPORTED_EXTENSIONS = {EXT_TRANSFORM, EXT_QUALITY_CHECK}
+EXT_CELERY_TASK = "celery_task"
+EXT_API_ENDPOINT = "api_endpoint"
+EXT_DB_STORE = "db_store"
+SUPPORTED_EXTENSIONS = {
+    EXT_TRANSFORM, EXT_QUALITY_CHECK,
+    EXT_CELERY_TASK, EXT_API_ENDPOINT, EXT_DB_STORE,
+}
 
 SUPPORTED_PERMISSIONS = {
     "files:read",
@@ -51,15 +57,18 @@ class ManifestError(Exception):
 class ExtensionPoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["transform", "quality_check"]
-    # Both kinds use ``key`` (transform preset key, check id). We keep the
-    # same field name so the registry lookup is uniform.
+    type: Literal[
+        "transform", "quality_check",
+        "celery_task", "api_endpoint", "db_store",
+    ]
     key: str = Field(min_length=1, max_length=100)
     label: str = Field(min_length=1, max_length=200)
     description: str | None = None
     # Python runtime: dotted path to the callable, e.g. ``mash.transforms:mash``
     # Subprocess runtime: optional, overrides the manifest-level entry/args
     handler: str | None = None
+    # Phase B metadata — queue hint for celery_task, etc.
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PluginManifest(BaseModel):
@@ -174,6 +183,18 @@ class PluginManifest(BaseModel):
                     f"duplicate extension point {ep.type}:{ep.key!r} in manifest"
                 )
             seen.add(k)
+            # Phase B: api_endpoint is Python-only (needs APIRouter object)
+            if ep.type == EXT_API_ENDPOINT and self.runtime != RUNTIME_PYTHON:
+                raise ValueError(
+                    f"extension point {ep.type}:{ep.key!r} requires "
+                    f"runtime 'python' (got {self.runtime!r})"
+                )
+            # Phase B: db_store is Python-only (needs SQLAlchemy model)
+            if ep.type == EXT_DB_STORE and self.runtime != RUNTIME_PYTHON:
+                raise ValueError(
+                    f"extension point {ep.type}:{ep.key!r} requires "
+                    f"runtime 'python' (got {self.runtime!r})"
+                )
         return self
 
 

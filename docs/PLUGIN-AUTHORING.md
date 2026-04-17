@@ -296,3 +296,121 @@ Plugins are **trusted code**. Cerulean's threat model for Phase A is:
 
 Before accepting a third-party plugin, **read the source and the
 manifest permissions**. Same discipline you'd apply to a Koha `.kpz`.
+
+---
+
+## Phase B extension points
+
+Phase B adds three extension-point types alongside the Phase A types
+(`transform`, `quality_check`).
+
+### `celery_task` — background jobs
+
+Register a Celery task callable. Supported by both Python and subprocess
+runtimes.
+
+**Manifest:**
+
+```yaml
+extension_points:
+  - type: celery_task
+    key: reindex
+    label: Reindex Records
+    metadata:
+      queue: default    # optional queue hint
+```
+
+**Python `setup()`:**
+
+```python
+from cerulean.tasks.celery_app import celery_app
+
+def setup(ctx):
+    @celery_app.task(bind=True, name=f"cerulean.plugins.{ctx.slug}.reindex")
+    def reindex(self, project_id, **kwargs):
+        # Your async work here
+        return {"status": "done", "records": 42}
+
+    ctx.register_celery_task("reindex", reindex, queue="default")
+```
+
+**Subprocess:** the entry binary receives a `config.json` with `{"key": "reindex", ...}` and writes a JSON result to `output.json`.
+
+### `api_endpoint` — custom API routes (Python only)
+
+Register a FastAPI `APIRouter`. Mounted at `/api/v1/plugins/<slug>/<key>`.
+
+**Manifest:**
+
+```yaml
+extension_points:
+  - type: api_endpoint
+    key: stats
+    label: Custom Stats
+```
+
+**Python `setup()`:**
+
+```python
+from fastapi import APIRouter
+
+def setup(ctx):
+    router = APIRouter()
+
+    @router.get("/summary")
+    async def summary():
+        return {"plugin": ctx.slug, "message": "hello from plugin"}
+
+    ctx.register_api_endpoint("stats", router)
+```
+
+After restart, the endpoint is at `GET /api/v1/plugins/<slug>/stats/summary`.
+
+### `db_store` — plugin-owned database tables (Python only)
+
+Register a SQLAlchemy declarative model. The table is auto-created at
+startup via `create_all(checkfirst=True)`. Table name **MUST** use a
+`cpz_<slug>_` prefix (hyphens in slug become underscores).
+
+**Manifest:**
+
+```yaml
+extension_points:
+  - type: db_store
+    key: cache
+    label: Plugin Cache
+```
+
+**Python `setup()`:**
+
+```python
+from sqlalchemy import Column, String, Integer, DateTime, func
+from sqlalchemy.orm import DeclarativeBase
+
+class PluginBase(DeclarativeBase):
+    pass
+
+class CacheEntry(PluginBase):
+    __tablename__ = "cpz_my_plugin_cache"
+    id = Column(String(36), primary_key=True)
+    key = Column(String(200), nullable=False)
+    value = Column(String(2000))
+    created_at = Column(DateTime, server_default=func.now())
+
+def setup(ctx):
+    ctx.register_db_store("cache", CacheEntry)
+```
+
+To query from a Celery task, use the standard sync engine pattern:
+
+```python
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+from cerulean.core.config import get_settings
+
+settings = get_settings()
+engine = create_engine(settings.database_url.replace("+asyncpg", "+psycopg2"))
+
+with Session(engine) as db:
+    rows = db.execute(select(CacheEntry)).scalars().all()
+```

@@ -237,7 +237,34 @@ examples/plugins/shout-perl/               # reference subprocess plugin
 - Every registration + registration-failure is visible on the **Cerulean
   Plugins** page.
 
-### Adding a new extension-point type (e.g. `push_target` in Phase B)
+### Phase B extension points (shipped)
+
+Three additional extension-point types on top of Phase A's `transform`
+and `quality_check`:
+
+| Type | Runtime | What it does |
+|------|---------|-------------|
+| `celery_task` | Python + subprocess | Plugin registers a Celery task callable; dispatched via `all_celery_tasks()` registry |
+| `api_endpoint` | Python only | Plugin registers a FastAPI `APIRouter`; mounted at `/api/v1/plugins/<slug>/<key>` during lifespan |
+| `db_store` | Python only | Plugin registers a SQLAlchemy model; table auto-created via `create_all` at startup. Table name MUST use `cpz_<slug>_` prefix |
+
+**Manifest changes**: `ExtensionPoint.type` now accepts all five types.
+`api_endpoint` and `db_store` are Python-only; manifests that declare
+them with `runtime: subprocess` are rejected at parse time.
+
+**Context API**:
+- `ctx.register_celery_task(key, callable, queue="default")`
+- `ctx.register_api_endpoint(key, router)`
+- `ctx.register_db_store(key, model_class)` — enforces `cpz_<slug>_` table prefix
+
+**Web lifespan** (`main.py`): after plugin load, `_mount_plugin_endpoints`
+includes plugin routers and `_create_plugin_db_tables` ensures tables exist.
+
+**Worker**: plugin tasks are registered in-process via `setup(ctx)`;
+the existing `worker_process_init` hook reloads plugins so tasks are
+available on every worker.
+
+### Adding a new extension-point type
 1. Add the string to `SUPPORTED_EXTENSIONS` in `manifest.py`.
 2. Add a new registry dict + register/unregister/get/all helpers in
    `extension_points.py`, plus a matching `register_<type>()` on

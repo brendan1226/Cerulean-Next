@@ -32,12 +32,15 @@ import uuid
 from pathlib import Path
 
 from cerulean.core.plugins.extension_points import (
+    PluginCeleryTask,
     PluginQualityCheck,
     PluginTransform,
+    register_celery_task,
     register_quality_check,
     register_transform,
 )
 from cerulean.core.plugins.manifest import (
+    EXT_CELERY_TASK,
     EXT_QUALITY_CHECK,
     EXT_TRANSFORM,
     PluginManifest,
@@ -83,6 +86,14 @@ def register_subprocess_plugin(plugin_path: Path, manifest: PluginManifest) -> N
                 runtime=manifest.runtime,
                 callable=_make_quality_check_thunk(plugin_root, manifest, ep.key),
             ))
+        elif ep.type == EXT_CELERY_TASK:
+            register_celery_task(PluginCeleryTask(
+                plugin_slug=manifest.slug, key=ep.key,
+                label=ep.label, description=ep.description,
+                runtime=manifest.runtime,
+                callable=_make_celery_task_thunk(plugin_root, manifest, ep.key),
+                metadata={"queue": (ep.metadata or {}).get("queue", "default")},
+            ))
 
 
 def _make_transform_thunk(
@@ -106,6 +117,18 @@ def _make_quality_check_thunk(
         return run_subprocess_quality_check(
             plugin_root, manifest, check_id, record_bytes, config or {},
         )
+    return thunk
+
+
+def _make_celery_task_thunk(
+    plugin_root: Path,
+    manifest: PluginManifest,
+    key: str,
+):
+    """Closure that invokes the subprocess plugin as a Celery-compatible
+    callable. Input is a JSON config dict, output is a JSON result dict."""
+    def thunk(config: dict | None = None) -> dict:
+        return run_subprocess_task(plugin_root, manifest, key, config or {})
     return thunk
 
 
@@ -207,6 +230,63 @@ def run_subprocess_quality_check(
         except Exception:
             pass
         return []
+
+
+def run_subprocess_task(
+    plugin_root: Path,
+    manifest: PluginManifest,
+    key: str,
+    config: dict,
+) -> dict:
+    """Run a plugin-contributed task. Input/output are JSON dicts.
+
+    The executable receives a config.json with the task key + caller-
+    supplied config. It writes a JSON result to output.json. Timeouts
+    and failures return an error dict rather than raising so the Celery
+    task can surface the problem cleanly.
+    """
+    with tempfile.TemporaryDirectory(prefix=f"cerulean-plugin-{manifest.slug}-") as tmp:
+        tmp_dir = Path(tmp)
+        input_path = tmp_dir / "input.json"
+        output_path = tmp_dir / "output.json"
+        config_path = tmp_dir / "config.json"
+
+        input_path.write_text("{}", encoding="utf-8")
+        config_path.write_text(
+            json.dumps({"key": key, **config}), encoding="utf-8",
+        )
+        output_path.write_text("{}", encoding="utf-8")
+
+        cmd = _build_command(plugin_root, manifest, input_path, output_path, config_path)
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(plugin_root),
+                capture_output=True,
+                text=True,
+                timeout=manifest.timeout_sec,
+                env=_minimal_env(),
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {"error": "timeout", "timeout_sec": manifest.timeout_sec}
+        except FileNotFoundError:
+            return {"error": "entry_not_found"}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+        if proc.returncode != 0:
+            return {
+                "error": "nonzero_exit",
+                "returncode": proc.returncode,
+                "stderr": (proc.stderr or "")[:2000],
+            }
+
+        try:
+            parsed = json.loads(output_path.read_text(encoding="utf-8"))
+            return parsed if isinstance(parsed, dict) else {"result": parsed}
+        except Exception:
+            return {"error": "invalid_output"}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

@@ -3,15 +3,30 @@
 import pytest
 
 from cerulean.core.plugins import (
+    PluginAPIEndpoint,
+    PluginCeleryTask,
+    PluginDBStore,
     PluginQualityCheck,
     PluginTransform,
+    all_api_endpoints,
+    all_celery_tasks,
+    all_db_stores,
     all_quality_checks,
     all_transforms,
     clear_all,
+    get_api_endpoint,
+    get_celery_task,
+    get_db_store,
     get_quality_check,
     get_transform,
+    register_api_endpoint,
+    register_celery_task,
+    register_db_store,
     register_quality_check,
     register_transform,
+    unregister_plugin_api_endpoints,
+    unregister_plugin_celery_tasks,
+    unregister_plugin_db_stores,
     unregister_plugin_quality_checks,
     unregister_plugin_transforms,
 )
@@ -115,3 +130,109 @@ class TestQualityCheckRegistry:
         removed = unregister_plugin_quality_checks("a")
         assert removed == 1
         assert get_quality_check("b", "y") is not None
+
+
+# ── Phase B: Celery tasks ─────────────────────────────────────────
+
+class TestCeleryTaskRegistry:
+    def test_register_then_lookup(self):
+        entry = PluginCeleryTask(
+            plugin_slug="my-plugin", key="my-task",
+            label="My Task", description=None, runtime="python",
+            callable=lambda c: {},
+        )
+        register_celery_task(entry)
+        assert get_celery_task("my-plugin", "my-task") is entry
+        assert get_celery_task("my-plugin", "other") is None
+
+    def test_all_celery_tasks(self):
+        register_celery_task(PluginCeleryTask(
+            plugin_slug="a", key="x", label="X", description=None, runtime="python",
+        ))
+        register_celery_task(PluginCeleryTask(
+            plugin_slug="b", key="y", label="Y", description=None, runtime="python",
+        ))
+        assert len(all_celery_tasks()) == 2
+
+    def test_unregister_scoped(self):
+        register_celery_task(PluginCeleryTask(
+            plugin_slug="a", key="x", label="X", description=None, runtime="python",
+        ))
+        register_celery_task(PluginCeleryTask(
+            plugin_slug="b", key="y", label="Y", description=None, runtime="python",
+        ))
+        assert unregister_plugin_celery_tasks("a") == 1
+        assert len(all_celery_tasks()) == 1
+        assert get_celery_task("b", "y") is not None
+
+
+# ── Phase B: API endpoints ────────────────────────────────────────
+
+class TestAPIEndpointRegistry:
+    def test_register_then_lookup(self):
+        entry = PluginAPIEndpoint(
+            plugin_slug="my-plugin", key="routes",
+            label="Routes", description=None, runtime="python",
+            router="fake-router-obj",
+        )
+        register_api_endpoint(entry)
+        assert get_api_endpoint("my-plugin", "routes") is entry
+        assert get_api_endpoint("my-plugin", "other") is None
+
+    def test_unregister_scoped(self):
+        register_api_endpoint(PluginAPIEndpoint(
+            plugin_slug="a", key="x", label="X", description=None, runtime="python",
+        ))
+        register_api_endpoint(PluginAPIEndpoint(
+            plugin_slug="b", key="y", label="Y", description=None, runtime="python",
+        ))
+        assert unregister_plugin_api_endpoints("a") == 1
+        assert len(all_api_endpoints()) == 1
+
+
+# ── Phase B: DB stores ────────────────────────────────────────────
+
+class TestDBStoreRegistry:
+    def test_register_then_lookup(self):
+        entry = PluginDBStore(
+            plugin_slug="my-plugin", key="data",
+            label="Data", description=None, model_class="FakeModel",
+        )
+        register_db_store(entry)
+        assert get_db_store("my-plugin", "data") is entry
+        assert get_db_store("my-plugin", "other") is None
+
+    def test_unregister_scoped(self):
+        register_db_store(PluginDBStore(
+            plugin_slug="a", key="x", label="X", description=None,
+        ))
+        register_db_store(PluginDBStore(
+            plugin_slug="b", key="y", label="Y", description=None,
+        ))
+        assert unregister_plugin_db_stores("a") == 1
+        assert len(all_db_stores()) == 1
+
+
+# ── Phase B: clear_all includes new registries ────────────────────
+
+class TestClearAllPhaseB:
+    def test_clear_all_wipes_all_five_registries(self):
+        register_transform(PluginTransform(plugin_slug="a", key="x",
+                                           label="X", description=None, runtime="python"))
+        register_quality_check(PluginQualityCheck(plugin_slug="a", check_id="y",
+                                                   label="Y", description=None, runtime="python"))
+        register_celery_task(PluginCeleryTask(
+            plugin_slug="a", key="t", label="T", description=None, runtime="python",
+        ))
+        register_api_endpoint(PluginAPIEndpoint(
+            plugin_slug="a", key="e", label="E", description=None, runtime="python",
+        ))
+        register_db_store(PluginDBStore(
+            plugin_slug="a", key="d", label="D", description=None,
+        ))
+        clear_all()
+        assert all_transforms() == []
+        assert all_quality_checks() == []
+        assert all_celery_tasks() == []
+        assert all_api_endpoints() == []
+        assert all_db_stores() == []

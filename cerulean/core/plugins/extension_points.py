@@ -116,6 +116,122 @@ def unregister_plugin_quality_checks(plugin_slug: str) -> int:
     return len(keys)
 
 
+# ─── Phase B: Celery-task registry ───────────────────────────────────
+
+@dataclass
+class PluginCeleryTask:
+    """A Celery task hook contributed by a plugin."""
+    plugin_slug: str
+    key: str
+    label: str
+    description: str | None
+    runtime: str
+    callable: Callable | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_CELERY_TASK_REGISTRY: dict[str, PluginCeleryTask] = {}
+
+
+def register_celery_task(entry: PluginCeleryTask) -> None:
+    _CELERY_TASK_REGISTRY[_compose_key(entry.plugin_slug, entry.key)] = entry
+
+
+def get_celery_task(plugin_slug: str, key: str) -> PluginCeleryTask | None:
+    return _CELERY_TASK_REGISTRY.get(_compose_key(plugin_slug, key))
+
+
+def all_celery_tasks() -> list[PluginCeleryTask]:
+    return list(_CELERY_TASK_REGISTRY.values())
+
+
+def unregister_plugin_celery_tasks(plugin_slug: str) -> int:
+    prefix = f"{plugin_slug}:"
+    keys = [k for k in _CELERY_TASK_REGISTRY if k.startswith(prefix)]
+    for k in keys:
+        _CELERY_TASK_REGISTRY.pop(k, None)
+    return len(keys)
+
+
+# ─── Phase B: API-endpoint registry ─────────────────────────────────
+
+@dataclass
+class PluginAPIEndpoint:
+    """An API router contributed by a plugin (Python-only)."""
+    plugin_slug: str
+    key: str
+    label: str
+    description: str | None
+    runtime: str
+    router: Any | None = None       # FastAPI APIRouter
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_API_ENDPOINT_REGISTRY: dict[str, PluginAPIEndpoint] = {}
+
+
+def register_api_endpoint(entry: PluginAPIEndpoint) -> None:
+    _API_ENDPOINT_REGISTRY[_compose_key(entry.plugin_slug, entry.key)] = entry
+
+
+def get_api_endpoint(plugin_slug: str, key: str) -> PluginAPIEndpoint | None:
+    return _API_ENDPOINT_REGISTRY.get(_compose_key(plugin_slug, key))
+
+
+def all_api_endpoints() -> list[PluginAPIEndpoint]:
+    return list(_API_ENDPOINT_REGISTRY.values())
+
+
+def unregister_plugin_api_endpoints(plugin_slug: str) -> int:
+    prefix = f"{plugin_slug}:"
+    keys = [k for k in _API_ENDPOINT_REGISTRY if k.startswith(prefix)]
+    for k in keys:
+        _API_ENDPOINT_REGISTRY.pop(k, None)
+    return len(keys)
+
+
+# ─── Phase B: DB-store registry ──────────────────────────────────────
+
+@dataclass
+class PluginDBStore:
+    """A DB model registered by a plugin (Python-only).
+
+    The plugin provides a SQLAlchemy declarative class; Cerulean calls
+    ``model_class.metadata.create_all(engine)`` at load time to ensure
+    the table exists. Plugin tables MUST use a ``cpz_<slug>_`` prefix
+    in ``__tablename__`` to avoid collisions with core tables.
+    """
+    plugin_slug: str
+    key: str
+    label: str
+    description: str | None
+    model_class: Any | None = None   # SQLAlchemy declarative model
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_DB_STORE_REGISTRY: dict[str, PluginDBStore] = {}
+
+
+def register_db_store(entry: PluginDBStore) -> None:
+    _DB_STORE_REGISTRY[_compose_key(entry.plugin_slug, entry.key)] = entry
+
+
+def get_db_store(plugin_slug: str, key: str) -> PluginDBStore | None:
+    return _DB_STORE_REGISTRY.get(_compose_key(plugin_slug, key))
+
+
+def all_db_stores() -> list[PluginDBStore]:
+    return list(_DB_STORE_REGISTRY.values())
+
+
+def unregister_plugin_db_stores(plugin_slug: str) -> int:
+    prefix = f"{plugin_slug}:"
+    keys = [k for k in _DB_STORE_REGISTRY if k.startswith(prefix)]
+    for k in keys:
+        _DB_STORE_REGISTRY.pop(k, None)
+    return len(keys)
+
+
 # ─── Reset (mostly for tests) ────────────────────────────────────────
 
 def clear_all() -> None:
@@ -123,3 +239,6 @@ def clear_all() -> None:
     when reloading the whole plugin set."""
     _TRANSFORM_REGISTRY.clear()
     _QUALITY_CHECK_REGISTRY.clear()
+    _CELERY_TASK_REGISTRY.clear()
+    _API_ENDPOINT_REGISTRY.clear()
+    _DB_STORE_REGISTRY.clear()

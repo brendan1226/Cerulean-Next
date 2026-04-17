@@ -2,6 +2,47 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.6.0] — 2026-04-16 — Plugin System Phase B: Tasks, Endpoints, DB Store
+
+Three new extension-point types for the Cerulean Plugin System:
+
+### `celery_task`
+Plugins can register Celery task callables (Python or subprocess).
+Subprocess tasks are wrapped in a thunk that runs the entry binary with
+config.json input and reads a JSON result from output.json.
+
+### `api_endpoint` (Python only)
+Plugins provide a FastAPI `APIRouter`; mounted at
+`/api/v1/plugins/<slug>/<key>` during the web lifespan startup.
+
+### `db_store` (Python only)
+Plugins provide a SQLAlchemy declarative model; tables auto-created via
+`create_all(checkfirst=True)`. Enforced `cpz_<slug>_` table name prefix.
+
+### Validation
+- `api_endpoint` and `db_store` require `runtime: python` — rejected at
+  manifest parse time for subprocess plugins.
+- `db_store` table name prefix enforced in `PluginContext.register_db_store`.
+
+### Infrastructure
+- `extension_points.py`: 3 new registries + dataclasses + CRUD helpers,
+  `clear_all()` resets all 5 registries.
+- `manifest.py`: `ExtensionPoint.type` Literal expanded, `metadata` dict
+  added (queue hints, etc.).
+- `runtime_subprocess.py`: `_make_celery_task_thunk` + `run_subprocess_task`.
+- `main.py`: `_mount_plugin_endpoints` + `_create_plugin_db_tables` in
+  lifespan, after plugin load.
+- `context.py`: 3 new registration methods.
+- `__init__.py`: all new types exported.
+
+### Tests
+16 new tests across manifest (9) and registry (7). Full suite 363 passing.
+
+### Docs
+`docs/PLUGIN-AUTHORING.md` updated with Phase B section — manifest
+examples, Python setup() patterns, and DB access patterns for all
+three new types.
+
 ## [2.5.0] — 2026-04-16 — AI Phase 6: Fuzzy Patron Deduplication
 
 Sixth and final near-term AI feature from `cerulean_ai_spec.md`. Patron
