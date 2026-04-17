@@ -308,7 +308,7 @@ def _build_worker_list(inspect_data: dict) -> list[dict]:
             "status": "online" if reply.get("ok") == "pong" else "degraded",
             "active_tasks": len(act),
             "pool_size": s.get("pool", {}).get("max-concurrency"),
-            "uptime_sec": int(time.time() - s.get("clock", time.time())),
+            "uptime_sec": _safe_uptime(s),
             "total_tasks_processed": s.get("total", {}).get("cerulean.tasks", 0),
             "prefetch_count": s.get("prefetch_count"),
         })
@@ -334,6 +334,19 @@ def _build_active_task_list(inspect_data: dict) -> list[dict]:
                 "duration_sec": round(duration, 1) if duration else None,
             })
     return tasks
+
+
+def _safe_uptime(stats: dict) -> int | None:
+    """Extract uptime from worker stats. The 'clock' field format varies
+    across Celery versions — it can be a float timestamp, a string, or
+    missing entirely."""
+    try:
+        clock = stats.get("clock")
+        if clock is None:
+            return None
+        return max(0, int(time.time() - float(clock)))
+    except (TypeError, ValueError):
+        return None
 
 
 def _get_queue_depths() -> list[dict]:
