@@ -151,7 +151,7 @@ FEATURES: list[Feature] = [
         title="Record Enrichment",
         description=(
             "Flag thin bibliographic records and fetch enrichment data from "
-            "Open Library, Google Books, or WorldCat. AI synthesizes the "
+            "Open Library or Google Books. AI synthesizes the "
             "results into MARC fields presented as suggestions."
         ),
         category=CATEGORY_AI,

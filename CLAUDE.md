@@ -321,7 +321,7 @@ Every AI feature is opt-in per user via the preference system:
 | `ai.transform_rule_gen` | 4 | Plain-English → sandboxed Python expression + mandatory before/after preview |
 | `ai.code_reconciliation` | 5 | Koha authorized-value matching for branch / location / item-type codes |
 | `ai.fuzzy_patron_dedup` | 6 | AI confidence scoring on probable patron duplicate clusters |
-| `ai.record_enrichment` | roadmap | Thin-record enrichment from ISBN / OCLC (not built) |
+| `ai.record_enrichment` | roadmap | Thin-record enrichment from ISBN via Open Library / Google Books (not built) |
 
 ### Adding a new AI feature
 
