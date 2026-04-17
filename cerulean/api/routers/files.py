@@ -364,6 +364,31 @@ async def export_file_as_mrk(
     )
 
 
+@router.get("/{project_id}/files/{file_id}/download-mrc")
+async def download_file_as_mrc(
+    project_id: str,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the raw binary MARC (.mrc) file."""
+    from fastapi.responses import FileResponse
+
+    marc_file = await _get_marc_file(project_id, file_id, db)
+    source = Path(marc_file.storage_path)
+    if not source.is_file():
+        raise HTTPException(404, detail="Source file not found on disk.")
+
+    safe_name = marc_file.filename.encode("ascii", "ignore").decode("ascii") or "export.mrc"
+    if not safe_name.endswith(".mrc"):
+        safe_name += ".mrc"
+
+    return FileResponse(
+        path=str(source),
+        media_type="application/marc",
+        filename=safe_name,
+    )
+
+
 # ── Mark Ready to Load ────────────────────────────────────────────────
 
 

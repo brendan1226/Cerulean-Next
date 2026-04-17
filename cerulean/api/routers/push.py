@@ -1506,6 +1506,13 @@ def _list_push_files(project_id: str) -> list[dict]:
             if transformed:
                 best_marc = transformed[0]
 
+    if not best_marc:
+        # Last resort: any .mrc file in the project directory (original uploads)
+        all_mrc = sorted(project_dir.glob("*.mrc"))
+        if all_mrc:
+            best_marc = all_mrc[0]
+            source_labels[best_marc.name] = "Uploaded"
+
     if best_marc:
         stat = best_marc.stat()
         files.append({

@@ -2278,7 +2278,7 @@ async function loadFiles() {
             <td>${statusBadge(f.status)}</td>
             <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
             <td style="white-space:nowrap">
-              ${f.status === 'indexed' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/files/${esc(f.id)}/export-mrk','${esc(f.filename.replace('.mrc','.mrk'))}')" title="Download as MRK (MarcEdit format)">↓ MRK</button>` : ''}
+              ${f.status === 'indexed' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/files/${esc(f.id)}/download-mrc','${esc(f.filename)}')" title="Download binary MARC file">↓ MRC</button><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" onclick="authDownload('/projects/${esc(p.id)}/files/${esc(f.id)}/export-mrk','${esc(f.filename.replace('.mrc','.mrk'))}')" title="Download as MRK (MarcEdit format)">↓ MRK</button>` : ''}
               ${f.status === 'not_marc' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--amber)" onclick="recategorizeFile('${esc(f.id)}','items')" title="Re-categorize as items file">→ Items</button>` : ''}
               <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button>
             </td>
@@ -3014,9 +3014,9 @@ async function renderStage2(el) {
     </div>
     <div class="card" style="margin-top:16px;border:2px solid var(--cerulean-dim);background:rgba(0,188,212,0.02)">
       <div class="card-header"><span class="card-title">Quick Path</span></div>
-      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">If your MARC file is clean and doesn't need field mapping, dedup, or reconciliation — skip straight to push. This marks the selected file as the push-ready output for Stage 7.</p>
+      <p class="text-secondary" style="font-size:12px;margin-bottom:12px">If your MARC file is clean and doesn't need field mapping, dedup, or reconciliation — skip straight to push. This marks the selected file as push-ready for the Load stage.</p>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-primary btn-sm" onclick="markFileReady()">Mark as Ready to Load → Stage 7</button>
+        <button class="btn btn-primary btn-sm" onclick="markFileReady()">Mark as Ready to Load</button>
         <div id="mark-ready-status"></div>
       </div>
     </div>
@@ -3072,7 +3072,7 @@ async function markFileReady() {
   }
   const file = (window._s2PreviewFiles || []).find(f => f.id === fileId);
   const fname = file ? file.filename : fileId;
-  if (!confirm(`Mark "${fname}" as ready to load?\n\nThis skips field mapping, dedup, and reconciliation.\nThe file will appear directly in Stage 7 for push.`)) return;
+  if (!confirm(`Mark "${fname}" as ready to load?\n\nThis skips field mapping, dedup, and reconciliation.\nThe file will appear directly on the Load stage for push.`)) return;
 
   statusEl.innerHTML = '<div class="spinner"></div>';
   try {
@@ -6999,7 +6999,7 @@ async function renderQ3Summary() {
         <select id="s3-ready-file" class="form-select" style="max-width:300px;font-size:12px">
           ${marcFiles.map(f => `<option value="${esc(f.id)}">${esc(f.filename)} (${(f.record_count||0).toLocaleString()} records)</option>`).join('')}
         </select>
-        <button class="btn btn-primary btn-sm" onclick="markFileReadyS3()">Mark as Ready to Load → Stage 7</button>
+        <button class="btn btn-primary btn-sm" onclick="markFileReadyS3()">Mark as Ready to Load</button>
         <div id="s3-mark-ready-status"></div>
       </div>
     </div>
@@ -7321,7 +7321,7 @@ async function markFileReadyS3() {
   if (!fileId) { statusEl.innerHTML = '<span class="text-red" style="font-size:12px">Select a file.</span>'; return; }
   const sel = document.getElementById('s3-ready-file');
   const fname = sel.options[sel.selectedIndex]?.text || fileId;
-  if (!confirm(`Mark this file as ready to load?\n\n${fname}\n\nSkips field mapping, dedup, and reconciliation.\nFile will appear in Stage 7 for push.`)) return;
+  if (!confirm(`Mark this file as ready to load?\n\n${fname}\n\nSkips field mapping, dedup, and reconciliation.\nFile will appear on the Load stage for push.`)) return;
   statusEl.innerHTML = '<div class="spinner"></div>';
   try {
     const r = await api('POST', `/projects/${p.id}/files/${fileId}/mark-ready`);
@@ -7896,7 +7896,7 @@ function s3RenderFields(fields, compareFields) {
 }
 
 async function s3AcceptTransform() {
-  toast('Transform results accepted — proceed to Stage 7 (Load)', 'success');
+  toast('Transform results accepted — proceed to the Load stage', 'success');
   navigate('stage7');
 }
 
@@ -11852,7 +11852,7 @@ async function runPushHolds() {
 
 function renderS7Reindex() {
   document.getElementById('s7-tab').innerHTML = `
-    <div class="alert alert-warn" style="margin-bottom:16px">Run this AFTER all bibs are imported. Marks Stage 7 as complete.</div>
+    <div class="alert alert-warn" style="margin-bottom:16px">Run this AFTER all bibs are imported. Marks the Load stage as complete.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <div class="card-header">
@@ -13742,7 +13742,7 @@ const _HELP_SECTIONS = [
 <h4>MARC Record Browser</h4>
 <p>Navigate with arrow buttons or jump to a specific record number. View each field with tag, indicators, and subfield breakdown. Item tags (952, 949, 999, 852) are automatically highlighted.</p>
 <h4>Quick Path</h4>
-<p>For simple migrations where the data is already clean and properly mapped (e.g., Koha-to-Koha), click <strong>Mark as Ready to Load</strong> to skip stages 3–6 and go directly to Stage 7. The file will be pushed as-is without field mapping, deduplication, or reconciliation.</p>
+<p>For simple migrations where the data is already clean and properly mapped (e.g., Koha-to-Koha), click <strong>Mark as Ready to Load</strong> to skip stages 3–6 and go directly to the Load stage. The file will be pushed as-is without field mapping, deduplication, or reconciliation.</p>
 ` },
   { id: 'stage3', title: 'Step 3 — MARC Data Quality', content: `
 <p>Scan records for quality issues and fix problems before loading. The scanner performs <strong>8 categories</strong> of checks on every record.</p>
@@ -14190,14 +14190,14 @@ const _HELP_SECTIONS = [
 <h4>Push to Koha fails</h4>
 <ul>
 <li>Verify Koha URL and credentials in Project Settings</li>
-<li>Test the connection from Stage 7 Setup tab</li>
+<li>Test the connection from the Load stage Setup tab</li>
 <li>Check that required plugins are installed (Migration Toolkit recommended for large imports)</li>
 <li>Ensure the Koha API is accessible from the Cerulean container (network connectivity)</li>
 <li>For Docker-based Koha: verify the Koha container is on the same Docker network as Cerulean</li>
 </ul>
 <h4>Push succeeds but records not in OPAC search</h4>
 <ul>
-<li><strong>Koha:</strong> Run an Elasticsearch reindex from Stage 7 Reindex tab. If using Migration Mode, make sure you disabled it (restarts the ES indexer daemon).</li>
+<li><strong>Koha:</strong> Run an Elasticsearch reindex from the Load stage Reindex tab. If using Migration Mode, make sure you disabled it (restarts the ES indexer daemon).</li>
 <li><strong>Evergreen:</strong> Run Metarecord Remap (Stage 13, card 3), then Restart OpenSRF Stack (card 4). Without the remap, <code>metabib.metarecord_source_map</code> is empty and the search visibility filter hides all records.</li>
 </ul>
 <h4>Google OAuth not working</h4>
