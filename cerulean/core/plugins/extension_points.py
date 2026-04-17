@@ -232,6 +232,52 @@ def unregister_plugin_db_stores(plugin_slug: str) -> int:
     return len(keys)
 
 
+# ─── Phase C: UI-tab registry ────────────────────────────────────────
+
+@dataclass
+class PluginUITab:
+    """A UI tab contributed by a plugin (Python-only).
+
+    The plugin declares where the tab appears via ``metadata.context``
+    (list of page identifiers) and which ``api_endpoint`` extension point
+    serves its content via ``metadata.api_endpoint``.
+
+    Context values:
+      ``"project"``   — every project page (sidebar item)
+      ``"stage:<n>"`` — specific stage tab (e.g. ``"stage:3"``, ``"stage:7"``)
+      ``"admin"``     — admin / platform pages
+    """
+    plugin_slug: str
+    key: str
+    label: str
+    description: str | None
+    runtime: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+_UI_TAB_REGISTRY: dict[str, PluginUITab] = {}
+
+
+def register_ui_tab(entry: PluginUITab) -> None:
+    _UI_TAB_REGISTRY[_compose_key(entry.plugin_slug, entry.key)] = entry
+
+
+def get_ui_tab(plugin_slug: str, key: str) -> PluginUITab | None:
+    return _UI_TAB_REGISTRY.get(_compose_key(plugin_slug, key))
+
+
+def all_ui_tabs() -> list[PluginUITab]:
+    return list(_UI_TAB_REGISTRY.values())
+
+
+def unregister_plugin_ui_tabs(plugin_slug: str) -> int:
+    prefix = f"{plugin_slug}:"
+    keys = [k for k in _UI_TAB_REGISTRY if k.startswith(prefix)]
+    for k in keys:
+        _UI_TAB_REGISTRY.pop(k, None)
+    return len(keys)
+
+
 # ─── Reset (mostly for tests) ────────────────────────────────────────
 
 def clear_all() -> None:
@@ -242,3 +288,4 @@ def clear_all() -> None:
     _CELERY_TASK_REGISTRY.clear()
     _API_ENDPOINT_REGISTRY.clear()
     _DB_STORE_REGISTRY.clear()
+    _UI_TAB_REGISTRY.clear()

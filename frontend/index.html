@@ -1793,8 +1793,44 @@ function navigate(view, params = {}) {
     'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
-  if (renderer) renderer(viewEl);
+  if (renderer) {
+    const result = renderer(viewEl);
+    if (result && typeof result.then === 'function') {
+      result.then(() => _injectPluginTabs(view));
+    } else {
+      setTimeout(() => _injectPluginTabs(view), 50);
+    }
+  }
   updateBreadcrumb(view);
+}
+
+function _injectPluginTabs(view) {
+  if (!window._pluginTabsLoaded || !window._pluginTabs.length) return;
+  const stageMatch = view.match(/^stage(\d+)$/);
+  const contexts = ['project'];
+  if (stageMatch) contexts.push(`stage:${stageMatch[1]}`);
+  if (view === 'cerulean-plugins' || view === 'system-settings') contexts.push('admin');
+
+  const tabs = window._pluginTabs.filter(t => {
+    const ctx = t.context || [];
+    return ctx.some(c => contexts.includes(c));
+  });
+  if (!tabs.length) return;
+
+  const bars = document.querySelectorAll('.tab-bar');
+  if (!bars.length) return;
+  const bar = bars[bars.length - 1];
+  for (const t of tabs) {
+    const existing = bar.querySelector(`[data-plugin-tab="${t.plugin_slug}:${t.key}"]`);
+    if (existing) continue;
+    const icon = t.icon ? esc(t.icon) + ' ' : '◈ ';
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn';
+    btn.dataset.pluginTab = `${t.plugin_slug}:${t.key}`;
+    btn.innerHTML = `${icon}${esc(t.label)}`;
+    btn.onclick = function() { _pluginTabLoad(t.plugin_slug, t.key, t.url, btn); };
+    bar.appendChild(btn);
+  }
 }
 
 function updateBreadcrumb(view) {
@@ -5733,6 +5769,7 @@ async function checkAuth() {
         sessionStorage.setItem('cerulean_user', JSON.stringify(_currentUser));
         displayCurrentUser();
         loadUserPrefs();
+        _loadPluginTabs();
         return true;
       }
       // Token expired/invalid — clear it
@@ -5744,6 +5781,7 @@ async function checkAuth() {
       // Network error — proceed anyway
       displayCurrentUser();
       loadUserPrefs();
+      _loadPluginTabs();
       return true;
     }
   }
@@ -5793,6 +5831,73 @@ window.hasFeature = function(key) {
   const v = window.userPrefs.values[key];
   return v === true;
 };
+
+// ── Plugin UI Tabs (Phase C) ──────────────────────────────────────
+// Fetches registered plugin tabs once and stores them. Stage renderers
+// call _pluginTabButtons(context) to get injectable HTML and
+// _pluginTabSwitch(slug, key, el) to load content.
+
+window._pluginTabs = [];
+window._pluginTabsLoaded = false;
+
+async function _loadPluginTabs() {
+  try {
+    const tabs = await window.api('GET', '/cerulean-plugins/ui-tabs');
+    window._pluginTabs = tabs || [];
+    window._pluginTabsLoaded = true;
+  } catch { window._pluginTabs = []; }
+}
+
+function _pluginTabsForContext(context) {
+  if (!window._pluginTabsLoaded) return [];
+  return window._pluginTabs.filter(t => {
+    const ctx = t.context || [];
+    return ctx.includes(context) || ctx.includes('project');
+  });
+}
+
+function _pluginTabButtons(context) {
+  const tabs = _pluginTabsForContext(context);
+  if (!tabs.length) return '';
+  return tabs.map(t => {
+    const icon = t.icon ? esc(t.icon) + ' ' : '';
+    return `<button class="tab-btn" onclick="_pluginTabLoad('${esc(t.plugin_slug)}','${esc(t.key)}','${esc(t.url)}',this)">${icon}${esc(t.label)}</button>`;
+  }).join('');
+}
+
+async function _pluginTabLoad(slug, key, url, btn) {
+  // Deactivate sibling tabs, activate this one
+  const bar = btn.parentElement;
+  if (bar) bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  // Find the stage content area (first sibling with id ending in -tab or generic)
+  const tabEl = bar.parentElement.querySelector('[id$="-tab"]') ||
+                bar.parentElement.querySelector('.stage-content');
+  if (!tabEl) return;
+  tabEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Loading plugin tab...</div>';
+
+  try {
+    const resp = await fetch(url, {
+      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const contentType = resp.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      tabEl.innerHTML = await resp.text();
+    } else {
+      const data = await resp.json();
+      if (data.html) {
+        tabEl.innerHTML = data.html;
+      } else {
+        tabEl.innerHTML = `<div class="card" style="padding:16px"><pre style="font-size:12px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre></div>`;
+      }
+    }
+  } catch(e) {
+    tabEl.innerHTML = `<div class="text-amber" style="padding:16px">Plugin tab failed to load: ${esc(e.message || e)}</div>`;
+  }
+}
+window._pluginTabLoad = _pluginTabLoad;
 
 // ══════════════════════════════════════════════════════════════════
 // Step 3 — MARC Data Quality & Remediation
@@ -14840,7 +14945,14 @@ window.saveSystemSettings = async function() {
     'system-settings': window.renderSystemSettings,
   };
   const renderer = renders[view];
-  if (renderer) renderer(viewEl);
+  if (renderer) {
+    const result = renderer(viewEl);
+    if (result && typeof result.then === 'function') {
+      result.then(() => _injectPluginTabs(view));
+    } else {
+      setTimeout(() => _injectPluginTabs(view), 50);
+    }
+  }
   updateBreadcrumb(view);
 
   // Restore active tasks for the current project on any navigation

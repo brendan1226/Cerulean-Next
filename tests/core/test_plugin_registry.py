@@ -215,8 +215,50 @@ class TestDBStoreRegistry:
 
 # ── Phase B: clear_all includes new registries ────────────────────
 
-class TestClearAllPhaseB:
-    def test_clear_all_wipes_all_five_registries(self):
+# ── Phase C: UI tabs ──────────────────────────────────────────────
+
+from cerulean.core.plugins import (
+    PluginUITab,
+    all_ui_tabs,
+    get_ui_tab,
+    register_ui_tab,
+    unregister_plugin_ui_tabs,
+)
+
+class TestUITabRegistry:
+    def test_register_then_lookup(self):
+        entry = PluginUITab(
+            plugin_slug="my-plugin", key="metrics",
+            label="Metrics", description=None, runtime="python",
+            metadata={"context": ["stage:3"], "api_endpoint": "metrics-api"},
+        )
+        register_ui_tab(entry)
+        assert get_ui_tab("my-plugin", "metrics") is entry
+        assert get_ui_tab("my-plugin", "other") is None
+
+    def test_all_ui_tabs(self):
+        register_ui_tab(PluginUITab(
+            plugin_slug="a", key="x", label="X", description=None, runtime="python",
+        ))
+        register_ui_tab(PluginUITab(
+            plugin_slug="b", key="y", label="Y", description=None, runtime="python",
+        ))
+        assert len(all_ui_tabs()) == 2
+
+    def test_unregister_scoped(self):
+        register_ui_tab(PluginUITab(
+            plugin_slug="a", key="x", label="X", description=None, runtime="python",
+        ))
+        register_ui_tab(PluginUITab(
+            plugin_slug="b", key="y", label="Y", description=None, runtime="python",
+        ))
+        assert unregister_plugin_ui_tabs("a") == 1
+        assert len(all_ui_tabs()) == 1
+        assert get_ui_tab("b", "y") is not None
+
+
+class TestClearAllComplete:
+    def test_clear_all_wipes_all_six_registries(self):
         register_transform(PluginTransform(plugin_slug="a", key="x",
                                            label="X", description=None, runtime="python"))
         register_quality_check(PluginQualityCheck(plugin_slug="a", check_id="y",
@@ -230,9 +272,13 @@ class TestClearAllPhaseB:
         register_db_store(PluginDBStore(
             plugin_slug="a", key="d", label="D", description=None,
         ))
+        register_ui_tab(PluginUITab(
+            plugin_slug="a", key="u", label="U", description=None, runtime="python",
+        ))
         clear_all()
         assert all_transforms() == []
         assert all_quality_checks() == []
         assert all_celery_tasks() == []
         assert all_api_endpoints() == []
         assert all_db_stores() == []
+        assert all_ui_tabs() == []

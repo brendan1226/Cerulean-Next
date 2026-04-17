@@ -414,3 +414,64 @@ engine = create_engine(settings.database_url.replace("+asyncpg", "+psycopg2"))
 with Session(engine) as db:
     rows = db.execute(select(CacheEntry)).scalars().all()
 ```
+
+### `ui_tab` — custom UI tabs (Python only)
+
+Register a tab that appears in the frontend. The tab's content is served
+by a sibling `api_endpoint` extension point. The `metadata.context` list
+controls which pages the tab appears on.
+
+**Manifest:**
+
+```yaml
+extension_points:
+  - type: api_endpoint
+    key: metrics-api
+    label: Metrics API
+  - type: ui_tab
+    key: metrics
+    label: Migration Metrics
+    metadata:
+      context:
+        - "stage:3"      # appears in Step 3 (Quality)
+        - "stage:7"      # and Step 7 (Reconciliation)
+      api_endpoint: metrics-api
+      icon: "📊"
+```
+
+**Context values:**
+- `"project"` — every project page (all stages)
+- `"stage:<n>"` — specific stage (e.g. `"stage:3"`, `"stage:7"`)
+- `"admin"` — admin / platform pages
+
+**Python `setup()`:**
+
+```python
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
+
+def setup(ctx):
+    router = APIRouter()
+
+    @router.get("/", response_class=HTMLResponse)
+    async def metrics_panel():
+        return "<div style='padding:16px'><h3>Migration Metrics</h3><p>Dashboard here...</p></div>"
+
+    ctx.register_api_endpoint("metrics-api", router)
+    ctx.register_ui_tab(
+        "metrics",
+        context=["stage:3", "stage:7"],
+        api_endpoint="metrics-api",
+        icon="📊",
+    )
+```
+
+**How it works:**
+1. At startup, `register_ui_tab()` adds the tab to the `_UI_TAB_REGISTRY`.
+2. The frontend fetches `GET /cerulean-plugins/ui-tabs` on page load.
+3. When navigating to a matching stage, the tab button is injected into
+   the stage's tab bar.
+4. Clicking the tab fetches content from
+   `/api/v1/plugins/<slug>/<api_endpoint_key>` and renders it in the
+   stage's content area.
+5. Content can be HTML (rendered directly) or JSON with an `html` key.

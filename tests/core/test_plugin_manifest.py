@@ -275,3 +275,39 @@ class TestPhaseBExtensionTypes:
             {"type": "api_endpoint", "key": "api", "label": "API"},
         ]))
         assert len(m.extension_points) == 3
+
+
+# ── Phase C: ui_tab ───────────────────────────────────────────────
+
+class TestPhaseCUITab:
+    def test_ui_tab_python_accepted(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "ui_tab", "key": "metrics", "label": "Metrics",
+             "metadata": {"context": ["stage:3"], "api_endpoint": "metrics"}},
+        ]))
+        assert m.extension_points[0].type == "ui_tab"
+        assert m.extension_points[0].metadata["context"] == ["stage:3"]
+
+    def test_ui_tab_subprocess_rejected(self):
+        with pytest.raises(ManifestError, match="requires runtime 'python'"):
+            parse_manifest(_subprocess_manifest(extension_points=[
+                {"type": "ui_tab", "key": "metrics", "label": "Metrics"},
+            ]))
+
+    def test_ui_tab_with_all_metadata(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "ui_tab", "key": "dash", "label": "Dashboard",
+             "metadata": {"context": ["project", "stage:7"], "api_endpoint": "dash-api", "icon": "📊"}},
+        ]))
+        meta = m.extension_points[0].metadata
+        assert meta["icon"] == "📊"
+        assert meta["api_endpoint"] == "dash-api"
+        assert "project" in meta["context"]
+
+    def test_ui_tab_alongside_api_endpoint(self):
+        m = parse_manifest(_python_manifest(extension_points=[
+            {"type": "api_endpoint", "key": "metrics-api", "label": "Metrics API"},
+            {"type": "ui_tab", "key": "metrics", "label": "Metrics",
+             "metadata": {"api_endpoint": "metrics-api"}},
+        ]))
+        assert len(m.extension_points) == 2

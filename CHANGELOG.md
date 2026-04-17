@@ -2,6 +2,45 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.7.0] — 2026-04-16 — Plugin System Phase C: UI Tab Injection
+
+Plugins can now contribute tabs to stage pages in the frontend.
+
+### `ui_tab` extension point (Python only)
+
+Declare a `ui_tab` in the manifest with `metadata.context` (list of page
+identifiers) and `metadata.api_endpoint` (key of a sibling `api_endpoint`
+extension point that serves the tab content). The frontend discovers
+registered tabs via `GET /cerulean-plugins/ui-tabs` and dynamically
+injects tab buttons into matching stage pages after each navigation.
+
+Context values:
+- `"project"` — every project page (all stages)
+- `"stage:<n>"` — specific stage (e.g. `"stage:3"`, `"stage:7"`)
+- `"admin"` — admin/platform pages
+
+Content delivery: plugin API endpoint returns HTML (rendered directly)
+or JSON with an `html` key. Fetch failures degrade gracefully with an
+error message in the tab panel.
+
+### Backend
+- `manifest.py`: `EXT_UI_TAB = "ui_tab"` added to SUPPORTED_EXTENSIONS;
+  Python-only (rejected for subprocess manifests).
+- `extension_points.py`: `PluginUITab` dataclass + `_UI_TAB_REGISTRY` +
+  register/get/all/unregister helpers; `clear_all()` resets all 6.
+- `context.py`: `ctx.register_ui_tab(key, context, api_endpoint, icon)`.
+- `cerulean_plugins.py`: `GET /cerulean-plugins/ui-tabs` discovery endpoint.
+
+### Frontend
+- `_loadPluginTabs()` fetches tabs at login alongside `loadUserPrefs()`.
+- `_injectPluginTabs(view)` runs after every `navigate()` call (both
+  script blocks) — scans for `.tab-bar` elements and appends buttons.
+- `_pluginTabLoad()` fetches content from the plugin's API endpoint.
+- Plugin tab buttons show a ◈ prefix + the plugin's configured icon.
+
+### Tests
+7 new tests (4 manifest + 3 registry). Full suite now at **370 passing**.
+
 ## [2.6.0] — 2026-04-16 — Plugin System Phase B: Tasks, Endpoints, DB Store
 
 Three new extension-point types for the Cerulean Plugin System:

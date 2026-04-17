@@ -264,6 +264,27 @@ includes plugin routers and `_create_plugin_db_tables` ensures tables exist.
 the existing `worker_process_init` hook reloads plugins so tasks are
 available on every worker.
 
+### Phase C extension point: ui_tab (shipped)
+
+| Type | Runtime | What it does |
+|------|---------|-------------|
+| `ui_tab` | Python only | Plugin registers a tab that appears in stage pages; content served by a sibling `api_endpoint` |
+
+Manifest `metadata` for `ui_tab`:
+- `context`: list of page identifiers — `"project"`, `"stage:<n>"`, `"admin"`
+- `api_endpoint`: key of a sibling `api_endpoint` extension point
+- `icon`: optional emoji for the tab button
+
+**Discovery**: `GET /cerulean-plugins/ui-tabs` returns all registered tabs
+with plugin slug, key, label, context, api_endpoint, icon, and URL.
+
+**Frontend**: `_loadPluginTabs()` runs at login alongside `loadUserPrefs()`.
+After each `navigate()` call, `_injectPluginTabs(view)` scans the page
+for `.tab-bar` elements and appends buttons for matching plugin tabs.
+Clicking a plugin tab fetches content from the plugin's API endpoint and
+renders it (HTML directly, or JSON with an `html` key) in the stage's
+content area.
+
 ### Adding a new extension-point type
 1. Add the string to `SUPPORTED_EXTENSIONS` in `manifest.py`.
 2. Add a new registry dict + register/unregister/get/all helpers in

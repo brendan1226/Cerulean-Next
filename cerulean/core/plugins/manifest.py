@@ -32,9 +32,11 @@ EXT_QUALITY_CHECK = "quality_check"
 EXT_CELERY_TASK = "celery_task"
 EXT_API_ENDPOINT = "api_endpoint"
 EXT_DB_STORE = "db_store"
+EXT_UI_TAB = "ui_tab"
 SUPPORTED_EXTENSIONS = {
     EXT_TRANSFORM, EXT_QUALITY_CHECK,
     EXT_CELERY_TASK, EXT_API_ENDPOINT, EXT_DB_STORE,
+    EXT_UI_TAB,
 }
 
 SUPPORTED_PERMISSIONS = {
@@ -60,6 +62,7 @@ class ExtensionPoint(BaseModel):
     type: Literal[
         "transform", "quality_check",
         "celery_task", "api_endpoint", "db_store",
+        "ui_tab",
     ]
     key: str = Field(min_length=1, max_length=100)
     label: str = Field(min_length=1, max_length=200)
@@ -183,14 +186,8 @@ class PluginManifest(BaseModel):
                     f"duplicate extension point {ep.type}:{ep.key!r} in manifest"
                 )
             seen.add(k)
-            # Phase B: api_endpoint is Python-only (needs APIRouter object)
-            if ep.type == EXT_API_ENDPOINT and self.runtime != RUNTIME_PYTHON:
-                raise ValueError(
-                    f"extension point {ep.type}:{ep.key!r} requires "
-                    f"runtime 'python' (got {self.runtime!r})"
-                )
-            # Phase B: db_store is Python-only (needs SQLAlchemy model)
-            if ep.type == EXT_DB_STORE and self.runtime != RUNTIME_PYTHON:
+            _PYTHON_ONLY_TYPES = {EXT_API_ENDPOINT, EXT_DB_STORE, EXT_UI_TAB}
+            if ep.type in _PYTHON_ONLY_TYPES and self.runtime != RUNTIME_PYTHON:
                 raise ValueError(
                     f"extension point {ep.type}:{ep.key!r} requires "
                     f"runtime 'python' (got {self.runtime!r})"

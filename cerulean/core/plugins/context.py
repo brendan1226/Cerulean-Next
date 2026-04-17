@@ -21,11 +21,13 @@ from cerulean.core.plugins.extension_points import (
     PluginDBStore,
     PluginQualityCheck,
     PluginTransform,
+    PluginUITab,
     register_api_endpoint,
     register_celery_task,
     register_db_store,
     register_quality_check,
     register_transform,
+    register_ui_tab,
 )
 from cerulean.core.plugins.manifest import PluginManifest
 
@@ -194,6 +196,52 @@ class PluginContext:
             description=description if description is not None else ep.description,
             model_class=model_class,
             metadata=ep.metadata or {},
+        ))
+
+    def register_ui_tab(
+        self,
+        key: str,
+        label: str | None = None,
+        description: str | None = None,
+        context: list[str] | None = None,
+        api_endpoint: str | None = None,
+        icon: str | None = None,
+    ) -> None:
+        """Register a UI tab (Python-only).
+
+        The tab appears in the frontend pages matching ``context`` entries.
+        Content is served by the plugin's ``api_endpoint`` extension point
+        referenced by ``api_endpoint`` (the key, not the URL).
+
+        Args:
+            key: Must match a declared ``ui_tab`` extension point in the manifest.
+            context: Page contexts where the tab appears. Overrides manifest
+                metadata.context if provided. Values: ``"project"``,
+                ``"stage:<n>"``, ``"admin"``.
+            api_endpoint: Key of a sibling ``api_endpoint`` extension point
+                that serves the tab content. Overrides manifest metadata.
+            icon: Optional emoji/icon for the tab button.
+        """
+        ep = self._find_extension("ui_tab", key)
+        if ep is None:
+            raise KeyError(
+                f"plugin {self.slug!r} tried to register ui_tab {key!r} "
+                f"which is not declared in its manifest"
+            )
+        meta = dict(ep.metadata or {})
+        if context is not None:
+            meta["context"] = context
+        if api_endpoint is not None:
+            meta["api_endpoint"] = api_endpoint
+        if icon is not None:
+            meta["icon"] = icon
+        register_ui_tab(PluginUITab(
+            plugin_slug=self.slug,
+            key=key,
+            label=label or ep.label,
+            description=description if description is not None else ep.description,
+            runtime=self.manifest.runtime,
+            metadata=meta,
         ))
 
     def _find_extension(self, type_: str, key: str):

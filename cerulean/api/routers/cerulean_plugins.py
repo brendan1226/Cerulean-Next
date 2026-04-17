@@ -57,6 +57,31 @@ async def list_plugins(db: AsyncSession = Depends(get_db)):
     return [_row_to_dict(r) for r in rows]
 
 
+@router.get("/ui-tabs")
+async def list_ui_tabs():
+    """Return all registered plugin UI tabs for frontend discovery.
+
+    The frontend calls this at page load to know which plugin tabs to
+    inject. Each entry includes the plugin slug, tab key, label, and
+    metadata (context, api_endpoint reference, icon).
+    """
+    from cerulean.core.plugins import all_ui_tabs
+    tabs = all_ui_tabs()
+    return [
+        {
+            "plugin_slug": t.plugin_slug,
+            "key": t.key,
+            "label": t.label,
+            "description": t.description,
+            "context": t.metadata.get("context", []),
+            "api_endpoint": t.metadata.get("api_endpoint"),
+            "icon": t.metadata.get("icon"),
+            "url": f"/api/v1/plugins/{t.plugin_slug}/{t.metadata.get('api_endpoint', t.key)}",
+        }
+        for t in tabs
+    ]
+
+
 @router.post("/upload")
 async def upload_plugin(
     request: Request,
