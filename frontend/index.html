@@ -5273,9 +5273,7 @@ async function authDownload(path, filename) {
     const a = document.createElement('a');
     a.href = blobUrl;
     a.download = filename || 'download';
-    document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(blobUrl);
   } catch (e) {
     toast('Download failed: ' + e.message, 'error');
