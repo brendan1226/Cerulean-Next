@@ -1289,6 +1289,9 @@
       <div class="nav-item" data-view="system-status" onclick="navigate('system-status')">
         <span class="nav-icon">♥</span> System Status
       </div>
+      <div class="nav-item" data-view="api-keys" onclick="navigate('api-keys')">
+        <span class="nav-icon">🔑</span> API Keys
+      </div>
       <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
         <span class="nav-icon">⚙</span> System Settings
       </div>
@@ -1795,6 +1798,7 @@ function navigate(view, params = {}) {
     'cerulean-plugins': window.renderCeruleanPlugins,
     'system-settings': window.renderSystemSettings,
     'system-status': window.renderSystemStatus,
+    'api-keys': window.renderAPIKeys,
   };
   const renderer = renders[view];
   if (renderer) {
@@ -1870,6 +1874,7 @@ function updateBreadcrumb(view) {
     'cerulean-plugins': 'Cerulean Plugins',
     'system-settings': 'System Settings',
     'system-status': 'System Status',
+    'api-keys': 'API Keys',
   };
   const crumb = document.getElementById('breadcrumb');
   const p = state.currentProject;
@@ -2278,11 +2283,12 @@ async function loadFiles() {
       html += `<div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">MARC Files</div>
       <table class="data-table">
         <thead><tr>
-          <th>Filename</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th><th></th>
+          <th>Filename</th><th>Source</th><th>Format</th><th>Records</th><th>ILS Signal</th><th>Status</th><th>Tags</th><th></th>
         </tr></thead>
         <tbody>
           ${marcFiles.map(f => `<tr>
             <td class="mono">${esc(f.filename)}</td>
+            <td>${f.source && f.source !== 'upload' ? `<span class="badge badge-cerulean" style="font-size:9px">${esc(f.source)}</span>` : ''}</td>
             <td><span class="badge badge-dim">${f.file_format || '—'}</span></td>
             <td class="mono">${f.record_count != null ? f.record_count.toLocaleString() : '—'}</td>
             <td class="text-secondary">${f.ils_signal || '—'}</td>
@@ -15134,6 +15140,107 @@ setInterval(() => {
   }
 }, 30000);
 
+// ── API Keys Admin page ──────────────────────────────────────────────
+
+window.renderAPIKeys = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">API Keys</div>
+        <div class="page-subtitle">Manage integration API keys for the Koha Migration Workbench and other external systems</div>
+      </div>
+      <button class="btn btn-primary" onclick="apiKeyCreate()">+ Generate New Key</button>
+    </div>
+    <div id="api-keys-content"><div class="loading-msg"><div class="spinner"></div>Loading...</div></div>`;
+  await _apiKeysRefresh();
+};
+
+async function _apiKeysRefresh() {
+  const wrap = document.getElementById('api-keys-content');
+  if (!wrap) return;
+  try {
+    const keys = await window.api('GET', '/admin/api-keys');
+    if (!keys.length) {
+      wrap.innerHTML = '<div class="empty-state"><div class="empty-title">No API keys</div><div class="empty-body">Generate a key to allow the Koha Migration Workbench or other tools to push data into Cerulean.</div></div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <table class="data-table" style="font-size:12px;width:100%">
+        <thead><tr><th>Label</th><th>Key Prefix</th><th>Scope</th><th>Last Used</th><th>Created</th><th>Status</th><th></th></tr></thead>
+        <tbody>${keys.map(k => `<tr style="${k.revoked ? 'opacity:0.5' : ''}">
+          <td style="font-weight:600">${esc(k.label)}</td>
+          <td class="mono">${esc(k.key_prefix)}</td>
+          <td><span class="badge badge-dim">${esc(k.scope)}</span></td>
+          <td class="text-dim">${k.last_used_at ? new Date(k.last_used_at).toLocaleString() : 'Never'}</td>
+          <td class="text-dim">${k.created_at ? new Date(k.created_at).toLocaleString() : '—'}</td>
+          <td>${k.revoked ? '<span class="badge badge-amber">Revoked</span>' : '<span class="badge badge-green">Active</span>'}</td>
+          <td style="text-align:right">${!k.revoked ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="apiKeyRevoke('${esc(k.id)}','${esc(k.label)}')">Revoke</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="text-amber">Failed to load API keys: ${esc(e.message || e)}</div>`;
+  }
+}
+
+async function apiKeyCreate() {
+  openModal(`
+    <h3 style="margin-bottom:16px">Generate API Key</h3>
+    <div class="form-group">
+      <label class="form-label">Label</label>
+      <input class="form-input" id="ak-label" placeholder="e.g. Koha Migration Workbench" style="width:100%">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Scope</label>
+      <select class="form-input" id="ak-scope">
+        <option value="write">write (push files + read)</option>
+        <option value="read">read (status polling only)</option>
+        <option value="admin">admin (full access)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Environment</label>
+      <select class="form-input" id="ak-env">
+        <option value="live">Production (cn_live_)</option>
+        <option value="test">Test (cn_test_)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="apiKeySubmit()" style="margin-top:8px">Generate Key</button>
+    <div id="ak-result" style="margin-top:12px"></div>
+  `);
+}
+
+async function apiKeySubmit() {
+  const label = document.getElementById('ak-label')?.value?.trim();
+  if (!label) { toast('Label is required', 'error'); return; }
+  const scope = document.getElementById('ak-scope')?.value || 'write';
+  const env = document.getElementById('ak-env')?.value || 'live';
+  try {
+    const r = await window.api('POST', '/admin/api-keys', { label, scope, environment: env });
+    const el = document.getElementById('ak-result');
+    if (el) el.innerHTML = `
+      <div class="alert alert-warn" style="font-size:12px">
+        <strong>Copy this key now — it will not be shown again:</strong>
+        <div class="mono" style="margin-top:8px;padding:8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;word-break:break-all;user-select:all">${esc(r.key)}</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="navigator.clipboard.writeText('${esc(r.key)}');toast('Copied!','success')">Copy to Clipboard</button>
+      </div>`;
+    toast('API key generated', 'success');
+    _apiKeysRefresh();
+  } catch(e) { toast('Failed: ' + (e.message || e), 'error'); }
+}
+
+async function apiKeyRevoke(keyId, label) {
+  if (!confirm('Revoke API key "' + label + '"? Any system using this key will lose access immediately.')) return;
+  try {
+    await window.api('DELETE', '/admin/api-keys/' + keyId);
+    toast('Key revoked', 'success');
+    _apiKeysRefresh();
+  } catch(e) { toast('Failed: ' + (e.message || e), 'error'); }
+}
+
+window.apiKeyCreate = apiKeyCreate;
+window.apiKeySubmit = apiKeySubmit;
+window.apiKeyRevoke = apiKeyRevoke;
+
 // ── System Settings page ─────────────────────────────────────────────
 
 window.renderSystemSettings = async function(el) {
@@ -15240,6 +15347,7 @@ window.saveSystemSettings = async function() {
     'system-logs':  window.renderSystemLogs,
     'system-settings': window.renderSystemSettings,
     'system-status': window.renderSystemStatus,
+    'api-keys': window.renderAPIKeys,
   };
   const renderer = renders[view];
   if (renderer) {

@@ -181,8 +181,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         path = request.url.path
 
-        # Allow public paths, non-API paths (frontend, vendor, health), OAI-PMH
-        if path in _PUBLIC_PATHS or not path.startswith("/api/v1/") or path.startswith("/api/v1/oai/"):
+        # Allow public paths, non-API paths (frontend, vendor, health), OAI-PMH,
+        # and integration endpoints (these use X-Cerulean-API-Key, not JWT).
+        if path in _PUBLIC_PATHS or not path.startswith("/api/v1/") or path.startswith("/api/v1/oai/") or path.startswith("/api/v1/integration/"):
             return await call_next(request)
 
         # Skip auth entirely when Google OAuth is not configured (dev mode)
@@ -251,6 +252,7 @@ from cerulean.api.routers import auth, batch_edit, cerulean_plugins, csv_to_marc
 from cerulean.api.routers import rda as rda_router  # noqa: E402
 from cerulean.api.routers import settings as settings_router  # noqa: E402 — avoid shadowing config `settings`
 from cerulean.api.routers import system_status  # noqa: E402
+from cerulean.api.routers import api_keys, integration  # noqa: E402
 
 app.include_router(auth.router,               prefix="/api/v1")
 app.include_router(preferences.router,        prefix="/api/v1")
@@ -286,6 +288,8 @@ app.include_router(tasks.router,       prefix="/api/v1")
 app.include_router(aspen.router,       prefix="/api/v1")
 app.include_router(evergreen.router,   prefix="/api/v1")
 app.include_router(system_status.router, prefix="/api/v1")
+app.include_router(api_keys.router,     prefix="/api/v1")
+app.include_router(integration.router,  prefix="/api/v1")
 
 
 @app.get("/api/health")

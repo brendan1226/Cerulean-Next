@@ -413,6 +413,10 @@ class MARCFile(Base):
 
     sort_order: Mapped[int] = mapped_column(Integer, default=0)  # merge queue position
 
+    # "upload" (Cerulean UI), "workbench" (Koha Migration Workbench),
+    # "api:<tool>" (other integrations). Displayed as a badge in file lists.
+    source: Mapped[str] = mapped_column(String(50), default="upload")
+
     # AI Data Health Report (cerulean_ai_spec.md §3). The payload is a JSON
     # object produced by Claude against a stratified sample of records; the
     # status field drives the UI spinner vs. rendered cards.
@@ -756,6 +760,8 @@ class PatronFile(Base):
 
     # "uploaded" | "parsing" | "parsed" | "error"
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
+
+    source: Mapped[str] = mapped_column(String(50), default="upload")
 
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
@@ -1129,3 +1135,82 @@ class MigrationVersion(Base):
     load_failed: Mapped[int | None] = mapped_column(Integer)
     created_by: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# API KEY (Integration authentication)
+# ══════════════════════════════════════════════════════════════════════════
+
+class APIKey(Base):
+    """API key for machine-to-machine integration (Koha Migration Workbench, etc.).
+
+    Keys are hashed with SHA-256 at rest — only the prefix (``cn_live_XXXX``)
+    is stored in plaintext for identification. The full key is shown once at
+    creation time and never stored.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
+
+    key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), default="write")  # "read" | "write" | "admin"
+
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CONTROL VALUE SET (Integration — parsed from SQL files)
+# ══════════════════════════════════════════════════════════════════════════
+
+class ControlValueSet(Base):
+    """A single code/description pair parsed from an integration SQL push.
+
+    ``cv_type`` maps to the Koha authorized value category:
+    branches, item_types, collection_codes, shelving_locations,
+    patron_categories, fund_codes, serial_frequencies, other.
+    """
+
+    __tablename__ = "control_value_sets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    cv_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    code: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    source: Mapped[str] = mapped_column(String(50), default="manual")  # "workbench" | "manual" | "ai_suggested"
+    raw_sql_path: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# INTEGRATION PUSH LOG
+# ══════════════════════════════════════════════════════════════════════════
+
+class IntegrationPushLog(Base):
+    """Audit trail for every integration push from an external system."""
+
+    __tablename__ = "integration_push_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+    api_key_id: Mapped[str] = mapped_column(String(36), ForeignKey("api_keys.id"), nullable=False)
+
+    push_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "file" | "control_values" | "bulk"
+    files_received: Mapped[dict | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="received")  # "received" | "processing" | "complete" | "error"
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship()
