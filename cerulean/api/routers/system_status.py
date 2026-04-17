@@ -57,7 +57,9 @@ _INSPECT_CACHE_LOCK = threading.Lock()
 
 def _inspect_workers_sync() -> dict:
     """Single blocking inspect call that fetches ping + stats + active.
-    Cached for 10 seconds so 3 parallel API requests share one round-trip."""
+    Cached for 10 seconds so 3 parallel API requests share one round-trip.
+    Hard-capped at 3 seconds total — if workers are unreachable, we return
+    empty data rather than hanging."""
     now = time.time()
     with _INSPECT_CACHE_LOCK:
         if _INSPECT_CACHE.get("ts") and (now - _INSPECT_CACHE["ts"]) < _INSPECT_CACHE_TTL:
@@ -65,7 +67,7 @@ def _inspect_workers_sync() -> dict:
 
     data = {"pings": {}, "stats": {}, "active": {}}
     try:
-        inspect = celery_app.control.inspect(timeout=1.5)
+        inspect = celery_app.control.inspect(timeout=0.8)
         data["pings"] = inspect.ping() or {}
         data["stats"] = inspect.stats() or {}
         data["active"] = inspect.active() or {}
@@ -79,8 +81,14 @@ def _inspect_workers_sync() -> dict:
 
 
 async def _inspect_workers() -> dict:
-    """Non-blocking wrapper — runs inspect in a thread."""
-    return await asyncio.to_thread(_inspect_workers_sync)
+    """Non-blocking wrapper with a hard 4-second timeout."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_inspect_workers_sync),
+            timeout=4.0,
+        )
+    except asyncio.TimeoutError:
+        return {"pings": {}, "stats": {}, "active": {}}
 
 
 # ── Full health snapshot ──────────────────────────────────────────────
@@ -89,10 +97,12 @@ async def _inspect_workers() -> dict:
 @router.get("")
 async def system_status(db: AsyncSession = Depends(get_db)):
     """Aggregated system health: workers, queues, active tasks, errors, alerts."""
-    inspect_data = await _inspect_workers()
+    inspect_data, queues, redis_info = await asyncio.gather(
+        _inspect_workers(),
+        asyncio.to_thread(_get_queue_depths),
+        asyncio.to_thread(_get_redis_info),
+    )
     workers = _build_worker_list(inspect_data)
-    queues = await asyncio.to_thread(_get_queue_depths)
-    redis_info = await asyncio.to_thread(_get_redis_info)
     active_tasks = _build_active_task_list(inspect_data)
     alerts = _compute_alerts(workers, queues, active_tasks)
     actions = _recommend_actions(alerts, active_tasks)
