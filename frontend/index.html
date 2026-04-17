@@ -6217,7 +6217,7 @@ function _renderBatchResult(elId, r) {
     <div style="font-size:12px;margin-bottom:8px">
       <span class="badge badge-green">${r.records_modified.toLocaleString()} modified</span>
       <span class="text-dim" style="margin-left:8px">${r.records_processed.toLocaleString()} processed, ${r.modifications.toLocaleString()} changes</span>
-      <div class="text-dim mono" style="font-size:10px;margin-top:4px">Output: ${esc(r.output_file)}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="text-dim mono" style="font-size:10px">Output: ${esc(r.output_file)}</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(r.output_file.split('/').pop())}" data-dl-name="${esc(r.output_file.split('/').pop())}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div>
     </div>
     ${r.preview_samples?.length ? '<div style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:6px;max-height:150px;overflow:auto">' +
       r.preview_samples.map(s => '<div style="margin-bottom:4px"><span class="mono text-dim">rec ' + s.record + ' ' + esc(s.tag || '') + (s.sub ? '$' + esc(s.sub) : '') + ':</span> ' +
@@ -6488,7 +6488,7 @@ async function runRdaApply() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.fields_added + ' fields added</span>'
       + ' to ' + r.records_modified.toLocaleString() + ' of ' + r.records_processed.toLocaleString() + ' records'
-      + '<div class="mono text-dim" style="margin-top:4px;font-size:11px">Output: ' + esc(r.output_file) + '</div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
     toast(r.fields_added + ' RDA fields generated', 'success');
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
@@ -6781,7 +6781,7 @@ async function runExtractRecords() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.matched_records.toLocaleString() + ' records extracted</span>'
       + ' out of ' + r.total_records.toLocaleString() + ' total'
-      + '<div class="mono text-dim" style="margin-top:4px">Output: ' + esc(r.output_file) + '</div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
     toast(r.matched_records + ' records extracted', 'success');
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
@@ -6948,7 +6948,7 @@ async function runFileJoin() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.total_records.toLocaleString() + ' records joined</span>'
       + (r.duplicates_skipped ? ' <span class="text-dim">(' + r.duplicates_skipped + ' duplicates skipped)</span>' : '')
-      + '<div class="mono text-dim" style="margin-top:4px">Output: ' + esc(r.output_file) + '</div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
     toast(r.total_records + ' records joined', 'success');
     loadFileList();
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
@@ -7810,9 +7810,10 @@ async function renderS3Manifest() {
       </div>
 
       ${m.status === 'complete' ? `
-      <div style="margin-top:16px;display:flex;gap:12px">
+      <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
         <button class="btn btn-green" onclick="s3AcceptTransform()">Accept Build Results</button>
         <button class="btn btn-red" onclick="s3RejectTransform()">Reject &amp; Re-run</button>
+        <button class="btn btn-ghost" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" data-dl-name="${esc(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ Download MRC</button>
       </div>` : ''}`;
 
     window._s3PreviewIdx = 0;
@@ -7958,17 +7959,21 @@ async function renderS4History() {
     <table class="data-table" style="font-size:12px;width:100%">
       <thead><tr><th>Version</th><th>Label</th><th>Records</th><th>Created</th><th></th></tr></thead>
       <tbody>
-        ${versions.map(v => `<tr>
+        ${versions.map(v => {
+          const snapFile = v.snapshot_path ? v.snapshot_path.split('/').pop() : '';
+          const snapDir = v.snapshot_path && v.snapshot_path.includes('/versions/') ? 'versions/' + snapFile : snapFile;
+          return `<tr>
           <td class="mono" style="font-weight:600">v${v.version_number}</td>
           <td>
             <span class="v4-label" data-vid="${esc(v.id)}" onclick="editVersionLabel('${esc(v.id)}', this)" style="cursor:pointer;border-bottom:1px dashed var(--border-mid)">${esc(v.label || '—')}</span>
           </td>
           <td class="mono">${(v.record_count || 0).toLocaleString()}</td>
           <td class="text-dim">${new Date(v.created_at).toLocaleString()}</td>
-          <td style="text-align:right">
+          <td style="text-align:right;white-space:nowrap">
+            ${snapFile ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(snapDir)}" data-dl-name="${esc(snapFile)}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button>` : ''}
             <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteVersion('${esc(v.id)}')">Delete</button>
           </td>
-        </tr>`).join('')}
+        </tr>`}).join('')}
       </tbody>
     </table>` : ''}`
   ;
@@ -8818,7 +8823,10 @@ async function renderRecReport() {
             <div><span class="text-dim" style="font-size:11px">Rules Applied</span><div class="mono" style="font-size:18px">${(res.rules_applied || 0).toLocaleString()}</div></div>
             <div><span class="text-dim" style="font-size:11px">Fields Deleted</span><div class="mono" style="font-size:18px">${(res.fields_deleted || 0).toLocaleString()}</div></div>
           </div>
-          ${res.output_path ? `<div class="text-dim mono" style="font-size:11px;margin-top:12px">Output: ${esc(res.output_path.split('/').pop())}</div>` : ''}
+          ${res.output_path ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+            <span class="text-dim mono" style="font-size:11px">Output: ${esc(res.output_path.split('/').pop())}</span>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(res.output_path.split('/').pop())}" data-dl-name="${esc(res.output_path.split('/').pop())}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ Download MRC</button>
+          </div>` : ''}
         </div>
         <div id="rec-category-files" style="margin-top:16px"></div>`;
       _recLoadCategoryFiles();

@@ -7,10 +7,16 @@ GET  /projects/{id}      — project detail
 PATCH /projects/{id}     — update project config
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cerulean.api.deps import require_project
+from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
 from cerulean.models import Project, User
 from cerulean.schemas.projects import ProjectCreate, ProjectOut, ProjectUpdate
@@ -164,3 +170,41 @@ async def update_project(
     await db.flush()
     await db.refresh(project)
     return project
+
+
+# ── Generic project file download ────────────────────────────────────
+
+
+@router.get("/{project_id}/download")
+async def download_project_file(
+    project_id: str,
+    filename: str = Query(..., description="Filename relative to project dir"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download any file from the project data directory by name.
+
+    Only serves files inside the project root or known subdirectories.
+    Path traversal is rejected.
+    """
+    await require_project(project_id, db)
+    settings = get_settings()
+    project_dir = Path(settings.data_root) / project_id
+
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(400, detail="Invalid filename")
+
+    allowed_prefixes = ("", "transformed/", "items/", "patrons/", "raw/", "versions/")
+    if not any(filename == "" or filename.startswith(p) for p in allowed_prefixes):
+        raise HTTPException(400, detail="Invalid file path")
+
+    file_path = (project_dir / filename).resolve()
+    if not str(file_path).startswith(str(project_dir.resolve())):
+        raise HTTPException(400, detail="Invalid file path")
+
+    if not file_path.is_file():
+        raise HTTPException(404, detail=f"File not found: {filename}")
+
+    safe_name = file_path.name.encode("ascii", "ignore").decode("ascii") or "download"
+    media = "application/marc" if safe_name.endswith(".mrc") else "application/octet-stream"
+
+    return FileResponse(path=str(file_path), media_type=media, filename=safe_name)
