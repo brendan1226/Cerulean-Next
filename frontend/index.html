@@ -14848,6 +14848,7 @@ async function cpzUpload(input) {
 }
 
 async function cpzAction(slug, action) {
+  console.log('cpzAction called:', slug, action);
   const confirmMsg = action === 'uninstall'
     ? `Uninstall plugin "${slug}"? The .cpz archive stays in available/ for rollback.`
     : action === 'disable'
@@ -14865,7 +14866,7 @@ async function cpzAction(slug, action) {
     if (!res) return;
     toast(res.message || `${action} ok`, 'success');
     _cpzShowRestartBanner(res.message);
-  } catch (e) { /* toast shown */ }
+  } catch (e) { console.error('cpzAction error:', e); toast('Plugin action failed: ' + (e.message || e), 'error'); }
   window.renderCeruleanPlugins(document.getElementById('view'));
 }
 
