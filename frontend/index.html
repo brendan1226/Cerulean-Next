@@ -14385,9 +14385,9 @@ async function loadPluginList() {
           <td style="padding:6px 8px" class="mono text-dim">${esc(pl.filename)}</td>
           <td style="padding:6px 8px;text-align:right">${pl.file_size_bytes ? (pl.file_size_bytes / 1024).toFixed(0) + ' KB' : '—'}</td>
           <td style="padding:6px 8px;text-align:right;white-space:nowrap">
-            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();authDownload('/plugins/${pl.id}/download','${esc(pl.filename)}')">Download</button>
-            ${hasKoha ? '<button class="btn btn-primary btn-sm" onclick="installPlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Install to Koha</button>' : ''}
-            <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deletePlugin(\'' + pl.id + '\',\'' + esc(pl.display_name) + '\')">Delete</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();authDownload('/plugins/${esc(pl.id)}/download','${esc(pl.filename)}')">Download</button>
+            ${hasKoha ? `<button class="btn btn-primary btn-sm" onclick="installPlugin('${esc(pl.id)}','${esc(pl.display_name)}')">Install to Koha</button>` : ''}
+            <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deletePlugin('${esc(pl.id)}','${esc(pl.display_name)}')">Delete</button>
           </td>
         </tr>`).join('')
       + '</table>';
