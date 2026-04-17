@@ -2279,8 +2279,8 @@ async function loadFiles() {
             <td>${f.tag_frequency && Object.keys(f.tag_frequency).length ? Object.keys(f.tag_frequency).length + ' tags' : f.status === 'indexed' ? '<span class="text-dim">analyzing…</span><div class="spinner" style="width:12px;height:12px;margin-left:4px;vertical-align:middle;display:inline-block"></div>' : '<span class="text-dim">pending</span>'}</td>
             <td style="white-space:nowrap">
               ${f.status === 'indexed' ? `
-                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-dl-path="/projects/${esc(p.id)}/files/${esc(f.id)}/download-mrc" data-dl-name="${esc(f.filename)}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)" title="Download binary MARC file">↓ MRC</button>
-                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-dl-path="/projects/${esc(p.id)}/files/${esc(f.id)}/export-mrk" data-dl-name="${esc(f.filename.replace('.mrc','.mrk'))}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)" title="Download as MRK (MarcEdit format)">↓ MRK</button>
+                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-dl-path="/projects/${esc(p.id)}/files/${esc(f.id)}/download-mrc" data-dl-name="${esc(f.filename)}" onclick="dlBtn(this)" title="Download binary MARC file">↓ MRC</button>
+                <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px" data-dl-path="/projects/${esc(p.id)}/files/${esc(f.id)}/export-mrk" data-dl-name="${esc(f.filename.replace('.mrc','.mrk'))}" onclick="dlBtn(this)" title="Download as MRK (MarcEdit format)">↓ MRK</button>
               ` : ''}
               ${f.status === 'not_marc' ? `<button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--amber)" onclick="recategorizeFile('${esc(f.id)}','items')" title="Re-categorize as items file">→ Items</button>` : ''}
               <button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;color:var(--red)" data-file-id="${esc(f.id)}" data-filename="${esc(f.filename)}" onclick="confirmDeleteFile(this.dataset.fileId, this.dataset.filename)">✕</button>
@@ -5276,11 +5276,17 @@ async function authDownload(path, filename) {
     const a = document.createElement('a');
     a.href = blobUrl;
     a.download = filename || 'download';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(blobUrl);
   } catch (e) {
     toast('Download failed: ' + e.message, 'error');
   }
+}
+function dlBtn(el) {
+  authDownload(el.getAttribute('data-dl-path'), el.getAttribute('data-dl-name'));
+}
 }
 
 function downloadTemplateCSV(templateId, templateName) {
@@ -6217,7 +6223,7 @@ function _renderBatchResult(elId, r) {
     <div style="font-size:12px;margin-bottom:8px">
       <span class="badge badge-green">${r.records_modified.toLocaleString()} modified</span>
       <span class="text-dim" style="margin-left:8px">${r.records_processed.toLocaleString()} processed, ${r.modifications.toLocaleString()} changes</span>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="text-dim mono" style="font-size:10px">Output: ${esc(r.output_file)}</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(r.output_file.split('/').pop())}" data-dl-name="${esc(r.output_file.split('/').pop())}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="text-dim mono" style="font-size:10px">Output: ${esc(r.output_file)}</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(r.output_file.split('/').pop())}" data-dl-name="${esc(r.output_file.split('/').pop())}" onclick="dlBtn(this)">↓ MRC</button></div>
     </div>
     ${r.preview_samples?.length ? '<div style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:6px;max-height:150px;overflow:auto">' +
       r.preview_samples.map(s => '<div style="margin-bottom:4px"><span class="mono text-dim">rec ' + s.record + ' ' + esc(s.tag || '') + (s.sub ? '$' + esc(s.sub) : '') + ':</span> ' +
@@ -6488,7 +6494,7 @@ async function runRdaApply() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.fields_added + ' fields added</span>'
       + ' to ' + r.records_modified.toLocaleString() + ' of ' + r.records_processed.toLocaleString() + ' records'
-      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="dlBtn(this)">↓ MRC</button></div></div>';
     toast(r.fields_added + ' RDA fields generated', 'success');
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
@@ -6781,7 +6787,7 @@ async function runExtractRecords() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.matched_records.toLocaleString() + ' records extracted</span>'
       + ' out of ' + r.total_records.toLocaleString() + ' total'
-      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="dlBtn(this)">↓ MRC</button></div></div>';
     toast(r.matched_records + ' records extracted', 'success');
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
 }
@@ -6948,7 +6954,7 @@ async function runFileJoin() {
     });
     el.innerHTML = '<div style="font-size:12px"><span class="badge badge-green">' + r.total_records.toLocaleString() + ' records joined</span>'
       + (r.duplicates_skipped ? ' <span class="text-dim">(' + r.duplicates_skipped + ' duplicates skipped)</span>' : '')
-      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button></div></div>';
+      + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="mono text-dim" style="font-size:11px">Output: ' + esc(r.output_file) + '</span><button class="btn btn-ghost btn-sm" style="font-size:9px;padding:1px 5px" data-dl-path="/projects/' + esc(p.id) + '/download?filename=' + encodeURIComponent(r.output_file.split('/').pop()) + '" data-dl-name="' + esc(r.output_file.split('/').pop()) + '" onclick="dlBtn(this)">↓ MRC</button></div></div>';
     toast(r.total_records + ' records joined', 'success');
     loadFileList();
   } catch (e) { el.innerHTML = '<span class="text-red">' + esc(e.message) + '</span>'; }
@@ -7813,7 +7819,7 @@ async function renderS3Manifest() {
       <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
         <button class="btn btn-green" onclick="s3AcceptTransform()">Accept Build Results</button>
         <button class="btn btn-red" onclick="s3RejectTransform()">Reject &amp; Re-run</button>
-        <button class="btn btn-ghost" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" data-dl-name="${esc(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ Download MRC</button>
+        <button class="btn btn-ghost" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" data-dl-name="${esc(m.output_path ? m.output_path.split('/').pop() : 'output.mrc')}" onclick="dlBtn(this)">↓ Download MRC</button>
       </div>` : ''}`;
 
     window._s3PreviewIdx = 0;
@@ -7970,7 +7976,7 @@ async function renderS4History() {
           <td class="mono">${(v.record_count || 0).toLocaleString()}</td>
           <td class="text-dim">${new Date(v.created_at).toLocaleString()}</td>
           <td style="text-align:right;white-space:nowrap">
-            ${snapFile ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(snapDir)}" data-dl-name="${esc(snapFile)}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ MRC</button>` : ''}
+            ${snapFile ? `<button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(snapDir)}" data-dl-name="${esc(snapFile)}" onclick="dlBtn(this)">↓ MRC</button>` : ''}
             <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--red)" onclick="deleteVersion('${esc(v.id)}')">Delete</button>
           </td>
         </tr>`}).join('')}
@@ -8825,7 +8831,7 @@ async function renderRecReport() {
           </div>
           ${res.output_path ? `<div style="display:flex;align-items:center;gap:12px;margin-top:12px">
             <span class="text-dim mono" style="font-size:11px">Output: ${esc(res.output_path.split('/').pop())}</span>
-            <button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(res.output_path.split('/').pop())}" data-dl-name="${esc(res.output_path.split('/').pop())}" onclick="authDownload(this.dataset.dlPath,this.dataset.dlName)">↓ Download MRC</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:10px" data-dl-path="/projects/${esc(p.id)}/download?filename=${encodeURIComponent(res.output_path.split('/').pop())}" data-dl-name="${esc(res.output_path.split('/').pop())}" onclick="dlBtn(this)">↓ Download MRC</button>
           </div>` : ''}
         </div>
         <div id="rec-category-files" style="margin-top:16px"></div>`;
@@ -14853,6 +14859,9 @@ function _cpzShowRestartBanner(message) {
       </div>
     </div>`;
 }
+
+window.cpzUpload = cpzUpload;
+window.cpzAction = cpzAction;
 
 // ── System Status Dashboard ──────────────────────────────────────────
 
