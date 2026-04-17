@@ -5284,9 +5284,9 @@ async function authDownload(path, filename) {
     toast('Download failed: ' + e.message, 'error');
   }
 }
+
 function dlBtn(el) {
   authDownload(el.getAttribute('data-dl-path'), el.getAttribute('data-dl-name'));
-}
 }
 
 function downloadTemplateCSV(templateId, templateName) {
