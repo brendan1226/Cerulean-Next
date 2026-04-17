@@ -226,3 +226,40 @@ class PatronReportOut(BaseModel):
     state: str
     result: dict | None = None
     error: str | None = None
+
+
+# ── Phase 6: AI Fuzzy Patron Dedup ──────────────────────────────────────
+
+
+class PatronFuzzyDedupResponse(BaseModel):
+    task_id: str
+    message: str
+
+
+class PatronFuzzyDedupStatusResponse(BaseModel):
+    task_id: str | None
+    state: str
+    progress: dict | None = None
+    result: dict | None = None
+    error: str | None = None
+
+
+class PatronDedupClusterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    records: list
+    primary_index: int
+    match_key: str | None
+    confidence: float | None
+    reasoning: str | None
+    resolved: bool
+    dismissed: bool
+    created_at: datetime
+
+
+class PatronDedupClusterUpdate(BaseModel):
+    primary_index: int | None = None
+    resolved: bool | None = None
+    dismissed: bool | None = None

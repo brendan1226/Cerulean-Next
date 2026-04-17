@@ -17,12 +17,14 @@ import os
 import uuid
 from collections import Counter, defaultdict
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from cerulean.core.config import get_settings
+from cerulean.core.preferences import pref_enabled_sync
 from cerulean.tasks.audit import AuditLogger
 from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.helpers import check_paused as _check_paused
@@ -1459,3 +1461,368 @@ def _parse_ai_suggestions(raw: str) -> list[dict]:
         return data if isinstance(data, list) else []
     except json.JSONDecodeError:
         return []
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PHASE 6 — AI FUZZY PATRON DEDUPLICATION
+# ══════════════════════════════════════════════════════════════════════════
+# cerulean_ai_spec.md §7. Pre-filter with blocking (surname initial +
+# birth year), Levenshtein distance on surname ≤ 3, then batch pairs to
+# Claude for confidence scoring + reasoning. Results land as
+# PatronDedupCluster rows for engineer review.
+
+# Fields sent to Claude for each patron in a pair. Kept small to
+# respect token budgets.  Order matches the system prompt's schema.
+_DEDUP_FIELDS: list[str] = [
+    "cardnumber", "surname", "firstname", "dateofbirth",
+    "address", "city", "email", "phone",
+]
+
+_DEDUP_BATCH_SIZE = 30
+
+_DEDUP_MAX_PAIRS = 5000
+
+_DEDUP_SYSTEM_PROMPT = """You are an expert library-systems patron data migration specialist.
+You are helping a ByWater Solutions migration engineer identify probable duplicate
+patron records from a legacy ILS export.
+
+You will be given a batch of PATRON PAIRS. For each pair, both records share the
+same last-name initial and (if available) birth year, and have a close surname
+spelling. Your task: decide whether each pair represents the SAME person entered
+twice, or two genuinely different people.
+
+RULES:
+1. Output ONLY a JSON array — no preamble, no markdown fences, no commentary.
+2. Each item must have these keys exactly:
+     {
+       "pair_index":  <int — the 0-based index of this pair in the input>,
+       "is_duplicate": <bool — true if likely the same person>,
+       "confidence":  <int 0–100>,
+       "reasoning":   <1–2 sentence plain-English justification>
+     }
+3. Confidence calibration:
+     90–100  near-certain duplicate (name + DOB + address all align)
+     70–89   highly likely (2 of 3 strong signals match)
+     50–69   possible — the engineer should verify carefully
+     1–49    unlikely duplicate — probably different people
+     0       definitely not a duplicate
+4. When names match but DOB and address are both different, default to
+   is_duplicate=false unless there is a compelling signal (same email,
+   same phone, same cardnumber prefix suggesting a re-registration).
+5. Minor spelling variations (Jon/John, Smyth/Smith), transposed digits
+   in DOB (1984-03-21 vs 1984-03-12), and abbreviated vs full address
+   (St/Street, Ave/Avenue) should increase confidence, not decrease it.
+6. Never fabricate data. Base your answer on what is actually shown.
+7. Empty fields are unknown — do not treat two empty fields as matching.
+"""
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        curr = [i + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(
+                prev[j + 1] + 1,
+                curr[j] + 1,
+                prev[j] + (0 if ca == cb else 1),
+            ))
+        prev = curr
+    return prev[-1]
+
+
+def _blocking_key(row: dict) -> str | None:
+    """Return a blocking key for a patron row, or None if we can't form one.
+
+    Key = first letter of surname (lowered) + birth year (if present).
+    If no surname, the row is unblockable and excluded.
+    """
+    surname = (row.get("surname") or "").strip()
+    if not surname:
+        return None
+    initial = surname[0].lower()
+    dob = (row.get("dateofbirth") or "").strip()
+    year = ""
+    if dob:
+        # Accept YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY — extract 4-digit year
+        for part in dob.replace("/", "-").split("-"):
+            if len(part) == 4 and part.isdigit():
+                year = part
+                break
+    return f"{initial}:{year}" if year else f"{initial}:"
+
+
+def _extract_dedup_fields(row: dict, row_index: int) -> dict:
+    """Extract the subset of fields Claude needs for scoring."""
+    out = {"row_index": row_index}
+    for f in _DEDUP_FIELDS:
+        out[f] = (row.get(f) or "").strip()
+    return out
+
+
+def _build_dedup_user_prompt(pairs: list[tuple[dict, dict]]) -> str:
+    """Build the user message for a batch of patron pairs."""
+    lines = [f"PATRON PAIRS ({len(pairs)} pairs):\n"]
+    for i, (a, b) in enumerate(pairs):
+        lines.append(f"--- Pair {i} ---")
+        lines.append(f"  Patron A (row {a['row_index']}):")
+        for f in _DEDUP_FIELDS:
+            v = a.get(f, "")
+            if v:
+                lines.append(f"    {f}: {v}")
+        lines.append(f"  Patron B (row {b['row_index']}):")
+        for f in _DEDUP_FIELDS:
+            v = b.get(f, "")
+            if v:
+                lines.append(f"    {f}: {v}")
+        lines.append("")
+    lines.append("Score every pair. Return ONLY a JSON array.")
+    return "\n".join(lines)
+
+
+def _call_claude_for_dedup(user_message: str) -> str:
+    """Call Claude with the fuzzy dedup system prompt. Returns raw text."""
+    import anthropic
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    response = client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=4096,
+        system=_DEDUP_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    return response.content[0].text.strip()
+
+
+def _parse_dedup_response(raw: str) -> list[dict]:
+    """Parse Claude's fuzzy-dedup JSON response.
+
+    Expected shape::
+
+        [{"pair_index": 0, "is_duplicate": true, "confidence": 91,
+          "reasoning": "Same person — name + DOB + address match"}, ...]
+    """
+    raw = raw.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            raw = parts[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    clean: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("pair_index")
+        if not isinstance(idx, int):
+            continue
+        is_dup = item.get("is_duplicate")
+        if not isinstance(is_dup, bool):
+            continue
+        conf = item.get("confidence")
+        try:
+            conf_i = int(conf) if conf is not None else 0
+        except (TypeError, ValueError):
+            conf_i = 0
+        conf_i = max(0, min(100, conf_i))
+        reasoning = item.get("reasoning")
+        if reasoning is not None and not isinstance(reasoning, str):
+            reasoning = str(reasoning)
+        clean.append({
+            "pair_index": idx,
+            "is_duplicate": is_dup,
+            "confidence": conf_i,
+            "reasoning": reasoning,
+        })
+    return clean
+
+
+@celery_app.task(
+    bind=True,
+    name="cerulean.tasks.patrons.patron_fuzzy_dedup_task",
+    max_retries=0,
+    queue="patrons",
+)
+def patron_fuzzy_dedup_task(
+    self,
+    project_id: str,
+    user_id: str | None = None,
+) -> dict:
+    """Phase 6 — AI Fuzzy Patron Deduplication.
+
+    Reads the combined parsed patron CSV, blocks on (surname initial,
+    birth year), pre-filters pairs by Levenshtein distance on surname,
+    then batches candidate pairs to Claude for confidence scoring.
+    Results land as PatronDedupCluster rows for engineer review.
+
+    Re-running clears existing clusters and starts fresh.
+    """
+    from cerulean.models import PatronDedupCluster, PatronFile, Project
+
+    log = AuditLogger(project_id=project_id, stage=9, tag="[patron-dedup]")
+
+    try:
+        with Session(_engine) as db:
+            if not pref_enabled_sync(db, user_id, "ai.fuzzy_patron_dedup"):
+                log.info("ai.fuzzy_patron_dedup disabled — skipping")
+                return {"skipped": True, "reason": "feature_disabled"}
+
+            project = db.get(Project, project_id)
+            if not project:
+                log.error("Project not found")
+                return {"error": "project_not_found"}
+
+        # Locate the parsed patron CSV
+        project_dir = Path(settings.data_root) / project_id
+        csv_path = project_dir / "patrons_transformed.csv"
+        if not csv_path.is_file():
+            csv_path = project_dir / "parsed.csv"
+        if not csv_path.is_file():
+            log.error("No parsed patron CSV found")
+            return {"error": "no_patron_csv"}
+
+        # Read all patron rows
+        with open(str(csv_path), newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        if len(rows) < 2:
+            log.info("Fewer than 2 patron rows — nothing to deduplicate")
+            return {"total_rows": len(rows), "clusters_found": 0, "pairs_sent": 0}
+
+        log.info(f"Read {len(rows):,} patron rows from {csv_path.name}")
+
+        self.update_state(state="PROGRESS", meta={
+            "stage": "blocking",
+            "total_rows": len(rows),
+        })
+
+        # Build blocking groups: key → list of (row_index, extracted_fields)
+        blocks: dict[str, list[dict]] = defaultdict(list)
+        for i, row in enumerate(rows):
+            bk = _blocking_key(row)
+            if bk is not None:
+                blocks[bk].append(_extract_dedup_fields(row, i))
+
+        log.info(
+            f"Blocking produced {len(blocks):,} groups from "
+            f"{sum(len(v) for v in blocks.values()):,} blockable rows"
+        )
+
+        # Generate candidate pairs with Levenshtein ≤ 3 on surname
+        candidate_pairs: list[tuple[dict, dict]] = []
+        for _key, group in blocks.items():
+            if len(group) < 2:
+                continue
+            for a, b in combinations(group, 2):
+                sn_a = a.get("surname", "").lower()
+                sn_b = b.get("surname", "").lower()
+                if _levenshtein(sn_a, sn_b) <= 3:
+                    candidate_pairs.append((a, b))
+                    if len(candidate_pairs) >= _DEDUP_MAX_PAIRS:
+                        break
+            if len(candidate_pairs) >= _DEDUP_MAX_PAIRS:
+                break
+
+        log.info(f"Levenshtein pre-filter produced {len(candidate_pairs):,} candidate pairs")
+
+        if not candidate_pairs:
+            return {"total_rows": len(rows), "clusters_found": 0, "pairs_sent": 0}
+
+        self.update_state(state="PROGRESS", meta={
+            "stage": "scoring",
+            "candidate_pairs": len(candidate_pairs),
+            "batches_total": (len(candidate_pairs) + _DEDUP_BATCH_SIZE - 1) // _DEDUP_BATCH_SIZE,
+            "batches_done": 0,
+        })
+
+        # Clear existing clusters
+        with Session(_engine) as db:
+            db.execute(
+                delete(PatronDedupCluster)
+                .where(PatronDedupCluster.project_id == project_id)
+            )
+            db.commit()
+
+        # Batch pairs to Claude
+        batches_done = 0
+        total_clusters = 0
+        total_pairs_sent = 0
+        total_batches = (len(candidate_pairs) + _DEDUP_BATCH_SIZE - 1) // _DEDUP_BATCH_SIZE
+
+        for batch_start in range(0, len(candidate_pairs), _DEDUP_BATCH_SIZE):
+            _check_paused(project_id, self)
+            batch = candidate_pairs[batch_start:batch_start + _DEDUP_BATCH_SIZE]
+            total_pairs_sent += len(batch)
+
+            prompt = _build_dedup_user_prompt(batch)
+            try:
+                raw = _call_claude_for_dedup(prompt)
+            except Exception as exc:
+                log.error(f"Claude call failed (batch {batches_done}): {exc}")
+                batches_done += 1
+                continue
+
+            results = _parse_dedup_response(raw)
+
+            with Session(_engine) as db:
+                for r in results:
+                    idx = r["pair_index"]
+                    if idx < 0 or idx >= len(batch):
+                        continue
+                    if not r["is_duplicate"]:
+                        continue
+                    if r["confidence"] < 50:
+                        continue
+                    a, b = batch[idx]
+                    cluster = PatronDedupCluster(
+                        project_id=project_id,
+                        records=[a, b],
+                        primary_index=0,
+                        match_key=f"{a.get('surname','')}/{b.get('surname','')}",
+                        confidence=float(r["confidence"]),
+                        reasoning=r.get("reasoning"),
+                        resolved=False,
+                        dismissed=False,
+                    )
+                    db.add(cluster)
+                    total_clusters += 1
+                db.commit()
+
+            batches_done += 1
+            self.update_state(state="PROGRESS", meta={
+                "stage": "scoring",
+                "candidate_pairs": len(candidate_pairs),
+                "batches_total": total_batches,
+                "batches_done": batches_done,
+                "clusters_so_far": total_clusters,
+            })
+
+        log.complete(
+            f"Fuzzy patron dedup complete — {len(rows):,} rows, "
+            f"{len(candidate_pairs):,} candidate pairs, "
+            f"{total_clusters} probable duplicates found. "
+            f"Engineer review required."
+        )
+        return {
+            "total_rows": len(rows),
+            "candidate_pairs": len(candidate_pairs),
+            "pairs_sent": total_pairs_sent,
+            "clusters_found": total_clusters,
+            "batches": batches_done,
+        }
+
+    except Exception as exc:
+        log.error(f"Fuzzy patron dedup failed: {exc}")
+        raise

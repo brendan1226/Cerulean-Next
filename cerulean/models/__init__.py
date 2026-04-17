@@ -369,6 +369,7 @@ class Project(Base):
     patron_column_maps: Mapped[list["PatronColumnMap"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_value_rules: Mapped[list["PatronValueRule"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     patron_scan_results: Mapped[list["PatronScanResult"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    patron_dedup_clusters: Mapped[list["PatronDedupCluster"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     transform_manifests: Mapped[list["TransformManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     push_manifests: Mapped[list["PushManifest"]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -870,6 +871,46 @@ class PatronScanResult(Base):
     scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     project: Mapped["Project"] = relationship(back_populates="patron_scan_results")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# PATRON DEDUP CLUSTER (Phase 6 — AI Fuzzy Patron Dedup)
+# ══════════════════════════════════════════════════════════════════════════
+
+class PatronDedupCluster(Base):
+    """AI-scored probable patron duplicate pair.
+
+    Each row represents two (or more) patron CSV rows that passed the
+    blocking + Levenshtein pre-filter and were scored by Claude. The
+    ``records`` JSONB holds the row data sent to the AI so the engineer
+    can review side-by-side without re-reading the CSV.
+
+    Shape of ``records``::
+
+        [
+          {"row_index": 42, "surname": "Smith", "firstname": "John", ...},
+          {"row_index": 108, "surname": "Smith", "firstname": "Jon", ...},
+        ]
+    """
+
+    __tablename__ = "patron_dedup_clusters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), nullable=False)
+
+    records: Mapped[list] = mapped_column(JSONB, nullable=False)
+    primary_index: Mapped[int] = mapped_column(Integer, default=0)
+    match_key: Mapped[str | None] = mapped_column(String(200))
+
+    confidence: Mapped[float | None] = mapped_column(Float)   # 0–100
+    reasoning: Mapped[str | None] = mapped_column(Text)
+
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    project: Mapped["Project"] = relationship(back_populates="patron_dedup_clusters")
 
 
 # ══════════════════════════════════════════════════════════════════════════

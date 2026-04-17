@@ -2,6 +2,54 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.5.0] — 2026-04-16 — AI Phase 6: Fuzzy Patron Deduplication
+
+Sixth and final near-term AI feature from `cerulean_ai_spec.md`. Patron
+records from legacy ILS exports often contain near-duplicates — same
+person entered twice with a slightly different name, reformatted DOB, or
+abbreviated address. This phase pre-filters on blocking keys + edit
+distance then hands Claude the hard calls.
+
+### Feature flag
+
+`ai.fuzzy_patron_dedup` — default off. When enabled, a "Fuzzy Dedup"
+tab appears on Step 8 → Patrons.
+
+### Backend
+
+- **`POST /projects/{id}/patrons/fuzzy-dedup`** — gated by
+  `require_preference("ai.fuzzy_patron_dedup")`. 409 when no parsed CSV.
+- **`GET .../fuzzy-dedup/status?task_id=…`** — stateless polling.
+- **`GET .../fuzzy-dedup/clusters`** — list clusters for review,
+  ordered by confidence descending. Optional `?resolved=` filter.
+- **`PATCH .../fuzzy-dedup/clusters/{id}`** — resolve or dismiss.
+- **`patron_fuzzy_dedup_task`** (Celery, `patrons` queue):
+  * Reads combined patron CSV.
+  * Blocks on `(surname[0], birth_year)`.
+  * Generates pairs within each block where Levenshtein on surname ≤ 3.
+  * Batches 30 pairs per Claude call, capped at 5,000 total pairs.
+  * Only stores pairs Claude flags as `is_duplicate=true` with
+    `confidence ≥ 50`.
+  * Re-running clears and rebuilds from scratch.
+- **Migration `y5s0t1u2v3w4_add_patron_dedup_clusters.py`** — new
+  `patron_dedup_clusters` table, separate from the MARC-oriented
+  `dedup_clusters`.
+
+### Frontend (Step 8 → Patrons → Fuzzy Dedup tab)
+
+- Card-per-cluster layout with side-by-side field comparison table.
+- Differing values highlighted in amber for quick triage.
+- Confidence badge (High/Med/Low) + AI reasoning text.
+- "Keep Primary" and "Not a Duplicate" buttons per cluster.
+- Live progress during scoring — shows batch count + clusters found.
+
+### Tests
+
+Added `tests/tasks/test_patron_fuzzy_dedup.py` — 48 tests covering
+Levenshtein, blocking keys, field extraction, prompt shape, Claude
+response parsing, confidence clamping, system-prompt invariants, and
+config sanity. Full suite now at **347 passing**.
+
 ## [2.4.0] — 2026-04-16 — AI Phase 5: Code Reconciliation
 
 Fifth of six AI-assisted features from `cerulean_ai_spec.md`. Matching
