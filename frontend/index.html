@@ -1882,19 +1882,30 @@ function updateBreadcrumb(view) {
 }
 
 // ── API helpers ──────────────────────────────────────────────────────
+const _apiCache = {};
+const _API_CACHE_TTL = 5000;
 async function api(method, path, body = null) {
+  // Short-lived GET cache — deduplicates the same endpoint called by
+  // multiple renderers during a single navigation (5-second TTL).
+  if (method === 'GET' && !body) {
+    const cached = _apiCache[path];
+    if (cached && Date.now() - cached.ts < _API_CACHE_TTL) return cached.data;
+  }
   try {
-    const opts = {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-    };
+    const headers = { 'Content-Type': 'application/json' };
+    if (_authToken) headers['Authorization'] = `Bearer ${_authToken}`;
+    const opts = { method, headers };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}${path}`, opts);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       throw new Error(err.detail?.message || err.message || `HTTP ${res.status}`);
     }
-    return res.status === 204 ? null : res.json();
+    const data = res.status === 204 ? null : await res.json();
+    if (method === 'GET' && !body) {
+      _apiCache[path] = { data, ts: Date.now() };
+    }
+    return data;
   } catch (e) {
     toast(e.message, 'error');
     throw e;
@@ -5697,8 +5708,21 @@ let _authToken = sessionStorage.getItem('cerulean_token') || '';
 let _currentUser = null;
 try { _currentUser = JSON.parse(sessionStorage.getItem('cerulean_user') || 'null'); } catch {}
 
-// Override api() to include auth header
+// Override api() to include auth header + use GET cache
 window.api = async function(method, path, body = null) {
+  if (method === 'GET' && !body) {
+    const cached = _apiCache[path];
+    if (cached && Date.now() - cached.ts < _API_CACHE_TTL) return cached.data;
+  }
+  if (method !== 'GET') {
+    // Invalidate cache for this project's endpoints on mutations
+    const projMatch = path.match(/^\/projects\/([^/]+)/);
+    if (projMatch) {
+      for (const k of Object.keys(_apiCache)) {
+        if (k.startsWith(`/projects/${projMatch[1]}`)) delete _apiCache[k];
+      }
+    }
+  }
   try {
     const opts = {
       method,
@@ -5714,7 +5738,11 @@ window.api = async function(method, path, body = null) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       throw new Error(err.detail?.message || err.message || `HTTP ${res.status}`);
     }
-    return res.status === 204 ? null : res.json();
+    const data = res.status === 204 ? null : await res.json();
+    if (method === 'GET' && !body) {
+      _apiCache[path] = { data, ts: Date.now() };
+    }
+    return data;
   } catch (e) {
     toast(e.message, 'error');
     throw e;
@@ -15224,8 +15252,9 @@ window.saveSystemSettings = async function() {
   }
   updateBreadcrumb(view);
 
-  // Restore active tasks for the current project on any navigation
-  if (state.currentProject && state.currentProject.id) {
+  // Restore active tasks only when switching projects (not on every navigation)
+  if (state.currentProject && state.currentProject.id && state.currentProject.id !== window._lastRestoredProjectId) {
+    window._lastRestoredProjectId = state.currentProject.id;
     restoreActiveTasks(state.currentProject.id);
   }
 };
@@ -15236,10 +15265,15 @@ window.saveSystemSettings = async function() {
   displayCurrentUser();
   // Validate token in background — shows login modal if expired
   checkAuth();
-  // Navigate and start health check
+  // Navigate and start health check (pauses when tab is hidden)
   navigate('dashboard');
   checkHealth();
-  setInterval(checkHealth, 30000);
+  setInterval(() => { if (!document.hidden) checkHealth(); }, 30000);
+
+  // Pause all polling when tab is hidden
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.currentView === 'system-status') _sysStatusRefresh();
+  });
 })();
 </script>
 </body>
