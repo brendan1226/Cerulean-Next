@@ -2,6 +2,54 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.8.0] — 2026-04-16 — System Status Dashboard
+
+Admin-only dashboard for monitoring system health, active tasks, errors,
+and worker status across all projects.
+
+### Backend (`cerulean/api/routers/system_status.py`)
+
+- **`GET /system/status`** — aggregated health snapshot: worker health
+  (Celery inspect ping/stats/active), queue depths (Redis LLEN), Redis
+  memory, active task count, 24h error count, computed alerts, and
+  recommended actions.
+- **`GET /system/status/tasks`** — all running tasks across every project,
+  enriched with Celery state + duration. Includes tasks from
+  TransformManifest, PushManifest, and live worker inspection.
+- **`GET /system/status/errors`** — recent errors from AuditEvent table,
+  grouped by tag with frequency summary.
+- **`POST /system/status/actions/revoke-task`** — terminate a specific
+  Celery task (for hung processes).
+- **`POST /system/status/actions/purge-queue`** — clear a stuck queue.
+
+### Alert detection
+
+- **No workers** (critical) — no Celery workers responding to ping.
+- **Queue backlog** (warn) — more than 50 tasks pending in a queue.
+- **Hung task** (critical) — task running for > 1 hour.
+- **Long-running** (info) — task running for > 30 minutes.
+
+Each alert generates a recommended action: restart workers, revoke hung
+task, or scale workers.
+
+### Frontend (System Status page)
+
+- Sidebar nav item: "System Status" with heartbeat icon.
+- **Alerts banner** — green "all healthy" or amber with alert list.
+- **Worker cards** — per-worker health: online status, active tasks,
+  pool size.
+- **Queue depth bars** — visual bar chart, color-coded (green < 10,
+  blue < 50, amber > 50).
+- **Redis metrics** — memory usage, peak, connected clients.
+- **Active tasks table** — all projects, sortable, with duration
+  highlighting (amber for > 30m, bold amber for > 1h) and inline
+  Revoke button.
+- **Error feed** — last 24h errors with tag-grouped frequency badges,
+  expandable table.
+- **Recommended actions** — actionable cards with execute buttons for
+  revoke-task, manual instructions for restart/scale.
+- **Auto-refresh** every 30 seconds while on the page.
+
 ## [2.7.0] — 2026-04-16 — Plugin System Phase C: UI Tab Injection
 
 Plugins can now contribute tabs to stage pages in the frontend.

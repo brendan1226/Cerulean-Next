@@ -1286,6 +1286,9 @@
       <div class="nav-item" data-view="cerulean-plugins" onclick="navigate('cerulean-plugins')">
         <span class="nav-icon">◈</span> Cerulean Plugins
       </div>
+      <div class="nav-item" data-view="system-status" onclick="navigate('system-status')">
+        <span class="nav-icon">♥</span> System Status
+      </div>
       <div class="nav-item" data-view="system-settings" onclick="navigate('system-settings')">
         <span class="nav-icon">⚙</span> System Settings
       </div>
@@ -1791,6 +1794,7 @@ function navigate(view, params = {}) {
     preferences:  window.renderPreferences,
     'cerulean-plugins': window.renderCeruleanPlugins,
     'system-settings': window.renderSystemSettings,
+    'system-status': window.renderSystemStatus,
   };
   const renderer = renders[view];
   if (renderer) {
@@ -1865,6 +1869,7 @@ function updateBreadcrumb(view) {
     preferences: 'My Preferences',
     'cerulean-plugins': 'Cerulean Plugins',
     'system-settings': 'System Settings',
+    'system-status': 'System Status',
   };
   const crumb = document.getElementById('breadcrumb');
   const p = state.currentProject;
@@ -14838,6 +14843,212 @@ function _cpzShowRestartBanner(message) {
     </div>`;
 }
 
+// ── System Status Dashboard ──────────────────────────────────────────
+
+window.renderSystemStatus = async function(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">System Status</div>
+        <div class="page-subtitle">Health monitoring and diagnostics</div>
+      </div>
+      <button class="btn btn-ghost" onclick="renderSystemStatus(document.getElementById('view'))">Refresh</button>
+    </div>
+    <div id="sys-status-content"><div class="loading-msg"><div class="spinner"></div>Loading system health...</div></div>`;
+
+  try {
+    const [status, tasks, errors] = await Promise.all([
+      window.api('GET', '/system/status'),
+      window.api('GET', '/system/status/tasks'),
+      window.api('GET', '/system/status/errors?hours=24&limit=50'),
+    ]);
+    const wrap = document.getElementById('sys-status-content');
+    if (!wrap) return;
+    wrap.innerHTML = _sysStatusAlerts(status) + _sysStatusWorkers(status) + _sysStatusQueues(status) + _sysStatusRedis(status) + _sysStatusTasks(tasks) + _sysStatusErrors(errors) + _sysStatusActions(status);
+  } catch(e) {
+    const wrap = document.getElementById('sys-status-content');
+    if (wrap) wrap.innerHTML = `<div class="text-amber" style="padding:16px">Failed to load system status: ${esc(e.message || e)}</div>`;
+  }
+};
+
+function _sysStatusAlerts(status) {
+  const alerts = status.alerts || [];
+  if (!alerts.length) return `<div class="card" style="margin-bottom:16px;border-left:3px solid var(--green)">
+    <div style="padding:12px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:20px">&#10003;</span>
+      <div><strong style="color:var(--green)">All systems healthy</strong>
+        <div class="text-dim" style="font-size:12px">${status.active_task_count || 0} active task(s), ${status.error_count_24h || 0} error(s) in 24h</div>
+      </div>
+    </div>
+  </div>`;
+
+  return `<div class="card" style="margin-bottom:16px;border-left:3px solid var(--amber)">
+    <div style="padding:12px">
+      <strong style="color:var(--amber)">${alerts.length} Alert${alerts.length===1?'':'s'}</strong>
+      <div style="margin-top:8px">${alerts.map(a => `
+        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:13px">
+          <span class="badge ${a.severity==='critical'?'badge-amber':'badge-dim'}">${esc(a.severity)}</span>
+          <span>${esc(a.message)}</span>
+        </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function _sysStatusWorkers(status) {
+  const workers = status.workers || [];
+  if (!workers.length) return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Workers</span></div>
+    <div class="text-amber" style="padding:8px">No workers responding. Background tasks will not run.</div>
+  </div>`;
+
+  return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Celery Workers</span></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;padding:4px 0">
+      ${workers.map(w => `
+        <div style="flex:1;min-width:200px;border:1px solid var(--border);border-radius:6px;padding:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong style="font-size:13px">${esc(w.name.split('@')[0])}</strong>
+            <span class="badge ${w.status==='online'?'badge-green':'badge-amber'}">${esc(w.status)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-secondary)">
+            <div>Active tasks: <strong>${w.active_tasks}</strong></div>
+            <div>Pool size: ${w.pool_size || '?'}</div>
+          </div>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+function _sysStatusQueues(status) {
+  const queues = status.queues || [];
+  const maxDepth = Math.max(1, ...queues.map(q => q.depth));
+  return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Queue Depths</span></div>
+    <div style="display:grid;grid-template-columns:120px 1fr 40px;gap:4px 12px;font-size:12px;align-items:center">
+      ${queues.map(q => {
+        const pct = maxDepth > 0 ? Math.max(2, (q.depth / maxDepth) * 100) : 2;
+        const color = q.depth > 50 ? 'var(--amber)' : q.depth > 10 ? 'var(--cerulean)' : 'var(--green)';
+        return `
+          <span class="mono">${esc(q.queue)}</span>
+          <div style="height:16px;background:var(--bg-secondary);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${color};border-radius:3px;transition:width 0.3s"></div>
+          </div>
+          <span style="text-align:right;font-weight:600">${q.depth}</span>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function _sysStatusRedis(status) {
+  const r = status.redis || {};
+  if (r.error) return '';
+  return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Redis</span></div>
+    <div style="display:flex;gap:24px;font-size:12px;padding:4px 0">
+      <div>Memory: <strong>${esc(r.used_memory_human || '?')}</strong></div>
+      <div>Peak: <strong>${esc(r.used_memory_peak_human || '?')}</strong></div>
+      <div>Clients: <strong>${r.connected_clients || '?'}</strong></div>
+    </div>
+  </div>`;
+}
+
+function _sysStatusTasks(data) {
+  const tasks = data.tasks || [];
+  if (!tasks.length) return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Active Tasks</span></div>
+    <div class="text-dim" style="padding:8px;font-size:12px">No tasks currently running.</div>
+  </div>`;
+
+  return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Active Tasks (${tasks.length})</span></div>
+    <div style="max-height:400px;overflow:auto">
+      <table class="data-table" style="font-size:11px;width:100%">
+        <thead><tr><th>Type</th><th>Project</th><th>Worker</th><th>Status</th><th>Duration</th><th></th></tr></thead>
+        <tbody>${tasks.map(t => {
+          const dur = t.duration_sec;
+          const durStr = dur != null ? (dur > 3600 ? `${(dur/3600).toFixed(1)}h` : dur > 60 ? `${Math.round(dur/60)}m` : `${Math.round(dur)}s`) : '?';
+          const isLong = dur && dur > 1800;
+          const isHung = dur && dur > 3600;
+          return `<tr style="${isHung ? 'background:rgba(245,158,11,0.08)' : ''}">
+            <td><span class="badge badge-dim">${esc(t.type || t.task_name || '?')}</span></td>
+            <td class="mono" style="max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${esc(t.project_id||'')}">${esc((t.project_id||'').slice(0,8))}</td>
+            <td class="text-dim">${esc((t.worker||'').split('@')[0] || '—')}</td>
+            <td><span class="badge ${t.status==='PROGRESS'?'badge-cerulean':t.status==='RUNNING'?'badge-green':'badge-dim'}">${esc(t.status)}</span></td>
+            <td style="${isHung?'color:var(--amber);font-weight:600':''}">${durStr}</td>
+            <td>${isLong ? `<button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--amber)" onclick="sysRevokeTask('${esc(t.task_id)}')">Revoke</button>` : ''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function _sysStatusErrors(data) {
+  const errors = data.errors || [];
+  const summary = data.summary || [];
+  if (!errors.length) return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Recent Errors (24h)</span></div>
+    <div class="text-dim" style="padding:8px;font-size:12px">No errors in the last 24 hours.</div>
+  </div>`;
+
+  return `<div class="card" style="margin-bottom:16px">
+    <div class="card-header"><span class="card-title">Recent Errors (24h) — ${errors.length} total</span></div>
+    ${summary.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      ${summary.map(s => `<span class="badge badge-amber" title="Latest: ${esc(s.latest||'')}">${esc(s.tag)} (${s.count})</span>`).join('')}
+    </div>` : ''}
+    <div style="max-height:300px;overflow:auto">
+      <table class="data-table" style="font-size:11px;width:100%">
+        <thead><tr><th>Time</th><th>Tag</th><th>Project</th><th>Message</th></tr></thead>
+        <tbody>${errors.slice(0, 30).map(e => `<tr>
+          <td class="text-dim" style="white-space:nowrap">${esc((e.created_at||'').replace('T',' ').slice(0,19))}</td>
+          <td><span class="badge badge-dim">${esc(e.tag||'?')}</span></td>
+          <td class="mono" style="max-width:80px;overflow:hidden;text-overflow:ellipsis">${esc((e.project_id||'').slice(0,8))}</td>
+          <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis" title="${esc(e.message||'')}">${esc(e.message||'')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function _sysStatusActions(status) {
+  const actions = status.recommended_actions || [];
+  if (!actions.length) return '';
+
+  return `<div class="card" style="margin-bottom:16px;border-left:3px solid var(--cerulean)">
+    <div class="card-header"><span class="card-title">Recommended Actions</span></div>
+    ${actions.map(a => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);gap:12px">
+        <div>
+          <div style="font-size:13px;font-weight:600">${esc(a.label)}</div>
+          <div style="font-size:12px;color:var(--text-secondary)">${esc(a.description)}</div>
+        </div>
+        ${a.action_type === 'revoke_task' && a.task_id
+          ? `<button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="sysRevokeTask('${esc(a.task_id)}')">Revoke Task</button>`
+          : '<span class="badge badge-dim">Manual</span>'}
+      </div>`).join('')}
+  </div>`;
+}
+
+async function sysRevokeTask(taskId) {
+  if (!confirm('Revoke this task? It will be terminated.')) return;
+  try {
+    await window.api('POST', '/system/status/actions/revoke-task', { task_id: taskId });
+    toast('Task revocation signal sent', 'success');
+    setTimeout(() => renderSystemStatus(document.getElementById('view')), 2000);
+  } catch(e) {
+    toast('Failed: ' + (e.message || e), 'error');
+  }
+}
+window.sysRevokeTask = sysRevokeTask;
+
+// Auto-refresh every 30 seconds when on the System Status page
+setInterval(() => {
+  if (state.currentView === 'system-status') {
+    renderSystemStatus(document.getElementById('view'));
+  }
+}, 30000);
+
 // ── System Settings page ─────────────────────────────────────────────
 
 window.renderSystemSettings = async function(el) {
@@ -14943,6 +15154,7 @@ window.saveSystemSettings = async function() {
     'cerulean-plugins': window.renderCeruleanPlugins,
     'system-logs':  window.renderSystemLogs,
     'system-settings': window.renderSystemSettings,
+    'system-status': window.renderSystemStatus,
   };
   const renderer = renders[view];
   if (renderer) {
