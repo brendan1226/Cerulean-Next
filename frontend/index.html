@@ -14846,7 +14846,7 @@ function _cpzShowRestartBanner(message) {
 // ── System Status Dashboard ──────────────────────────────────────────
 
 window.renderSystemStatus = async function(el) {
-  // Only render the chrome once — subsequent calls just refresh data
+  window._sysStatusAuthFailed = false;
   if (!document.getElementById('sys-status-content')) {
     el.innerHTML = `
       <div class="page-header">
@@ -14861,9 +14861,12 @@ window.renderSystemStatus = async function(el) {
   await _sysStatusRefresh();
 };
 
+window._sysStatusAuthFailed = false;
+
 async function _sysStatusRefresh() {
   const wrap = document.getElementById('sys-status-content');
   if (!wrap) return;
+  if (window._sysStatusAuthFailed) return;
   try {
     const [status, tasks, errors] = await Promise.all([
       window.api('GET', '/system/status'),
@@ -14872,7 +14875,13 @@ async function _sysStatusRefresh() {
     ]);
     wrap.innerHTML = _sysStatusAlerts(status) + _sysStatusWorkers(status) + _sysStatusQueues(status) + _sysStatusRedis(status) + _sysStatusTasks(tasks) + _sysStatusErrors(errors) + _sysStatusActions(status);
   } catch(e) {
-    wrap.innerHTML = `<div class="text-amber" style="padding:16px">Failed to load system status: ${esc(e.message || e)}</div>`;
+    const msg = (e && e.message) || String(e);
+    if (msg.includes('401') || msg.includes('Unauthorized')) {
+      window._sysStatusAuthFailed = true;
+      wrap.innerHTML = '<div class="text-amber" style="padding:16px">Session expired. Please refresh the page to log in again.</div>';
+    } else {
+      wrap.innerHTML = `<div class="text-amber" style="padding:16px">Failed to load system status: ${esc(msg)}</div>`;
+    }
   }
 }
 window._sysStatusRefresh = _sysStatusRefresh;
