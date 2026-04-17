@@ -5261,23 +5261,17 @@ async function seedSampleTemplate() {
 // ── Authenticated file download helper ───────────────────────────────
 // All download links to /api/v1/* must use this instead of <a href>
 // because direct links don't include the JWT Authorization header.
-async function authDownload(path, filename) {
-  try {
-    const url = path.startsWith('http') ? path : (path.startsWith('/api/') ? window.location.origin + path : `${API_BASE}${path}`);
-    const res = await fetch(url, {
-      headers: _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {},
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename || 'download';
-    a.click();
-    URL.revokeObjectURL(blobUrl);
-  } catch (e) {
-    toast('Download failed: ' + e.message, 'error');
-  }
+function authDownload(path, filename) {
+  const base = path.startsWith('http') ? path : (path.startsWith('/api/') ? path : `${API_BASE}${path}`);
+  const sep = base.includes('?') ? '&' : '?';
+  const url = `${base}${sep}token=${encodeURIComponent(_authToken)}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 1000);
 }
 
 function dlBtn(el) {

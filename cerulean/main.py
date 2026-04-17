@@ -189,9 +189,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not settings.google_client_id:
             return await call_next(request)
 
-        # Extract and validate JWT
+        # Extract and validate JWT — from header or query param (downloads)
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
+        if not token:
+            token = request.query_params.get("token", "").strip()
         if not token:
             return JSONResponse(
                 status_code=401,
