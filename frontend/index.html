@@ -14846,33 +14846,40 @@ function _cpzShowRestartBanner(message) {
 // ── System Status Dashboard ──────────────────────────────────────────
 
 window.renderSystemStatus = async function(el) {
-  el.innerHTML = `
-    <div class="page-header">
-      <div>
-        <div class="page-title">System Status</div>
-        <div class="page-subtitle">Health monitoring and diagnostics</div>
+  // Only render the chrome once — subsequent calls just refresh data
+  if (!document.getElementById('sys-status-content')) {
+    el.innerHTML = `
+      <div class="page-header">
+        <div>
+          <div class="page-title">System Status</div>
+          <div class="page-subtitle">Health monitoring and diagnostics</div>
+        </div>
+        <button class="btn btn-ghost" onclick="_sysStatusRefresh()">Refresh</button>
       </div>
-      <button class="btn btn-ghost" onclick="renderSystemStatus(document.getElementById('view'))">Refresh</button>
-    </div>
-    <div id="sys-status-content"><div class="loading-msg"><div class="spinner"></div>Loading system health...</div></div>`;
+      <div id="sys-status-content"><div class="loading-msg"><div class="spinner"></div>Loading system health...</div></div>`;
+  }
+  await _sysStatusRefresh();
+};
 
+async function _sysStatusRefresh() {
+  const wrap = document.getElementById('sys-status-content');
+  if (!wrap) return;
   try {
     const [status, tasks, errors] = await Promise.all([
       window.api('GET', '/system/status'),
       window.api('GET', '/system/status/tasks'),
       window.api('GET', '/system/status/errors?hours=24&limit=50'),
     ]);
-    const wrap = document.getElementById('sys-status-content');
-    if (!wrap) return;
     wrap.innerHTML = _sysStatusAlerts(status) + _sysStatusWorkers(status) + _sysStatusQueues(status) + _sysStatusRedis(status) + _sysStatusTasks(tasks) + _sysStatusErrors(errors) + _sysStatusActions(status);
   } catch(e) {
-    const wrap = document.getElementById('sys-status-content');
-    if (wrap) wrap.innerHTML = `<div class="text-amber" style="padding:16px">Failed to load system status: ${esc(e.message || e)}</div>`;
+    wrap.innerHTML = `<div class="text-amber" style="padding:16px">Failed to load system status: ${esc(e.message || e)}</div>`;
   }
-};
+}
+window._sysStatusRefresh = _sysStatusRefresh;
 
 function _sysStatusAlerts(status) {
   const alerts = status.alerts || [];
+  const actions = status.recommended_actions || [];
   if (!alerts.length) return `<div class="card" style="margin-bottom:16px;border-left:3px solid var(--green)">
     <div style="padding:12px;display:flex;align-items:center;gap:8px">
       <span style="font-size:20px">&#10003;</span>
@@ -14885,15 +14892,45 @@ function _sysStatusAlerts(status) {
   return `<div class="card" style="margin-bottom:16px;border-left:3px solid var(--amber)">
     <div style="padding:12px">
       <strong style="color:var(--amber)">${alerts.length} Alert${alerts.length===1?'':'s'}</strong>
-      <div style="margin-top:8px">${alerts.map(a => `
-        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;font-size:13px">
-          <span class="badge ${a.severity==='critical'?'badge-amber':'badge-dim'}">${esc(a.severity)}</span>
-          <span>${esc(a.message)}</span>
-        </div>`).join('')}
+      <div style="margin-top:8px">${alerts.map(a => {
+        const action = actions.find(ac =>
+          (ac.action_type === 'revoke_task' && a.type === 'hung_task' && ac.task_id === a.task_id) ||
+          (ac.action_type === 'manual' && a.type === ac.severity && a.type === 'no_workers')
+        ) || actions.find(ac => a.type === 'no_workers' && ac.action_type === 'manual') || null;
+        let actionBtn = '';
+        if (a.type === 'hung_task' && a.task_id) {
+          actionBtn = `<button class="btn btn-sm btn-primary" style="white-space:nowrap;font-size:11px" onclick="sysRevokeTask('${esc(a.task_id)}')">Revoke Task</button>`;
+        } else if (a.type === 'no_workers') {
+          actionBtn = `<button class="btn btn-sm btn-primary" style="white-space:nowrap;font-size:11px" onclick="sysRestartWorkers(this)">Restart Workers</button>`;
+        }
+        return `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:13px;justify-content:space-between">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="badge ${a.severity==='critical'?'badge-amber':'badge-dim'}">${esc(a.severity)}</span>
+            <span>${esc(a.message)}</span>
+          </div>
+          ${actionBtn}
+        </div>`;
+      }).join('')}
       </div>
     </div>
   </div>`;
 }
+
+async function sysRestartWorkers(btn) {
+  if (!confirm('Restart all Celery worker containers? Running tasks will be interrupted.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting...'; }
+  try {
+    const r = await window.api('POST', '/system/status/actions/restart-workers');
+    const summary = (r.results || []).map(c => `${c.container}: ${c.status}`).join(', ');
+    toast('Workers restarting: ' + summary, 'success');
+    setTimeout(_sysStatusRefresh, 8000);
+  } catch(e) {
+    toast('Restart failed: ' + (e.message || e), 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Restart Workers'; }
+}
+window.sysRestartWorkers = sysRestartWorkers;
 
 function _sysStatusWorkers(status) {
   const workers = status.workers || [];
@@ -15025,6 +15062,8 @@ function _sysStatusActions(status) {
         </div>
         ${a.action_type === 'revoke_task' && a.task_id
           ? `<button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="sysRevokeTask('${esc(a.task_id)}')">Revoke Task</button>`
+          : a.label && a.label.includes('Restart')
+          ? `<button class="btn btn-sm btn-primary" style="white-space:nowrap" onclick="sysRestartWorkers(this)">Restart Workers</button>`
           : '<span class="badge badge-dim">Manual</span>'}
       </div>`).join('')}
   </div>`;
@@ -15045,7 +15084,7 @@ window.sysRevokeTask = sysRevokeTask;
 // Auto-refresh every 30 seconds when on the System Status page
 setInterval(() => {
   if (state.currentView === 'system-status') {
-    renderSystemStatus(document.getElementById('view'));
+    _sysStatusRefresh();
   }
 }, 30000);
 

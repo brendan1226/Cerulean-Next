@@ -179,6 +179,54 @@ async def purge_queue(request: Request):
     return {"queue": queue_name, "purged": purged, "message": f"Queue '{queue_name}' purge signal sent."}
 
 
+@router.post("/actions/restart-workers")
+async def restart_workers():
+    """Restart worker and worker-push containers via Docker Engine API.
+
+    Requires /var/run/docker.sock to be mounted on the web container.
+    """
+    import httpx
+    results = []
+    transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
+    async with httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds="/var/run/docker.sock"), timeout=30.0) as client:
+        # List containers to find worker names
+        try:
+            resp = await client.get("http://localhost/containers/json")
+            containers = resp.json() if resp.status_code == 200 else []
+        except Exception as exc:
+            raise HTTPException(502, detail=f"Docker socket unavailable: {exc}")
+
+        worker_containers = []
+        for c in containers:
+            names = c.get("Names", [])
+            for name in names:
+                if "worker" in name.lower():
+                    worker_containers.append({
+                        "id": c["Id"],
+                        "name": name.lstrip("/"),
+                    })
+
+        if not worker_containers:
+            # Fallback: try known container name patterns
+            for pattern in ["cerulean-worker-1", "cerulean-worker-push-1"]:
+                worker_containers.append({"id": pattern, "name": pattern})
+
+        for wc in worker_containers:
+            try:
+                resp = await client.post(f"http://localhost/containers/{wc['id']}/restart?t=10")
+                results.append({
+                    "container": wc["name"],
+                    "status": "restarted" if resp.status_code == 204 else f"http_{resp.status_code}",
+                })
+            except Exception as exc:
+                results.append({
+                    "container": wc["name"],
+                    "status": f"error: {exc}",
+                })
+
+    return {"results": results, "message": f"Restart signal sent to {len(results)} container(s)."}
+
+
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
