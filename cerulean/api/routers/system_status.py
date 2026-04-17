@@ -8,9 +8,18 @@ GET   /system/status/tasks     — all active tasks across ALL projects
 GET   /system/status/errors    — recent errors from AuditEvent
 POST  /system/status/actions/revoke-task   — kill a hung task
 POST  /system/status/actions/purge-queue   — clear a stuck queue
+POST  /system/status/actions/restart-workers — restart worker containers
+
+IMPORTANT: Celery control.inspect() is a synchronous blocking call that
+broadcasts to all workers and waits for replies. Every call here is
+wrapped in asyncio.to_thread() so it doesn't block the FastAPI event
+loop. Results are cached for 10 seconds so parallel frontend requests
+(Promise.all of 3 endpoints) share one inspect round-trip.
 """
 
+import asyncio
 import time
+import threading
 from datetime import datetime, timedelta
 
 import redis
@@ -37,6 +46,42 @@ _QUEUES = [
 _HUNG_THRESHOLD_SECONDS = 3600
 _LONG_RUNNING_SECONDS = 1800
 
+# Inspect cache — avoids hammering workers on every parallel API call.
+_INSPECT_CACHE: dict = {}
+_INSPECT_CACHE_TTL = 10
+_INSPECT_CACHE_LOCK = threading.Lock()
+
+
+# ── Cached inspect (runs in thread pool) ─────────────────────────────
+
+
+def _inspect_workers_sync() -> dict:
+    """Single blocking inspect call that fetches ping + stats + active.
+    Cached for 10 seconds so 3 parallel API requests share one round-trip."""
+    now = time.time()
+    with _INSPECT_CACHE_LOCK:
+        if _INSPECT_CACHE.get("ts") and (now - _INSPECT_CACHE["ts"]) < _INSPECT_CACHE_TTL:
+            return _INSPECT_CACHE["data"]
+
+    data = {"pings": {}, "stats": {}, "active": {}}
+    try:
+        inspect = celery_app.control.inspect(timeout=1.5)
+        data["pings"] = inspect.ping() or {}
+        data["stats"] = inspect.stats() or {}
+        data["active"] = inspect.active() or {}
+    except Exception:
+        pass
+
+    with _INSPECT_CACHE_LOCK:
+        _INSPECT_CACHE["ts"] = time.time()
+        _INSPECT_CACHE["data"] = data
+    return data
+
+
+async def _inspect_workers() -> dict:
+    """Non-blocking wrapper — runs inspect in a thread."""
+    return await asyncio.to_thread(_inspect_workers_sync)
+
 
 # ── Full health snapshot ──────────────────────────────────────────────
 
@@ -44,10 +89,11 @@ _LONG_RUNNING_SECONDS = 1800
 @router.get("")
 async def system_status(db: AsyncSession = Depends(get_db)):
     """Aggregated system health: workers, queues, active tasks, errors, alerts."""
-    workers = _get_worker_health()
-    queues = _get_queue_depths()
-    redis_info = _get_redis_info()
-    active_tasks = _get_all_active_tasks()
+    inspect_data = await _inspect_workers()
+    workers = _build_worker_list(inspect_data)
+    queues = await asyncio.to_thread(_get_queue_depths)
+    redis_info = await asyncio.to_thread(_get_redis_info)
+    active_tasks = _build_active_task_list(inspect_data)
     alerts = _compute_alerts(workers, queues, active_tasks)
     actions = _recommend_actions(alerts, active_tasks)
 
@@ -71,7 +117,8 @@ async def system_status(db: AsyncSession = Depends(get_db)):
 @router.get("/tasks")
 async def all_active_tasks(db: AsyncSession = Depends(get_db)):
     """List every running task across all projects with live status."""
-    tasks = _get_all_active_tasks()
+    inspect_data = await _inspect_workers()
+    tasks = _build_active_task_list(inspect_data)
 
     result = await db.execute(
         select(TransformManifest)
@@ -164,7 +211,9 @@ async def revoke_task(request: Request):
     task_id = body.get("task_id")
     if not task_id:
         raise HTTPException(400, detail="task_id required")
-    celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+    await asyncio.to_thread(
+        celery_app.control.revoke, task_id, terminate=True, signal="SIGTERM"
+    )
     return {"revoked": task_id, "message": "Task termination signal sent."}
 
 
@@ -175,7 +224,7 @@ async def purge_queue(request: Request):
     queue_name = body.get("queue")
     if not queue_name or queue_name not in _QUEUES:
         raise HTTPException(400, detail=f"queue must be one of: {', '.join(_QUEUES)}")
-    purged = celery_app.control.purge()
+    purged = await asyncio.to_thread(celery_app.control.purge)
     return {"queue": queue_name, "purged": purged, "message": f"Queue '{queue_name}' purge signal sent."}
 
 
@@ -193,43 +242,51 @@ async def restart_workers():
     if not os.path.exists(sock):
         raise HTTPException(502, detail=(
             "Docker socket not mounted on web container. "
-            "Recreate the web container: docker compose up -d web"
+            "Recreate the web container: docker compose up -d --force-recreate web"
         ))
 
-    transport = httpx.HTTPTransport(uds=sock)
-    results = []
-    with httpx.Client(transport=transport, timeout=30.0) as client:
-        try:
-            resp = client.get("http://localhost/containers/json")
-            containers = resp.json() if resp.status_code == 200 else []
-        except Exception as exc:
-            raise HTTPException(502, detail=f"Docker API error: {exc}")
-
-        worker_containers = []
-        for c in containers:
-            names = c.get("Names", [])
-            for name in names:
-                if "worker" in name.lower():
-                    worker_containers.append({
-                        "id": c["Id"],
-                        "name": name.lstrip("/"),
-                    })
-
-        if not worker_containers:
-            raise HTTPException(404, detail="No worker containers found running.")
-
-        for wc in worker_containers:
+    def _do_restart():
+        transport = httpx.HTTPTransport(uds=sock)
+        results = []
+        with httpx.Client(transport=transport, timeout=30.0) as client:
             try:
-                resp = client.post(f"http://localhost/containers/{wc['id']}/restart?t=10")
-                results.append({
-                    "container": wc["name"],
-                    "status": "restarted" if resp.status_code == 204 else f"http_{resp.status_code}",
-                })
+                resp = client.get("http://localhost/containers/json")
+                containers = resp.json() if resp.status_code == 200 else []
             except Exception as exc:
-                results.append({
-                    "container": wc["name"],
-                    "status": f"error: {exc}",
-                })
+                return [{"container": "?", "status": f"Docker API error: {exc}"}]
+
+            worker_containers = []
+            for c in containers:
+                names = c.get("Names", [])
+                for name in names:
+                    if "worker" in name.lower():
+                        worker_containers.append({
+                            "id": c["Id"],
+                            "name": name.lstrip("/"),
+                        })
+
+            if not worker_containers:
+                return [{"container": "?", "status": "No worker containers found"}]
+
+            for wc in worker_containers:
+                try:
+                    resp = client.post(f"http://localhost/containers/{wc['id']}/restart?t=10")
+                    results.append({
+                        "container": wc["name"],
+                        "status": "restarted" if resp.status_code == 204 else f"http_{resp.status_code}",
+                    })
+                except Exception as exc:
+                    results.append({
+                        "container": wc["name"],
+                        "status": f"error: {exc}",
+                    })
+        return results
+
+    results = await asyncio.to_thread(_do_restart)
+
+    # Invalidate inspect cache so the next status call reflects the restart
+    with _INSPECT_CACHE_LOCK:
+        _INSPECT_CACHE.clear()
 
     return {"results": results, "message": f"Restart signal sent to {len(results)} container(s)."}
 
@@ -237,29 +294,46 @@ async def restart_workers():
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _get_worker_health() -> list[dict]:
-    """Ping all Celery workers and gather stats."""
+def _build_worker_list(inspect_data: dict) -> list[dict]:
+    """Convert cached inspect data into a list of worker status dicts."""
     workers = []
-    try:
-        inspect = celery_app.control.inspect(timeout=3.0)
-        pings = inspect.ping() or {}
-        stats = inspect.stats() or {}
-        active = inspect.active() or {}
-        for name, reply in pings.items():
-            s = stats.get(name, {})
-            act = active.get(name, [])
-            workers.append({
-                "name": name,
-                "status": "online" if reply.get("ok") == "pong" else "degraded",
-                "active_tasks": len(act),
-                "pool_size": s.get("pool", {}).get("max-concurrency"),
-                "uptime_sec": int(time.time() - s.get("clock", time.time())),
-                "total_tasks_processed": s.get("total", {}).get("cerulean.tasks", 0),
-                "prefetch_count": s.get("prefetch_count"),
-            })
-    except Exception:
-        pass
+    pings = inspect_data.get("pings", {})
+    stats = inspect_data.get("stats", {})
+    active = inspect_data.get("active", {})
+    for name, reply in pings.items():
+        s = stats.get(name, {})
+        act = active.get(name, [])
+        workers.append({
+            "name": name,
+            "status": "online" if reply.get("ok") == "pong" else "degraded",
+            "active_tasks": len(act),
+            "pool_size": s.get("pool", {}).get("max-concurrency"),
+            "uptime_sec": int(time.time() - s.get("clock", time.time())),
+            "total_tasks_processed": s.get("total", {}).get("cerulean.tasks", 0),
+            "prefetch_count": s.get("prefetch_count"),
+        })
     return workers
+
+
+def _build_active_task_list(inspect_data: dict) -> list[dict]:
+    """Convert cached inspect active data into a list of task dicts."""
+    tasks = []
+    active = inspect_data.get("active", {})
+    for worker_name, task_list in active.items():
+        for t in task_list:
+            started = t.get("time_start")
+            duration = (time.time() - started) if started else None
+            tasks.append({
+                "task_id": t.get("id"),
+                "task_name": t.get("name", ""),
+                "worker": worker_name,
+                "project_id": (t.get("args") or [None])[0],
+                "type": _task_type_from_name(t.get("name", "")),
+                "status": "RUNNING",
+                "started_at": datetime.utcfromtimestamp(started).isoformat() if started else None,
+                "duration_sec": round(duration, 1) if duration else None,
+            })
+    return tasks
 
 
 def _get_queue_depths() -> list[dict]:
@@ -278,38 +352,14 @@ def _get_redis_info() -> dict:
     """Basic Redis health metrics."""
     try:
         info = _redis.info(section="memory")
+        clients = _redis.info(section="clients")
         return {
             "used_memory_human": info.get("used_memory_human", "?"),
             "used_memory_peak_human": info.get("used_memory_peak_human", "?"),
-            "connected_clients": _redis.info(section="clients").get("connected_clients", "?"),
+            "connected_clients": clients.get("connected_clients", "?"),
         }
     except Exception:
         return {"error": "unreachable"}
-
-
-def _get_all_active_tasks() -> list[dict]:
-    """Get all currently executing tasks from all workers."""
-    tasks = []
-    try:
-        inspect = celery_app.control.inspect(timeout=3.0)
-        active = inspect.active() or {}
-        for worker_name, task_list in active.items():
-            for t in task_list:
-                started = t.get("time_start")
-                duration = (time.time() - started) if started else None
-                tasks.append({
-                    "task_id": t.get("id"),
-                    "task_name": t.get("name", ""),
-                    "worker": worker_name,
-                    "project_id": (t.get("args") or [None])[0],
-                    "type": _task_type_from_name(t.get("name", "")),
-                    "status": "RUNNING",
-                    "started_at": datetime.utcfromtimestamp(started).isoformat() if started else None,
-                    "duration_sec": round(duration, 1) if duration else None,
-                })
-    except Exception:
-        pass
-    return tasks
 
 
 def _task_type_from_name(name: str) -> str:
