@@ -184,17 +184,26 @@ async def restart_workers():
     """Restart worker and worker-push containers via Docker Engine API.
 
     Requires /var/run/docker.sock to be mounted on the web container.
+    Uses sync httpx with UDS transport (Docker socket is local, sub-second).
     """
+    import os
     import httpx
+
+    sock = "/var/run/docker.sock"
+    if not os.path.exists(sock):
+        raise HTTPException(502, detail=(
+            "Docker socket not mounted on web container. "
+            "Recreate the web container: docker compose up -d web"
+        ))
+
+    transport = httpx.HTTPTransport(uds=sock)
     results = []
-    transport = httpx.HTTPTransport(uds="/var/run/docker.sock")
-    async with httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds="/var/run/docker.sock"), timeout=30.0) as client:
-        # List containers to find worker names
+    with httpx.Client(transport=transport, timeout=30.0) as client:
         try:
-            resp = await client.get("http://localhost/containers/json")
+            resp = client.get("http://localhost/containers/json")
             containers = resp.json() if resp.status_code == 200 else []
         except Exception as exc:
-            raise HTTPException(502, detail=f"Docker socket unavailable: {exc}")
+            raise HTTPException(502, detail=f"Docker API error: {exc}")
 
         worker_containers = []
         for c in containers:
@@ -207,13 +216,11 @@ async def restart_workers():
                     })
 
         if not worker_containers:
-            # Fallback: try known container name patterns
-            for pattern in ["cerulean-worker-1", "cerulean-worker-push-1"]:
-                worker_containers.append({"id": pattern, "name": pattern})
+            raise HTTPException(404, detail="No worker containers found running.")
 
         for wc in worker_containers:
             try:
-                resp = await client.post(f"http://localhost/containers/{wc['id']}/restart?t=10")
+                resp = client.post(f"http://localhost/containers/{wc['id']}/restart?t=10")
                 results.append({
                     "container": wc["name"],
                     "status": "restarted" if resp.status_code == 204 else f"http_{resp.status_code}",
