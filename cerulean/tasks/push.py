@@ -3399,7 +3399,7 @@ def es_reindex_task(self, project_id: str, manifest_id: str, reindex_engine: str
                                   result_data={"search_engine": search_engine, "reindex_command": reindex_cmd},
                                   completed_at=datetime.utcnow())
 
-        log.complete(f"Reindex task complete — Stage 7 done, advancing to Stage 8")
+        log.complete(f"Reindex task complete — Load stage done, advancing to next stage")
         return {
             "search_engine": search_engine,
             "reindex_command": reindex_cmd,

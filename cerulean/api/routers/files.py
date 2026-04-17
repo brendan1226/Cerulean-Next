@@ -401,7 +401,7 @@ async def mark_file_ready(
     """Mark a MARC file as ready to push, skipping stages 4-6.
 
     Creates a symlink from the uploaded raw file to ``output.mrc`` in the
-    project directory.  Stage 7's push file finder already looks for
+    project directory.  The Load stage push file finder already looks for
     ``output.mrc``, so the file will immediately appear as a push candidate.
 
     Use this when the MARC data is clean and doesn't need field mapping,
@@ -439,7 +439,7 @@ async def mark_file_ready(
         "filename": marc_file.filename,
         "output_path": "output.mrc",
         "record_count": marc_file.record_count,
-        "message": f"'{marc_file.filename}' marked as ready to load. Available in Stage 7.",
+        "message": f"'{marc_file.filename}' marked as ready to load. Available on the Load stage.",
     }
 
 

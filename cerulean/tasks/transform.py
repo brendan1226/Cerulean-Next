@@ -461,7 +461,7 @@ def merge_pipeline_task(
         if duplicate_001s:
             log.warn(
                 f"Detected {len(duplicate_001s)} duplicate 001 values — "
-                f"review in Stage 7 (Dedup)"
+                f"review in the Dedup stage"
             )
 
         # 6. Update project & manifest
