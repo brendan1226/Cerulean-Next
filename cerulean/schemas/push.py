@@ -41,6 +41,11 @@ class BibPushOptions(BaseModel):
     # ── toolkit / plugin options ─────────────────────────────────────
     db_tuning: bool = True                     # Apply DB tuning before import (toolkit)
     worker_count: int | None = None            # Parallel workers (toolkit/plugin_fast, 1-16)
+    # 2.0+ performance options
+    import_path: str = "bulk"                  # "standard" | "bulk" — bulk is 3x faster
+    reader_mode: str = "byte_range"            # "modulo" | "byte_range" — byte_range is 3-5x less CPU
+    drop_unique_index: bool = True             # Drop items.barcode UNIQUE during import
+    bulk_batch_size: int = 200                 # Records per multi-row INSERT (10-500)
 
 
 class PushStartRequest(BaseModel):

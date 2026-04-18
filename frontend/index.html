@@ -11183,15 +11183,31 @@ async function renderS7Bibs() {
           </div>
         </div>
         <div id="bib-toolkit-options" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-main)">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
             <div>
               <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Import Workers (1-16)</label>
-              <input type="number" id="toolkit-workers" value="4" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
+              <input type="number" id="toolkit-workers" value="12" min="1" max="16" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
             </div>
-            <div style="display:flex;align-items:end;padding-bottom:4px">
-              <span style="font-size:10px;color:var(--text-dim);line-height:1.4">Plugin handles daemon stop/start and DB tuning automatically. Workers split the MARC file into parallel slices.</span>
+            <div>
+              <label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:2px">Bulk Batch Size (10-500)</label>
+              <input type="number" id="toolkit-batch-size" value="200" min="10" max="500" style="font-size:12px;padding:4px 8px;width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text-primary)">
             </div>
           </div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:6px">
+            <label style="display:flex;gap:4px;align-items:center;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="toolkit-bulk-path" checked> Bulk import path (3x faster)
+            </label>
+            <label style="display:flex;gap:4px;align-items:center;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="toolkit-byte-range" checked> Byte-range reader (less CPU)
+            </label>
+            <label style="display:flex;gap:4px;align-items:center;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="toolkit-drop-unique" checked> Drop barcode index during import
+            </label>
+            <label style="display:flex;gap:4px;align-items:center;font-size:11px;color:var(--text-secondary)">
+              <input type="checkbox" id="toolkit-db-tuning" checked> MariaDB tuning
+            </label>
+          </div>
+          <span style="font-size:10px;color:var(--text-dim);line-height:1.4">Plugin handles daemon stop/start automatically. Bulk path uses multi-row INSERTs (~457 rec/s vs ~155 rec/s standard).</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
           <input type="checkbox" id="push-dry-run" checked>
@@ -11586,8 +11602,21 @@ async function runPushBibs() {
     };
   } else if (method === 'toolkit') {
     body.dry_run = false;
-    const workerCount = parseInt(document.getElementById('toolkit-workers')?.value) || 4;
-    body.bib_options = { method: 'toolkit', db_tuning: true, worker_count: workerCount };
+    const workerCount = parseInt(document.getElementById('toolkit-workers')?.value) || 12;
+    const batchSize = parseInt(document.getElementById('toolkit-batch-size')?.value) || 200;
+    const useBulk = document.getElementById('toolkit-bulk-path')?.checked !== false;
+    const useByteRange = document.getElementById('toolkit-byte-range')?.checked !== false;
+    const dropUnique = document.getElementById('toolkit-drop-unique')?.checked !== false;
+    const dbTuning = document.getElementById('toolkit-db-tuning')?.checked !== false;
+    body.bib_options = {
+      method: 'toolkit',
+      db_tuning: dbTuning,
+      worker_count: workerCount,
+      import_path: useBulk ? 'bulk' : 'standard',
+      reader_mode: useByteRange ? 'byte_range' : 'modulo',
+      drop_unique_index: dropUnique,
+      bulk_batch_size: batchSize,
+    };
   } else if (method === 'plugin_fast') {
     body.dry_run = false;
     body.bib_options = { method: 'plugin_fast' };
@@ -11705,12 +11734,32 @@ function _startImportLivePoll(projectId, celeryTaskId, methodLabel) {
         finalReport = celery.result;
       }
 
+      // Use toolkit phase/ETA if available from Celery progress meta
+      const toolkitPhase = celeryProgress.phase || '';
+      const toolkitRate = celeryProgress.rate_per_sec;
+      const toolkitEta = celeryProgress.eta_sec;
+      const toolkitWorkers = celeryProgress.workers || [];
+      const toolkitWarning = celeryProgress.warning || '';
+
+      // Prefer toolkit rate/ETA when available (more accurate than client-side calc)
+      const displayRate = toolkitRate || recPerSec;
+      const displayEta = toolkitEta != null ? (
+        toolkitEta < 60 ? `~${Math.round(toolkitEta)}s` :
+        toolkitEta < 3600 ? `~${Math.round(toolkitEta / 60)}m` :
+        `~${(toolkitEta / 3600).toFixed(1)}h`
+      ) : eta;
+
+      const phaseLabel = toolkitPhase ? toolkitPhase.replace(/_/g, ' ') : '';
+
       statusEl.innerHTML = _renderImportLivePanel({
         method: methodLabel,
         status: isDone ? (jobStatus === 'failed' || celeryState === 'FAILURE' ? 'error' : 'finished') :
-                (progress > 0 ? 'importing' : (kohaJobId ? 'splitting' : 'uploading')),
+                (progress > 0 ? 'importing' : (kohaJobId ? (phaseLabel || 'starting') : 'uploading')),
+        phase: phaseLabel,
         progress, total, pct,
-        recPerSec, eta,
+        recPerSec: displayRate, eta: displayEta,
+        workers: toolkitWorkers,
+        warning: toolkitWarning,
         wallSec: Math.round(wallSec),
         uploadSec: uploadSec ? Math.round(uploadSec) : null,
         kohaJobId,
@@ -11739,15 +11788,15 @@ function _startImportLivePoll(projectId, celeryTaskId, methodLabel) {
 }
 
 function _renderImportLivePanel(s) {
-  const { method, status, progress, total, pct, recPerSec, eta, wallSec,
-          uploadSec, kohaJobId, messages, report, error } = s;
+  const { method, status, phase, progress, total, pct, recPerSec, eta, wallSec,
+          uploadSec, kohaJobId, messages, report, error, workers, warning } = s;
 
   const badgeClass = status === 'finished' ? 'badge-green'
     : status === 'error' ? 'badge-red' : 'badge-yellow';
   const badgeText = status === 'finished' ? 'COMPLETE'
     : status === 'error' ? 'FAILED'
     : status === 'uploading' ? 'UPLOADING'
-    : status === 'splitting' ? 'SPLITTING'
+    : phase ? phase.toUpperCase()
     : 'IMPORTING';
 
   let html = `<div style="border:1px solid var(--border);border-radius:6px;background:var(--bg-main);overflow:hidden;margin-top:12px">`;
@@ -11772,7 +11821,26 @@ function _renderImportLivePanel(s) {
   html += `<div style="height:8px;background:var(--bg-card);border-radius:4px;overflow:hidden">`;
   const barColor = status === 'error' ? 'var(--red,#e55)' : status === 'finished' ? 'var(--green,#5a5)' : 'var(--cerulean,#0bc)';
   html += `<div style="height:100%;width:${pct}%;background:${barColor};transition:width 0.5s;border-radius:4px"></div>`;
-  html += `</div></div>`;
+  html += `</div>`;
+
+  // Per-worker progress (toolkit 2.0+)
+  if (workers && workers.length > 1) {
+    html += `<div style="display:grid;grid-template-columns:50px 1fr;gap:2px 6px;margin-top:6px;font-size:10px;color:var(--text-dim)">`;
+    const workerTotal = total > 0 ? Math.ceil(total / workers.length) : 1;
+    for (const w of workers) {
+      const wp = workerTotal > 0 ? Math.min(100, Math.round((w.progress || 0) / workerTotal * 100)) : 0;
+      html += `<span>W${w.slice_id}</span>`;
+      html += `<div style="height:4px;background:var(--bg-card);border-radius:2px;overflow:hidden"><div style="height:100%;width:${wp}%;background:var(--cerulean,#0bc);border-radius:2px"></div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Warning (e.g. stale heartbeat)
+  if (warning) {
+    html += `<div style="margin-top:6px;font-size:11px;color:var(--amber);padding:4px 0">${esc(warning)}</div>`;
+  }
+
+  html += `</div>`;
 
   // Timing + counters grid
   html += `<div style="padding:8px 12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;font-size:11px">`;

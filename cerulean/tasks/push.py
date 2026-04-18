@@ -1263,6 +1263,126 @@ def _poll_koha_job(client: httpx.Client, base_url: str, headers: dict,
     raise RuntimeError(f"Koha job {job_id} timed out after {timeout}s (last status: {status})")
 
 
+def _poll_toolkit_job(
+    client: httpx.Client, base_url: str, headers: dict,
+    job_id: int, celery_task, project_id: str,
+    step_label: str, timeout: float = 14400.0,
+    fstate: dict = None, files_state: list = None,
+    manifest_id: str = None, current_idx: int = 0,
+) -> dict:
+    """Poll using the toolkit status endpoint for rich per-worker progress.
+
+    Uses GET /api/v1/contrib/migrationtoolkit/jobs/{id}/status for live
+    phase/worker/ETA info, then falls back to GET /api/v1/jobs/{id} for
+    the final report once status reaches finished/failed.
+    """
+    import time
+    elapsed = 0.0
+    status_url = f"{base_url}{_TOOLKIT_BASE}/jobs/{job_id}/status"
+    while elapsed < timeout:
+        _check_paused(project_id, celery_task)
+
+        # Try the richer toolkit status endpoint
+        try:
+            resp = client.get(status_url, headers=headers)
+            if resp.status_code == 200:
+                st = resp.json()
+                status = st.get("status", "")
+                phase = st.get("phase", "")
+                processed = st.get("processed") or st.get("progress") or 0
+                total = st.get("total") or st.get("size") or 0
+                rate = st.get("rate_per_sec")
+                eta = st.get("eta_sec")
+                workers = st.get("workers") or []
+                heartbeat = st.get("heartbeat_at")
+
+                celery_task.update_state(state="PROGRESS", meta={
+                    "step": step_label,
+                    "job_id": job_id,
+                    "job_status": status,
+                    "phase": phase,
+                    "records_done": int(processed) if processed else 0,
+                    "records_total": int(total) if total else 0,
+                    "rate_per_sec": rate,
+                    "eta_sec": eta,
+                    "worker_count": len(workers),
+                    "workers": workers,
+                    "elapsed_secs": int(elapsed),
+                })
+
+                # Heartbeat watchdog
+                if heartbeat and status == "started":
+                    stale = time.time() - heartbeat
+                    if stale > 60:
+                        celery_task.update_state(state="PROGRESS", meta={
+                            "step": step_label,
+                            "job_id": job_id,
+                            "job_status": status,
+                            "phase": phase,
+                            "warning": f"Heartbeat stale ({int(stale)}s) — job may be stuck",
+                        })
+
+                if files_state is not None and manifest_id:
+                    _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=current_idx)
+
+                if status == "finished":
+                    break
+                if status in ("failed", "cancelled"):
+                    last_msg = st.get("last_message", "Unknown error")
+                    raise RuntimeError(f"Toolkit job {job_id} {status}: {last_msg}")
+            else:
+                # Toolkit endpoint not available — fall back to core
+                resp = client.get(f"{base_url}/api/v1/jobs/{job_id}", headers=headers)
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"Job poll HTTP {resp.status_code}: {resp.text[:500]}")
+                job = resp.json()
+                status = job.get("status", "")
+                if status == "finished":
+                    break
+                if status == "failed":
+                    raise RuntimeError(f"Koha job {job_id} failed")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass  # transient error — retry next interval
+
+        interval = _poll_interval(elapsed)
+        time.sleep(interval)
+        elapsed += interval
+
+    if elapsed >= timeout:
+        raise RuntimeError(f"Toolkit job {job_id} timed out after {timeout}s")
+
+    # Fetch full report from core jobs endpoint (has the complete data blob)
+    resp = client.get(f"{base_url}/api/v1/jobs/{job_id}", headers=headers)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Final report fetch failed: HTTP {resp.status_code}")
+    return resp.json()
+
+
+def _download_toolkit_csv(
+    client: httpx.Client, base_url: str, headers: dict,
+    job_id: int, csv_name: str, project_id: str,
+    file_label: str, log,
+) -> None:
+    """Download a CSV artifact from the toolkit (failed-records or duplicate-barcodes)."""
+    url = f"{base_url}{_TOOLKIT_BASE}/jobs/{job_id}/{csv_name}"
+    resp = client.get(url, headers=headers)
+    if resp.status_code != 200:
+        log.warn(f"Toolkit CSV {csv_name} returned HTTP {resp.status_code}")
+        return
+    content = resp.content
+    if not content or len(content) < 20:
+        return  # empty or header-only
+
+    project_dir = Path(settings.data_root) / project_id / "push_artifacts"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    out_name = f"{file_label}_{csv_name}" if file_label else csv_name
+    out_path = project_dir / out_name
+    out_path.write_bytes(content)
+    log.info(f"Downloaded {csv_name} → {out_path.name} ({len(content):,} bytes)")
+
+
 def _persist_bulk_state(manifest_id: str, files_state: list[dict],
                          dry_run: bool, current_idx: int) -> None:
     """Write per-file bulk-api state to the PushManifest.result_data field.
@@ -3032,12 +3152,18 @@ def toolkit_import_task(
                         "Content-Length": str(file_size),
                         "x-file-name": marc_path.name,
                     }
-                    # Only pass query params the plugin actually accepts
+                    # Build query params — 2.0+ bulk import options
                     import_params = {}
                     if bib_options.get("comments"):
                         import_params["comments"] = bib_options["comments"]
                     if bib_options.get("encoding"):
                         import_params["encoding"] = bib_options["encoding"]
+                    if bib_options.get("worker_count"):
+                        import_params["worker_count"] = int(bib_options["worker_count"])
+                    import_params["import_path"] = bib_options.get("import_path", "bulk")
+                    import_params["reader_mode"] = bib_options.get("reader_mode", "byte_range")
+                    import_params["drop_unique_index"] = str(bib_options.get("drop_unique_index", True)).lower()
+                    import_params["bulk_batch_size"] = int(bib_options.get("bulk_batch_size", 200))
 
                     resp = client.post(
                         f"{base_url}{_TOOLKIT_BASE}/import",
@@ -3057,25 +3183,15 @@ def toolkit_import_task(
                     _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
                     log.info(f"[{idx + 1}/{len(marc_paths)}] Import job started: job_id={job_id}")
 
-                    # Poll with live state persistence
-                    live_state = {"messages": []}
-                    _seen_msgs = [0]
-
-                    def _on_progress(job):
-                        jdata = job.get("data") or {}
-                        jmsgs = jdata.get("messages") or []
-                        new_msgs = jmsgs[_seen_msgs[0]:]
-                        _seen_msgs[0] = len(jmsgs)
-                        live_state["messages"].extend(new_msgs)
-                        if len(live_state["messages"]) > 500:
-                            live_state["messages"] = live_state["messages"][-500:]
-                        _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
-
-                    job_result = _poll_koha_job(
+                    # Poll using the richer toolkit status endpoint (2.0+)
+                    # which provides per-worker progress, heartbeat, ETA, phase.
+                    # Falls back to core /jobs/{id} for the final report.
+                    job_result = _poll_toolkit_job(
                         client, base_url, headers,
                         job_id, self, project_id,
                         step_label=f"importing [{idx + 1}/{len(marc_paths)}]",
-                        on_progress=_on_progress,
+                        fstate=fstate, files_state=files_state,
+                        manifest_id=manifest_id, current_idx=idx,
                     )
                     report = job_result.get("data", {}).get("report", {}) or {}
 
@@ -3100,7 +3216,7 @@ def toolkit_import_task(
                     fstate["worker_count"] = _as_int(report.get("worker_count"), 0) or None
                     fstate["duration_sec"] = _as_float(report.get("duration_sec"))
                     fstate["records_per_sec"] = _as_float(report.get("records_per_sec"))
-                    fstate["messages"] = live_state["messages"]
+                    fstate["syspref_overrides"] = report.get("syspref_overrides") or []
                     fstate["status"] = "committed"
                     _persist_bulk_state(manifest_id, files_state, dry_run=False, current_idx=idx)
                     log.info(
@@ -3110,6 +3226,26 @@ def toolkit_import_task(
                         f"{fstate['duration_sec']}s, {fstate['records_per_sec']} rec/s, "
                         f"{fstate['worker_count']} workers"
                     )
+
+                    # Download failed records CSV (2.0.4+)
+                    if fstate["num_errors"] > 0 or len(fstate["failed_records"]) > 0:
+                        try:
+                            _download_toolkit_csv(
+                                client, base_url, headers, job_id,
+                                "failed-records.csv", project_id, marc_path.name, log,
+                            )
+                        except Exception as csv_exc:
+                            log.warn(f"Failed to download failed-records CSV: {csv_exc}")
+
+                    # Download duplicate barcodes CSV (2.0.4+)
+                    if fstate["duplicate_barcodes"] > 0:
+                        try:
+                            _download_toolkit_csv(
+                                client, base_url, headers, job_id,
+                                "duplicate-barcodes.csv", project_id, marc_path.name, log,
+                            )
+                        except Exception as csv_exc:
+                            log.warn(f"Failed to download duplicate-barcodes CSV: {csv_exc}")
 
                 except Exception as file_exc:
                     fstate["status"] = "error"
