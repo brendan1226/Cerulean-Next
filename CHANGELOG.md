@@ -2,6 +2,40 @@
 
 All notable changes to Cerulean Next are documented here.
 
+## [2.9.0] — 2026-04-29 — Remove all AI features over patron data
+
+Patron records are PII. Cerulean now categorically excludes patron data
+from any AI/LLM processing, regardless of safeguards.
+
+### Removed
+
+- **Patron AI column mapping** — `POST /projects/{id}/patrons/maps/ai-suggest`,
+  `GET .../ai-suggest/status`, and the `patron_ai_map_task` Celery task.
+  The "AI Suggest Mappings" button is gone from Step 8 → Patron Mapping.
+- **Fuzzy Patron Deduplication (Phase 6)** — `patron_fuzzy_dedup_task`,
+  the `/patrons/fuzzy-dedup/*` endpoints, the `PatronDedupCluster` model
+  and `patron_dedup_clusters` table, the `ai.fuzzy_patron_dedup` feature
+  flag, and the Stage 8 "Fuzzy Dedup" tab.
+- The `projects.patron_ai_task_id` column.
+- The `tests/tasks/test_patron_fuzzy_dedup.py` test module.
+
+### Schema
+
+- Migration `a7u2v3w4x5y6_remove_patron_ai_features` drops
+  `patron_dedup_clusters` (and its index) plus
+  `projects.patron_ai_task_id`.
+
+### Spec & docs
+
+- `cerulean_ai_spec.md` Feature 5 (Fuzzy Patron Dedup) is marked
+  REMOVED and excluded from the implementation order, feature-key
+  table, and summary.
+- `CLAUDE.md` — patron-PII exclusion is documented inline alongside
+  the AI feature key table; the Phase 6 implementation notes are gone.
+- `tests/core/test_features.py` — `ai.fuzzy_patron_dedup` removed from
+  the required-keys set; new `test_no_patron_ai_feature_keys` guard
+  prevents reintroduction of any AI feature targeting patron records.
+
 ## [2.8.0] — 2026-04-16 — System Status Dashboard
 
 Admin-only dashboard for monitoring system health, active tasks, errors,

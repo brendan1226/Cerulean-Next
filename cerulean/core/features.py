@@ -134,19 +134,6 @@ FEATURES: list[Feature] = [
         shares_data_with_anthropic=True,
     ),
     Feature(
-        key="ai.fuzzy_patron_dedup",
-        title="Fuzzy Patron Deduplication",
-        description=(
-            "Detect probable patron duplicates beyond exact-ID matching — "
-            "same person entered twice with a slightly different name, birth "
-            "date, or address. AI scores each pair with confidence + reason."
-        ),
-        category=CATEGORY_AI,
-        default=False,
-        stage_label="Step 8 — Patrons",
-        shares_data_with_anthropic=True,
-    ),
-    Feature(
         key="ai.record_enrichment",
         title="Record Enrichment",
         description=(

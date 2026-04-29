@@ -37,7 +37,8 @@ page from it. All AI features default **OFF** for every user.
 
 **Feature keys (all default `false`):**
 `ai.data_health_report`, `ai.value_aware_mapping`, `ai.transform_rule_gen`,
-`ai.code_reconciliation`, `ai.fuzzy_patron_dedup`, `ai.record_enrichment`.
+`ai.code_reconciliation`, `ai.record_enrichment`. Patron data is PII and
+is never sent to an AI/LLM, so no AI feature targets the patron pipeline.
 
 AI endpoints return **403** with `{error: "PREFERENCE_DISABLED",
 feature_key: "..."}` when the caller's flag for that feature is off.
@@ -280,8 +281,6 @@ description in `field_maps.ai_prompt` for traceability.
 | DELETE | `/projects/{id}/patrons/maps/{mid}` | Delete column map |
 | POST | `/projects/{id}/patrons/maps/{mid}/approve` | Approve column map |
 | POST | `/projects/{id}/patrons/maps/approve-all` | Batch approve |
-| POST | `/projects/{id}/patrons/maps/ai-suggest` | AI suggest column mappings |
-| GET | `/projects/{id}/patrons/maps/ai-suggest/status` | Poll AI task |
 | POST | `/projects/{id}/patrons/scan` | Scan controlled values |
 | GET | `/projects/{id}/patrons/scan/status` | Poll scan status |
 | GET | `/projects/{id}/patrons/values` | Query scanned values |

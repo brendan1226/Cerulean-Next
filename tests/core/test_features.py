@@ -55,19 +55,33 @@ class TestAIDefaultsOff:
             )
 
     def test_all_known_ai_keys_present(self):
-        """The six feature keys named in cerulean_ai_spec.md §11.2 must all
-        be present, even the ones that aren't wired up end-to-end yet."""
+        """AI spec keys that must be present in the registry. Patron data
+        is PII and never sent to AI, so ai.fuzzy_patron_dedup is
+        intentionally absent."""
         required = {
             "ai.data_health_report",
             "ai.value_aware_mapping",
             "ai.transform_rule_gen",
             "ai.code_reconciliation",
-            "ai.fuzzy_patron_dedup",
             "ai.record_enrichment",
         }
         actual = {f.key for f in FEATURES if f.category == CATEGORY_AI}
         missing = required - actual
         assert not missing, f"AI spec keys missing from registry: {sorted(missing)}"
+
+    def test_no_patron_ai_feature_keys(self):
+        """Patron data is PII — no AI feature may target it. Guards against
+        accidental reintroduction of fuzzy patron dedup or similar."""
+        forbidden_substrings = ("patron", "borrower")
+        for f in FEATURES:
+            if f.category != CATEGORY_AI:
+                continue
+            key_lower = f.key.lower()
+            for sub in forbidden_substrings:
+                assert sub not in key_lower, (
+                    f"AI feature {f.key!r} appears to target patron PII; "
+                    f"patron data must never be sent to an AI/LLM."
+                )
 
     def test_ai_features_share_data_with_anthropic(self):
         """Every AI feature must carry the data-sharing notice — the
@@ -113,7 +127,7 @@ class TestRegistryPayload:
         ai = next((c for c in payload["categories"] if c["key"] == CATEGORY_AI), None)
         assert ai is not None
         assert ai["label"] == CATEGORY_LABELS[CATEGORY_AI]
-        assert len(ai["features"]) >= 6
+        assert len(ai["features"]) >= 5
 
     def test_feature_entries_have_required_fields(self):
         payload = registry_payload()

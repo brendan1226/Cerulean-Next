@@ -320,8 +320,13 @@ Every AI feature is opt-in per user via the preference system:
 | `ai.value_aware_mapping` | 2 | Adds a top-50 distinct-value index to the AI Suggest prompt |
 | `ai.transform_rule_gen` | 4 | Plain-English → sandboxed Python expression + mandatory before/after preview |
 | `ai.code_reconciliation` | 5 | Koha authorized-value matching for branch / location / item-type codes |
-| `ai.fuzzy_patron_dedup` | 6 | AI confidence scoring on probable patron duplicate clusters |
 | `ai.record_enrichment` | roadmap | Thin-record enrichment from ISBN via Open Library / Google Books (not built) |
+
+> **Patron data is PII and is never sent to AI/LLM.** No AI feature
+> targets the patron pipeline (Stage 8 / `cerulean/tasks/patrons.py` /
+> `cerulean/api/routers/patrons.py`). The originally-planned
+> `ai.fuzzy_patron_dedup` feature was removed; do not propose, build, or
+> restore AI features over patron records.
 
 ### Adding a new AI feature
 
@@ -358,38 +363,6 @@ Null-match handling: when Claude returns `koha_value=null` ("no match
 found") the task still seeds an inactive rule with empty target and the
 reasoning on it, so the engineer sees the AI commentary in the Rules tab
 rather than having the row silently disappear.
-
-### Fuzzy Patron Dedup (Phase 6)
-
-Shipped. Lives in `cerulean/tasks/patrons.py :: patron_fuzzy_dedup_task`
-and `cerulean/api/routers/patrons.py`.
-
-* `POST /projects/{id}/patrons/fuzzy-dedup` — gated by
-  `require_preference("ai.fuzzy_patron_dedup")`; 409 when no parsed CSV.
-* `GET  /projects/{id}/patrons/fuzzy-dedup/status?task_id=…`
-* `GET  /projects/{id}/patrons/fuzzy-dedup/clusters` — list for review
-* `PATCH /projects/{id}/patrons/fuzzy-dedup/clusters/{id}` — resolve/dismiss
-
-Algorithm:
-1. Read combined patron CSV (patrons_transformed.csv > parsed.csv).
-2. Block on `(surname[0].lower(), birth_year)` — only rows within the
-   same block can be paired.
-3. Within each block, generate pairs where Levenshtein distance on
-   surname ≤ 3. Capped at 5,000 total pairs.
-4. Batch 30 pairs per Claude call. Claude returns `is_duplicate`,
-   `confidence` (0–100), and `reasoning` per pair.
-5. Only pairs Claude scores as `is_duplicate=true` with `confidence ≥ 50`
-   become `PatronDedupCluster` rows.
-6. Re-running clears and rebuilds from scratch.
-
-Model: `PatronDedupCluster` — separate from the MARC-oriented
-`DedupCluster` table because patron data is CSV (row indices) not MARC
-(record index, field count, item count).
-
-Frontend: "Fuzzy Dedup" tab appears in Step 8 → Patrons when the feature
-flag is on. Card-per-cluster layout with side-by-side field comparison,
-differing values highlighted in amber, Keep Primary / Not a Duplicate
-buttons.
 
 ### Transform Rule Generation sandbox (Phase 4)
 

@@ -15,8 +15,6 @@ Upload & Parse (multi-file):
   DELETE /projects/{id}/patrons/file           — delete ALL files, reset sub-steps
 
 Column Mapping:
-  POST  /projects/{id}/patrons/maps/ai-suggest     — dispatch AI column mapping
-  GET   /projects/{id}/patrons/maps/ai-suggest/status — poll AI task status
   GET   /projects/{id}/patrons/maps                 — list column maps
   POST  /projects/{id}/patrons/maps                 — create manual column map
   PATCH /projects/{id}/patrons/maps/{mid}           — update column map
@@ -57,7 +55,7 @@ from pathlib import Path
 
 import httpx
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,11 +63,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cerulean.api.deps import audit_log, require_project
 from cerulean.core.config import get_settings
 from cerulean.core.database import get_db
-from cerulean.core.preferences import require_preference
 from cerulean.models import (
     MARCFile,
     PatronColumnMap,
-    PatronDedupCluster,
     PatronFile,
     PatronScanResult,
     PatronValueRule,
@@ -78,18 +74,13 @@ from cerulean.schemas.patrons import (
     ApproveAllRequest,
     ApproveAllResponse,
     AvailablePatronFile,
-    PatronAISuggestResponse,
     PatronApplyResponse,
     PatronApplyStatusResponse,
     PatronColumnMapCreate,
     PatronColumnMapOut,
     PatronColumnMapUpdate,
-    PatronDedupClusterOut,
-    PatronDedupClusterUpdate,
     PatronFileOut,
     PatronFileUploadResponse,
-    PatronFuzzyDedupResponse,
-    PatronFuzzyDedupStatusResponse,
     PatronPreviewResponse,
     PatronReportOut,
     PatronRuleCreate,
@@ -106,9 +97,7 @@ from cerulean.tasks.celery_app import celery_app
 from cerulean.tasks.patrons import (
     PATRON_CONTROLLED_HEADERS,
     _concat_patron_files,
-    patron_ai_map_task,
     patron_apply_task,
-    patron_fuzzy_dedup_task,
     patron_parse_task,
     patron_scan_task,
 )
@@ -526,7 +515,6 @@ async def delete_patron_file(
     # Reset project fields
     project.patron_scan_task_id = None
     project.patron_apply_task_id = None
-    project.patron_ai_task_id = None
     project.stage_9_complete = False
 
     await db.flush()
@@ -541,67 +529,6 @@ async def delete_patron_file(
 # ══════════════════════════════════════════════════════════════════════════
 # 6-13. COLUMN MAPPING
 # ══════════════════════════════════════════════════════════════════════════
-
-
-@router.post("/{project_id}/patrons/maps/ai-suggest", response_model=PatronAISuggestResponse, status_code=202)
-async def ai_suggest_maps(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """Dispatch AI column mapping task."""
-    project = await require_project(project_id, db)
-
-    has_files = (await db.execute(
-        select(PatronFile.id).where(PatronFile.project_id == project_id).limit(1)
-    )).first()
-    if not has_files:
-        raise HTTPException(409, detail={
-            "error": "NO_PATRON_FILE",
-            "message": "Upload and parse a patron file first.",
-        })
-
-    await audit_log(db, project_id, stage=9, level="info", tag="[patron-ai]",
-                    message="Patron AI column mapping dispatched")
-    await db.flush()
-
-    task = patron_ai_map_task.apply_async(
-        args=[project_id],
-        queue="patrons",
-    )
-    from cerulean.api.routers.tasks import register_task
-    register_task(project_id, task.id, "patron_ai_map")
-    project.patron_ai_task_id = task.id
-    await db.flush()
-
-    return PatronAISuggestResponse(task_id=task.id, message="AI column mapping started.")
-
-
-@router.get("/{project_id}/patrons/maps/ai-suggest/status")
-async def ai_suggest_status(
-    project_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """Poll AI column mapping task status."""
-    project = await require_project(project_id, db)
-
-    task_id = project.patron_ai_task_id
-    if not task_id:
-        return {"task_id": None, "state": "IDLE"}
-
-    async_result = AsyncResult(task_id, app=celery_app)
-    state = async_result.state
-    progress = None
-    result_data = None
-    error = None
-
-    if state == "PROGRESS":
-        progress = async_result.info
-    elif state == "SUCCESS":
-        result_data = async_result.result
-    elif state == "FAILURE":
-        error = str(async_result.info)
-
-    return {"task_id": task_id, "state": state, "progress": progress, "result": result_data, "error": error}
 
 
 @router.get("/{project_id}/patrons/maps", response_model=list[PatronColumnMapOut])
@@ -1495,127 +1422,3 @@ def _save_descriptions(project_id: str, descs: dict) -> None:
     p.write_text(json.dumps(descs, indent=2))
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# PHASE 6 — AI FUZZY PATRON DEDUPLICATION
-# ══════════════════════════════════════════════════════════════════════════
-
-
-@router.post(
-    "/{project_id}/patrons/fuzzy-dedup",
-    response_model=PatronFuzzyDedupResponse,
-    status_code=202,
-)
-async def start_fuzzy_dedup(
-    project_id: str,
-    request: Request,
-    _user=Depends(require_preference("ai.fuzzy_patron_dedup")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Dispatch AI fuzzy patron dedup task.
-
-    Precondition: at least one patron file has been parsed (parsed.csv
-    exists or patrons_transformed.csv exists).
-    """
-    project = await require_project(project_id, db)
-
-    project_dir = Path(settings.data_root) / project_id
-    has_csv = (project_dir / "patrons_transformed.csv").is_file() or \
-              (project_dir / "parsed.csv").is_file()
-    if not has_csv:
-        raise HTTPException(409, detail={
-            "error": "NO_PATRON_DATA",
-            "message": "Parse or apply patron data first.",
-        })
-
-    user_id = getattr(request.state, "user_id", None)
-
-    await audit_log(
-        db, project_id, stage=9, level="info", tag="[patron-dedup]",
-        message="AI fuzzy patron dedup dispatched",
-    )
-    await db.flush()
-
-    task = patron_fuzzy_dedup_task.apply_async(
-        args=[project_id],
-        kwargs={"user_id": user_id},
-        queue="patrons",
-    )
-    from cerulean.api.routers.tasks import register_task
-    register_task(project_id, task.id, "patron_fuzzy_dedup")
-
-    return PatronFuzzyDedupResponse(
-        task_id=task.id,
-        message="Fuzzy patron dedup started.",
-    )
-
-
-@router.get(
-    "/{project_id}/patrons/fuzzy-dedup/status",
-    response_model=PatronFuzzyDedupStatusResponse,
-)
-async def fuzzy_dedup_status(
-    project_id: str,
-    task_id: str = Query(..., description="Task ID from POST fuzzy-dedup"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Poll a fuzzy dedup task."""
-    await require_project(project_id, db)
-    async_result = AsyncResult(task_id, app=celery_app)
-    state = async_result.state
-    progress = None
-    result_data = None
-    error = None
-    if state == "PROGRESS":
-        progress = async_result.info
-    elif state == "SUCCESS":
-        result_data = async_result.result
-    elif state == "FAILURE":
-        error = str(async_result.info)
-    return PatronFuzzyDedupStatusResponse(
-        task_id=task_id, state=state, progress=progress,
-        result=result_data, error=error,
-    )
-
-
-@router.get(
-    "/{project_id}/patrons/fuzzy-dedup/clusters",
-    response_model=list[PatronDedupClusterOut],
-)
-async def list_dedup_clusters(
-    project_id: str,
-    resolved: bool | None = Query(None, description="Filter by resolved status"),
-    db: AsyncSession = Depends(get_db),
-):
-    """List patron dedup clusters for review."""
-    await require_project(project_id, db)
-    q = select(PatronDedupCluster).where(
-        PatronDedupCluster.project_id == project_id
-    )
-    if resolved is not None:
-        q = q.where(PatronDedupCluster.resolved == resolved)
-    q = q.order_by(PatronDedupCluster.confidence.desc())
-    result = await db.execute(q)
-    return result.scalars().all()
-
-
-@router.patch(
-    "/{project_id}/patrons/fuzzy-dedup/clusters/{cluster_id}",
-    response_model=PatronDedupClusterOut,
-)
-async def update_dedup_cluster(
-    project_id: str,
-    cluster_id: str,
-    body: PatronDedupClusterUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Resolve or dismiss a patron dedup cluster."""
-    await require_project(project_id, db)
-    cluster = await db.get(PatronDedupCluster, cluster_id)
-    if not cluster or cluster.project_id != project_id:
-        raise HTTPException(404, detail="Cluster not found")
-    update_data = body.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(cluster, key, value)
-    await db.flush()
-    await db.refresh(cluster)
-    return cluster

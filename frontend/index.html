@@ -9022,7 +9022,6 @@ window.renderStage9_Patrons = async function(el) {
       <button class="tab-btn" onclick="switchPatronTab('mapping', this)">Column Mapping</button>
       <button class="tab-btn" onclick="switchPatronTab('values', this)">Value Reconciliation</button>
       <button class="tab-btn" onclick="switchPatronTab('apply', this)">Apply &amp; Report</button>
-      ${window.hasFeature && window.hasFeature('ai.fuzzy_patron_dedup') ? '<button class="tab-btn" onclick="switchPatronTab(\'dedup\', this)">Fuzzy Dedup</button>' : ''}
     </div>
     <div id="patron-tab"></div>`;
   renderPatronUpload();
@@ -9031,7 +9030,7 @@ window.renderStage9_Patrons = async function(el) {
 function switchPatronTab(tab, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  ({ upload: renderPatronUpload, mapping: renderPatronMapping, values: renderPatronValues, apply: renderPatronApply, dedup: renderPatronDedup })[tab]();
+  ({ upload: renderPatronUpload, mapping: renderPatronMapping, values: renderPatronValues, apply: renderPatronApply })[tab]();
 }
 
 // ── Tab 1: Upload & Parse ────────────────────────────────────────
@@ -9492,10 +9491,8 @@ async function renderPatronMapping() {
 
     wrap.innerHTML = `
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="runPatronAISuggest()" ${!hasFile ? 'disabled title="Upload a file first"' : ''}>AI Suggest Mappings</button>
         <button class="btn btn-ghost" onclick="patronApproveAll()">Approve All (&ge; 0.85)</button>
         <button class="btn btn-ghost" onclick="addPatronMap()">+ Add Mapping</button>
-        <div id="patron-ai-status" style="margin-left:8px"></div>
       </div>
       <div id="patron-maps-table"></div>`;
 
@@ -9947,16 +9944,6 @@ async function submitPatronMap() {
   }
 }
 
-async function runPatronAISuggest() {
-  const p = state.currentProject;
-  try {
-    const r = await window.api('POST', `/projects/${p.id}/patrons/maps/ai-suggest`);
-    if (!r) return;
-    toast('AI mapping started', 'info');
-    pollTaskStatus(p.id, r.task_id, 'patron-ai-status', 'Patron AI Map', 'patron-ai', () => renderPatronMapping());
-  } catch(e) { console.error(e); }
-}
-
 async function patronApproveAll() {
   const p = state.currentProject;
   try {
@@ -10290,170 +10277,6 @@ async function refreshProject() {
     }
   } catch(e) {}
 }
-
-// ── Phase 6: Fuzzy Patron Dedup Tab ────────────────────────────────
-
-async function renderPatronDedup() {
-  const p = state.currentProject;
-  const wrap = document.getElementById('patron-tab');
-  if (!wrap) return;
-  wrap.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Processing...</div>';
-
-  try {
-    const clusters = await window.api('GET', `/projects/${p.id}/patrons/fuzzy-dedup/clusters`);
-    const unresolvedCount = clusters.filter(c => !c.resolved && !c.dismissed).length;
-    wrap.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-        <div>
-          <span style="font-size:13px;font-weight:600">AI Fuzzy Patron Dedup</span>
-          ${clusters.length ? `<span class="text-secondary" style="font-size:12px;margin-left:8px">${clusters.length} cluster(s)${unresolvedCount ? `, <strong>${unresolvedCount}</strong> to review` : ' — all reviewed'}</span>` : ''}
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary" onclick="patronFuzzyDedupStart()" id="patron-dedup-btn">✦ Run Fuzzy Dedup</button>
-        </div>
-      </div>
-      <div id="patron-dedup-status" style="margin-bottom:12px"></div>
-      <div id="patron-dedup-clusters">
-        ${clusters.length ? _renderPatronDedupClusters(clusters) : '<div class="empty-state"><div class="empty-title">No duplicate clusters found</div><div class="empty-body">Click ✦ Run Fuzzy Dedup to scan your patron data for probable duplicates.</div></div>'}
-      </div>`;
-  } catch(e) {
-    wrap.innerHTML = '<span class="text-dim">Failed to load dedup clusters.</span>';
-  }
-}
-
-function _patronDedupConfBadge(conf) {
-  if (conf == null) return '';
-  if (conf >= 85) return `<span class="badge badge-green" title="High confidence (${conf}%)" style="cursor:help">High ${conf}%</span>`;
-  if (conf >= 60) return `<span class="badge badge-cerulean" title="Medium confidence (${conf}%)" style="cursor:help">Med ${conf}%</span>`;
-  return `<span class="badge badge-amber" title="Low confidence (${conf}%)" style="cursor:help">Low ${conf}%</span>`;
-}
-
-function _renderPatronDedupClusters(clusters) {
-  return clusters.map(c => {
-    const recs = c.records || [];
-    const isResolved = c.resolved || c.dismissed;
-    const statusLabel = c.dismissed
-      ? '<span class="badge badge-dim">Dismissed</span>'
-      : c.resolved
-        ? '<span class="badge badge-green">Resolved</span>'
-        : '<span class="badge badge-amber">Needs review</span>';
-    const rowStyle = isResolved ? 'opacity:0.6' : '';
-    const fields = ['cardnumber', 'surname', 'firstname', 'dateofbirth', 'address', 'city', 'email', 'phone'];
-    const activeCols = fields.filter(f => recs.some(r => r[f] && r[f].trim()));
-    return `
-      <div class="card" style="margin-bottom:12px;${rowStyle}" data-dedup-cluster="${esc(c.id)}">
-        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;gap:8px;align-items:center">
-            ${_patronDedupConfBadge(c.confidence)}
-            ${statusLabel}
-            <span class="text-dim" style="font-size:11px">match: ${esc(c.match_key || '—')}</span>
-          </div>
-          <div style="display:flex;gap:6px">
-            ${!isResolved ? `
-              <button class="btn btn-sm btn-primary" style="font-size:10px" onclick="patronDedupResolve('${esc(c.id)}')">Keep Primary</button>
-              <button class="btn btn-sm btn-ghost" style="font-size:10px" onclick="patronDedupDismiss('${esc(c.id)}')">Not a Duplicate</button>
-            ` : ''}
-          </div>
-        </div>
-        <div style="overflow-x:auto">
-          <table class="data-table" style="font-size:11px;width:100%;margin-top:8px">
-            <thead><tr><th style="width:30px">#</th>${activeCols.map(f => `<th>${esc(f)}</th>`).join('')}</tr></thead>
-            <tbody>${recs.map((r, i) => `<tr${i === c.primary_index ? ' style="background:rgba(59,130,246,0.06)"' : ''}>
-              <td><strong>${i === c.primary_index ? '★' : i+1}</strong></td>
-              ${activeCols.map(f => {
-                const otherVals = recs.filter((_, j) => j !== i).map(o => (o[f]||'').trim().toLowerCase());
-                const thisVal = (r[f]||'').trim();
-                const differs = thisVal && otherVals.length && !otherVals.includes(thisVal.toLowerCase());
-                return `<td class="mono" ${differs ? 'style="color:var(--amber);font-weight:600"' : ''}>${esc(thisVal || '—')}</td>`;
-              }).join('')}
-            </tr>`).join('')}</tbody>
-          </table>
-        </div>
-        ${c.reasoning ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:8px;padding:6px 8px;background:var(--bg-secondary);border-radius:4px"><strong>AI:</strong> ${esc(c.reasoning)}</div>` : ''}
-      </div>`;
-  }).join('');
-}
-
-async function patronFuzzyDedupStart() {
-  const p = state.currentProject;
-  if (!p) return;
-  const btn = document.getElementById('patron-dedup-btn');
-  const statusEl = document.getElementById('patron-dedup-status');
-  if (btn) { btn.disabled = true; btn.textContent = '✦ Analysing…'; }
-  if (statusEl) statusEl.innerHTML = '<div class="loading-msg"><div class="spinner"></div>Blocking on surname + birth year, then scoring pairs with Claude…</div>';
-
-  let resp;
-  try {
-    resp = await window.api('POST', `/projects/${p.id}/patrons/fuzzy-dedup`);
-  } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">${esc((e && e.message) || 'Fuzzy dedup failed')}</div>`;
-    if (btn) { btn.disabled = false; btn.textContent = '✦ Run Fuzzy Dedup'; }
-    toast('Fuzzy dedup failed: ' + ((e && e.message) || e), 'error');
-    return;
-  }
-
-  const taskId = resp.task_id;
-  let done = false;
-  let tries = 0;
-  while (!done && tries < 300) {
-    await new Promise(r => setTimeout(r, 2000));
-    tries++;
-    try {
-      const s = await window.api('GET', `/projects/${p.id}/patrons/fuzzy-dedup/status?task_id=${encodeURIComponent(taskId)}`);
-      if (s.state === 'PROGRESS' && s.progress) {
-        const pr = s.progress;
-        if (pr.stage === 'blocking') {
-          if (statusEl) statusEl.innerHTML = `<div class="loading-msg"><div class="spinner"></div>Blocking ${(pr.total_rows || 0).toLocaleString()} patron rows…</div>`;
-        } else if (pr.stage === 'scoring') {
-          if (statusEl) statusEl.innerHTML = `<div class="loading-msg"><div class="spinner"></div>Scoring pairs — batch ${pr.batches_done || 0}/${pr.batches_total || '?'} · ${pr.clusters_so_far || 0} duplicates found so far</div>`;
-        }
-      } else if (s.state === 'SUCCESS') {
-        done = true;
-        const r = s.result || {};
-        if (r.skipped) {
-          if (statusEl) statusEl.innerHTML = '<div class="text-dim" style="font-size:12px">Feature disabled. Enable it in My Preferences.</div>';
-        } else if (r.error) {
-          if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">${esc(r.error)}</div>`;
-        } else {
-          if (statusEl) statusEl.innerHTML = `<div class="text-green" style="font-size:12px">Found <strong>${r.clusters_found || 0}</strong> probable duplicate${(r.clusters_found||0)===1?'':'s'} from ${(r.candidate_pairs||0).toLocaleString()} candidate pairs. Review below.</div>`;
-          toast(`Fuzzy dedup: ${r.clusters_found || 0} probable duplicates`, 'success');
-        }
-        renderPatronDedup();
-      } else if (s.state === 'FAILURE') {
-        done = true;
-        if (statusEl) statusEl.innerHTML = `<div class="text-amber" style="font-size:12px">Task failed: ${esc(s.error || 'unknown')}</div>`;
-        toast('Fuzzy dedup failed', 'error');
-      }
-    } catch(e) { /* transient polling error — retry */ }
-  }
-  if (btn) { btn.disabled = false; btn.textContent = '✦ Run Fuzzy Dedup'; }
-}
-
-async function patronDedupResolve(clusterId) {
-  const p = state.currentProject;
-  try {
-    await window.api('PATCH', `/projects/${p.id}/patrons/fuzzy-dedup/clusters/${clusterId}`, { resolved: true });
-    toast('Cluster resolved', 'success');
-    const card = document.querySelector(`[data-dedup-cluster="${clusterId}"]`);
-    if (card) card.style.opacity = '0.6';
-    renderPatronDedup();
-  } catch(e) { toast('Failed: ' + (e.message||e), 'error'); }
-}
-
-async function patronDedupDismiss(clusterId) {
-  const p = state.currentProject;
-  try {
-    await window.api('PATCH', `/projects/${p.id}/patrons/fuzzy-dedup/clusters/${clusterId}`, { dismissed: true });
-    toast('Dismissed — not a duplicate', 'info');
-    renderPatronDedup();
-  } catch(e) { toast('Failed: ' + (e.message||e), 'error'); }
-}
-
-window.patronFuzzyDedupStart = patronFuzzyDedupStart;
-window.patronDedupResolve = patronDedupResolve;
-window.patronDedupDismiss = patronDedupDismiss;
-window.renderPatronDedup = renderPatronDedup;
-
 // ══════════════════════════════════════════════════════════════════
 // Step 10 — Load (Push to Koha)
 // ══════════════════════════════════════════════════════════════════
@@ -13004,7 +12827,6 @@ function pollTaskStatus(projectId, taskId, statusElId, label, stageType, onCompl
     'reconcile-apply': `/projects/${projectId}/reconcile/apply/status`,
     'patron-scan':   `/projects/${projectId}/patrons/scan/status`,
     'patron-apply':  `/projects/${projectId}/patrons/apply/status`,
-    'patron-ai':     `/projects/${projectId}/patrons/maps/ai-suggest/status`,
     push:            `/projects/${projectId}/push/status?task_id=${taskId}`,
     sandbox:         `/projects/${projectId}/sandbox/status`,
   };
